@@ -997,11 +997,17 @@ export class AppModule {}
 Run: `pnpm --filter @jobtrack/api test`
 Expected: PASS — 3 tests.
 
-Run: `docker compose up -d && pnpm --filter @jobtrack/api dev` puis dans un autre terminal `curl -s localhost:3001/api/v1/health`
-Expected: `{"status":"ok","services":{"database":"up","redis":"up"},"timestamp":"..."}`.
+> **Amendement — infrastructure Homebrew.** Les services tournent déjà via `brew services` (Postgres 16 sur 5434, Redis sur 6379 — voir l'amendement de la tâche 2). Ne pas utiliser `docker compose`. Pour vérifier l'état dégradé, ne pas arrêter Redis : il suffit de pointer `REDIS_URL` sur un port où rien n'écoute, le temps d'un démarrage borné. Aucun service n'est touché.
 
-Run: `docker compose stop redis && curl -s localhost:3001/api/v1/health`
-Expected: `"status":"degraded"` et `"redis":"down"`. Relancer ensuite avec `docker compose start redis`.
+Run (depuis `apps/api`, après `pnpm --filter @jobtrack/api build`) :
+`(timeout 15 node dist/main.js &) ; sleep 4 ; curl -s localhost:3001/api/v1/health ; wait`
+Expected: `{"status":"ok","services":{"database":"up","redis":"up"},"timestamp":"..."}` — ce qui prouve que Prisma joint bien Postgres sur 5434 via le `.env`.
+
+Run (état dégradé, sans rien arrêter) :
+`(REDIS_URL=redis://localhost:6390 timeout 15 node dist/main.js &) ; sleep 4 ; curl -s localhost:3001/api/v1/health ; wait`
+Expected: `"status":"degraded"` et `"redis":"down"`, `"database":"up"`. Le démarrage ne doit **pas** échouer : une dépendance injoignable dégrade la sonde, elle n'empêche pas l'API de répondre.
+
+Vérifier ensuite qu'aucun processus ne reste sur 3001 : `lsof -nP -iTCP:3001 -sTCP:LISTEN` doit être vide.
 
 - [ ] **Step 8: Commit**
 
