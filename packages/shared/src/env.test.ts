@@ -50,4 +50,14 @@ describe('serverEnvSchema', () => {
     const result = serverEnvSchema.safeParse({ ...valid, GOOGLE_CALLBACK_URL: 'pas-une-url' });
     expect(result.success).toBe(false);
   });
+
+  it('rejette un SESSION_SECRET compose uniquement d_espaces', () => {
+    const result = serverEnvSchema.safeParse({ ...valid, SESSION_SECRET: ' '.repeat(40) });
+    expect(result.success).toBe(false);
+  });
+
+  it('nettoie les espaces autour de WEB_ORIGIN', () => {
+    const parsed = serverEnvSchema.parse({ ...valid, WEB_ORIGIN: '  http://localhost:5173  ' });
+    expect(parsed.WEB_ORIGIN).toBe('http://localhost:5173');
+  });
 });

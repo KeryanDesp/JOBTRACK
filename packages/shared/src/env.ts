@@ -8,19 +8,28 @@ import { z } from 'zod';
  */
 const emptyToUndefined = (value: unknown): unknown => (value === '' ? undefined : value);
 
+/**
+ * `z.preprocess` est réservé aux schémas d'environnement : l'entrée est `process.env`,
+ * jamais un littéral typé, donc dégrader son type en `unknown` n'a aucun coût ici.
+ * Les futurs schémas de formulaires (consommés par `zodResolver`) doivent, eux,
+ * préserver `z.input<>` pour que React Hook Form garde l'inférence de type sur les
+ * valeurs de champ — préférer `.transform(...)` ou `.catch(...)` dans ce cas, pas
+ * `z.preprocess`.
+ */
 const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const optionalUrl = z.preprocess(emptyToUndefined, z.string().url().optional());
 
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(3001),
-  WEB_ORIGIN: z.string().url(),
+  WEB_ORIGIN: z.string().trim().url(),
 
-  DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1),
+  DATABASE_URL: z.string().trim().min(1),
+  REDIS_URL: z.string().trim().min(1),
 
   // 32 caractères minimum : un secret plus court affaiblit la signature de session.
-  SESSION_SECRET: z.string().min(32),
+  // `.trim()` avant `.min()` : un secret composé uniquement d'espaces ne doit pas passer.
+  SESSION_SECRET: z.string().trim().min(32),
 
   // Optionnels en tranche 0 ; requis dès que Google est branché (tranche 1).
   GOOGLE_CLIENT_ID: optionalString,
