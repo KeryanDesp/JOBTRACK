@@ -2366,11 +2366,14 @@ git commit -m "feat(web): coquille applicative, navigation definitive et page 40
 
 ## Task 11: Client API et TanStack Query
 
+> **Amendement.** (1) `import.meta.env` n'est typé que si `vite/client` est référencé : cette tâche crée `apps/web/src/vite-env.d.ts` (fichier standard du scaffold Vite, jamais créé jusqu'ici) avec la déclaration de `VITE_API_URL`. (2) `main.tsx` conserve `AppToaster` (tâche 8). (3) 14 tests existent déjà ; on en attend 18 après cette tâche.
+
 Ce client est le seul point de sortie HTTP de l'application. Toutes les tranches suivantes l'utilisent — d'où l'importance de fixer ici `credentials: 'include'` (indispensable au cookie de session de la tranche 1) et le format d'erreur lisible.
 
 **Files:**
 - Create: `apps/web/src/services/api/client.ts`, `apps/web/src/services/api/health.ts`
 - Create: `apps/web/src/app/providers/query-provider.tsx`
+- Create: `apps/web/src/vite-env.d.ts`
 - Test: `apps/web/src/services/api/client.test.ts`
 - Modify: `apps/web/src/main.tsx`
 
@@ -2433,6 +2436,21 @@ Run: `pnpm --filter @jobtrack/web test client`
 Expected: FAIL — `Failed to resolve import "./client"`.
 
 - [ ] **Step 3: Implémenter le client**
+
+`apps/web/src/vite-env.d.ts` — types de Vite et contrat des variables d'environnement du frontend :
+
+```ts
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  /** URL de base de l'API, avec le préfixe `/api/v1`. */
+  readonly VITE_API_URL?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+```
 
 `apps/web/src/services/api/client.ts` :
 
@@ -2553,6 +2571,7 @@ Dans `apps/web/src/main.tsx`, envelopper le `RouterProvider` :
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
+import { AppToaster } from './app/providers/app-toaster';
 import { QueryProvider } from './app/providers/query-provider';
 import { ThemeProvider } from './app/providers/theme-provider';
 import { router } from './app/router/routes';
@@ -2566,6 +2585,7 @@ createRoot(container).render(
     <ThemeProvider>
       <QueryProvider>
         <RouterProvider router={router} />
+        <AppToaster />
       </QueryProvider>
     </ThemeProvider>
   </StrictMode>,
@@ -2575,7 +2595,7 @@ createRoot(container).render(
 - [ ] **Step 6: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 17 tests au total.
+Expected: PASS — 18 tests au total.
 
 - [ ] **Step 7: Commit**
 
