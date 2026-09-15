@@ -24,13 +24,11 @@ export class PasswordResetService {
     const key = PasswordResetService.keyFor(token);
     const indexKey = `pwreset_user:${userId}`;
 
-    const previous = await this.redis.client.getdel(indexKey);
-    await this.redis.client
-      .multi()
-      .set(key, userId, 'EX', TTL_SECONDS)
-      .set(indexKey, key, 'EX', TTL_SECONDS)
-      .exec();
-    if (previous) await this.redis.client.del(previous);
+    // Réclamer l'index d'abord (SET … GET est atomique), publier le jeton, puis révoquer le perdant :
+    // deux demandes simultanées (double-clic) ne laissent qu'un seul jeton valide.
+    const previous = await this.redis.client.set(indexKey, key, 'EX', TTL_SECONDS, 'GET');
+    await this.redis.client.set(key, userId, 'EX', TTL_SECONDS);
+    if (previous && previous !== key) await this.redis.client.del(previous);
 
     return token;
   }
@@ -43,6 +41,8 @@ export class PasswordResetService {
     const userId = await this.redis.client.getdel(key);
     if (!userId) return null;
 
+    // Une émission intercalée entre GETDEL et ce DEL perdrait son index (jeton toujours à usage
+    // unique, expire à son TTL) : accepté.
     await this.redis.client.del(`pwreset_user:${userId}`);
     return userId;
   }

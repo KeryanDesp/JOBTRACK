@@ -376,4 +376,33 @@ describe('Réinitialisation du mot de passe', () => {
     const again = await app.inject({ method: 'POST', url: '/api/v1/auth/reset-password', payload: { token, password: 'encore-un-autre-2026' } });
     expect(again.statusCode).toBe(400);
   });
+
+  it('la reinitialisation debloque la connexion', async () => {
+    await registerUser();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: USER.email, password: 'mauvais-mot-de-passe' },
+      });
+    }
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: USER.email } });
+    const token = await app.get(PasswordResetService).issue(user.id);
+
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/reset-password',
+      payload: { token, password: 'nouveau-mot-de-passe-2026' },
+    });
+    expect(reset.statusCode).toBe(204);
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: 'nouveau-mot-de-passe-2026' },
+    });
+    expect(login.statusCode).toBe(200);
+  });
 });

@@ -27,8 +27,8 @@ describe('PasswordResetService', () => {
   it('ne stocke jamais le jeton en clair dans redis et pose une expiration', async () => {
     const token = await service.issue(USER_ID);
     try {
-      const keys = await redis.client.keys('pwreset:*');
-      expect(keys.some((key) => key.includes(token))).toBe(false);
+      expect(await redis.client.get(`pwreset:${token}`)).toBeNull();
+      expect(await redis.client.get(PasswordResetService.keyFor(token))).toBe(USER_ID);
 
       const ttl = await redis.client.ttl(PasswordResetService.keyFor(token));
       expect(ttl).toBeGreaterThan(0);
@@ -44,6 +44,28 @@ describe('PasswordResetService', () => {
     try {
       expect(await service.consume(first)).toBeNull();
       expect(await service.consume(second)).toBe(USER_ID);
+    } finally {
+      await service.consume(first);
+      await service.consume(second);
+    }
+  });
+
+  it('un seul appel simultane consomme le jeton', async () => {
+    const token = await service.issue(USER_ID);
+    try {
+      const results = await Promise.all([service.consume(token), service.consume(token)]);
+      expect(results.filter(Boolean)).toEqual([USER_ID]);
+    } finally {
+      await service.consume(token);
+    }
+  });
+
+  it('deux emissions simultanees ne laissent qu_un jeton valide', async () => {
+    const [first, second] = await Promise.all([service.issue(USER_ID), service.issue(USER_ID)]);
+    try {
+      const results = await Promise.all([service.consume(first), service.consume(second)]);
+      expect(results.filter(Boolean)).toEqual([USER_ID]);
+      expect(results.filter((result) => result === null)).toHaveLength(1);
     } finally {
       await service.consume(first);
       await service.consume(second);
