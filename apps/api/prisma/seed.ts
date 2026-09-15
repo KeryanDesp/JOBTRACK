@@ -11,6 +11,8 @@ async function main(): Promise<void> {
     parallelism: 1,
   });
 
+  // Le profil de démo est recréé de zéro à chaque seed : toute modification
+  // faite à la main sur ce compte est perdue. C'est voulu pour une fixture.
   await prisma.user.deleteMany({ where: { email: 'demo@jobtrack.local' } });
 
   await prisma.user.create({

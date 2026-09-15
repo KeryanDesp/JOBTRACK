@@ -10,6 +10,7 @@ cp .env.example .env          # puis SESSION_SECRET=$(openssl rand -base64 48)
 docker compose up -d          # Postgres 16 + Redis 7
 pnpm install                  # genere aussi le client Prisma (postinstall)
 pnpm db:migrate
+pnpm db:seed                  # compte de demo : demo@jobtrack.local / DemoJobTrack2026!
 pnpm dev                      # web sur :5173, api sur :3001
 ```
 
