@@ -1090,7 +1090,7 @@ Le fichier `tokens.css` est le cœur du design system. Aucune couleur, aucun ray
     "test": "vitest run",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src e2e"
   },
   "dependencies": {
     "@jobtrack/shared": "workspace:*",
@@ -2618,6 +2618,8 @@ git commit -m "feat(web): client api unique et provider tanstack query"
 ---
 
 ## Task 12: Landing page
+
+> **Amendement après revue.** (1) `e2e/*.ts` est retiré de `allowDefaultProject` de la fabrique ESLint (le `include` du tsconfig le couvre, en typé) et le script `lint` de `apps/web` devient `eslint src e2e` — sinon les specs Playwright n'étaient jamais lintées. (2) `Section` porte `scroll-mt-20` pour que l'ancre `#comment-ca-marche` ne passe pas sous l'en-tête collant. (3) L'offre Pro porte un `<Badge>Recommandé</Badge>`, la bordure seule étant à peine perceptible. Mouvement réduit vérifié : avec `prefers-reduced-motion`, le hero rend à `opacity: 1` sans transition.
 
 > **Amendement.** (1) Le profil Playwright `iPhone 13` impose WebKit, que le plan n'installe pas : le projet mobile utilise `devices['Pixel 7']` (Chromium). (2) Cette tâche enveloppe `RouterProvider` et `AppToaster` dans `<MotionConfig reducedMotion="user">` dans `main.tsx` — première animation Framer Motion du projet. (3) Les liens `/login` et `/register` mènent à la page 404 jusqu'à la tranche 1 : c'est attendu. (4) `landing-page.tsx` provisoire de la tâche 10 est remplacé intégralement.
 
