@@ -5,6 +5,7 @@ import { AppModule } from '../../app.module';
 import { configureApp, createAdapter } from '../../app.setup';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
+import { PasswordResetService } from './password-reset.service';
 import { SessionService } from './session.service';
 
 let app: NestFastifyApplication;
@@ -33,8 +34,16 @@ async function clearUsers(): Promise<void> {
   const sessions = app.get(SessionService);
   for (const user of users) {
     await sessions.destroyAllForUser(user.id);
+    await clearResetToken(user.id);
   }
   await prisma.user.deleteMany({ where: { email: { startsWith: 'e2e-' } } });
+}
+
+/** Détruit le jeton de réinitialisation en cours pour un utilisateur e2e, s'il existe. */
+async function clearResetToken(userId: string): Promise<void> {
+  const indexKey = `pwreset_user:${userId}`;
+  const key = await redis.client.getdel(indexKey);
+  if (key) await redis.client.del(key);
 }
 
 beforeAll(async () => {
@@ -317,5 +326,54 @@ describe('Authentification', () => {
     expect(blocked.json<{ message: string }>().message).toBe(
       'Trop de tentatives. Réessayez dans quelques minutes.',
     );
+  });
+});
+
+describe('Réinitialisation du mot de passe', () => {
+  it('repond pareil que le compte existe ou non', async () => {
+    await registerUser();
+    const known = await app.inject({ method: 'POST', url: '/api/v1/auth/forgot-password', payload: { email: USER.email } });
+    const unknown = await app.inject({ method: 'POST', url: '/api/v1/auth/forgot-password', payload: { email: `inconnu-${process.pid}@jobtrack.local` } });
+
+    expect(known.statusCode).toBe(202);
+    expect(unknown.statusCode).toBe(202);
+    expect(known.json()).toEqual(unknown.json());
+  });
+
+  it('refuse un jeton invalide', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/reset-password',
+      payload: { token: 'a'.repeat(43), password: 'nouveau-mot-de-passe-2026' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('INVALID_RESET_TOKEN');
+  });
+
+  it('reinitialise le mot de passe, ferme les sessions et refuse le second usage', async () => {
+    const { cookieHeader } = await registerUser();
+    const user = await prisma.user.findUniqueOrThrow({ where: { email: USER.email } });
+    // Le lien n'est que journalisé dans cette tranche : on émet le jeton directement.
+    const token = await app.get(PasswordResetService).issue(user.id);
+
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/reset-password',
+      payload: { token, password: 'nouveau-mot-de-passe-2026' },
+    });
+    expect(reset.statusCode).toBe(204);
+
+    const oldSession = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: cookieHeader } });
+    expect(oldSession.statusCode).toBe(401);
+
+    const oldPassword = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: USER.email, password: USER.password } });
+    expect(oldPassword.statusCode).toBe(401);
+
+    const newPassword = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: USER.email, password: 'nouveau-mot-de-passe-2026' } });
+    expect(newPassword.statusCode).toBe(200);
+
+    const again = await app.inject({ method: 'POST', url: '/api/v1/auth/reset-password', payload: { token, password: 'encore-un-autre-2026' } });
+    expect(again.statusCode).toBe(400);
   });
 });

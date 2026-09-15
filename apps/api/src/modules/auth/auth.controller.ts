@@ -1,20 +1,25 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Logger, NotFoundException, Param,
-  Post, Req, Res,
+  BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Logger,
+  NotFoundException, Param, Post, Req, Res,
 } from '@nestjs/common';
 import {
-  loginSchema, registerSchema, type ActiveSession, type LoginInput, type RegisterInput, type SessionUser,
+  forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, type ActiveSession,
+  type ForgotPasswordInput, type LoginInput, type RegisterInput, type ResetPasswordInput, type SessionUser,
 } from '@jobtrack/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { NoCsrf } from '../../common/decorators/no-csrf.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { PrismaService } from '../../common/prisma.service';
 import { ipEmailIdentity, RateLimit, rateLimitKey } from '../../common/rate-limit.guard';
 import { RedisService } from '../../common/redis.service';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import { env } from '../../config/env';
 import { clearAuthCookies, setAuthCookies } from './auth.cookies';
 import type { AuthenticatedRequest } from './auth.guard';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
+import { PasswordService } from './password.service';
 import { SessionService } from './session.service';
 
 @Controller('auth')
@@ -25,6 +30,9 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly sessions: SessionService,
     private readonly redis: RedisService,
+    private readonly passwordReset: PasswordResetService,
+    private readonly prisma: PrismaService,
+    private readonly passwords: PasswordService,
   ) {}
 
   @Public()
@@ -77,6 +85,54 @@ export class AuthController {
 
     await this.openSession(user.id, request, reply);
     return user;
+  }
+
+  @Public()
+  @NoCsrf()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RateLimit([
+    { limit: 10, windowSeconds: 3600, by: 'ip' },
+    { limit: 3, windowSeconds: 3600, by: 'ip+email' },
+  ])
+  async forgotPassword(
+    @Body(new ZodValidationPipe(forgotPasswordSchema)) body: ForgotPasswordInput,
+  ): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { email: body.email } });
+
+    if (user) {
+      const token = await this.passwordReset.issue(user.id);
+      // L'envoi par email arrive en tranche 7 ; le lien est journalisé en attendant.
+      this.logger.log(`Lien de réinitialisation : ${env.WEB_ORIGIN}/reset-password?token=${token}`);
+    }
+
+    // Réponse identique que le compte existe ou non : pas d'énumération d'emails.
+    return {
+      message: 'Si un compte existe avec cette adresse, un lien de réinitialisation a été envoyé.',
+    };
+  }
+
+  @Public()
+  @NoCsrf()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RateLimit({ limit: 5, windowSeconds: 3600, by: 'ip' })
+  async resetPassword(
+    @Body(new ZodValidationPipe(resetPasswordSchema)) body: ResetPasswordInput,
+  ): Promise<void> {
+    const userId = await this.passwordReset.consume(body.token);
+    if (!userId) {
+      throw new BadRequestException({
+        code: 'INVALID_RESET_TOKEN',
+        message: 'Ce lien est invalide ou a expiré. Demandez-en un nouveau.',
+      });
+    }
+
+    const passwordHash = await this.passwords.hash(body.password);
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+
+    // Un changement de mot de passe invalide toutes les sessions ouvertes.
+    await this.sessions.destroyAllForUser(userId);
   }
 
   @Post('logout')
