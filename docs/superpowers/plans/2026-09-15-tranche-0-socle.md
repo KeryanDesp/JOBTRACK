@@ -806,8 +806,8 @@ datasource db {
 // La tranche 0 n'a besoin que d'une connexion fonctionnelle pour la sonde /health.
 ```
 
-Run: `pnpm --filter @jobtrack/api exec prisma generate`
-Expected: `Generated Prisma Client` s'affiche.
+Run: `pnpm --filter @jobtrack/api exec prisma generate --allow-no-models`
+Expected: `Generated Prisma Client` s'affiche. Le drapeau est nécessaire tant que le schéma n'a aucun modèle : Prisma 5.22 refuse sinon de générer (`You don't have any models defined`). Il devient superflu — mais reste inoffensif — dès la tranche 1.
 
 - [ ] **Step 2: Écrire les services d'infrastructure**
 
@@ -3188,7 +3188,8 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @jobtrack/api exec prisma generate
+      # --allow-no-models : le schéma est vide jusqu'à la tranche 1 ; le drapeau reste inoffensif ensuite.
+      - run: pnpm --filter @jobtrack/api exec prisma generate --allow-no-models
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm test
