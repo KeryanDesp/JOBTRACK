@@ -1049,8 +1049,11 @@ git commit -m "feat(api): service de sessions redis revocables"
 
 ## Task 5: Service de mots de passe
 
+> **Amendement.** Le `DUMMY_HASH` inventé de la version initiale aurait été rejeté par argon2 avant tout calcul : `verify` lève, le `catch` renvoie `false` immédiatement, et `burnTime()` ne brûle aucun temps — l'énumération de comptes par chronométrage restait possible. Le hachage factice est désormais réel, calculé une fois à la première demande. Les options argon2 vivent dans `argon2.options.ts`, importées par le service **et** par le seed. Ajouter un cinquième test : `burnTime()` doit durer au moins autant qu'un `verify` réel (mesurer les deux, tolérance large — l'ordre de grandeur est ~20-60 ms, jamais < 5 ms).
+
 **Files:**
-- Create: `apps/api/src/modules/auth/password.service.ts`
+- Create: `apps/api/src/modules/auth/argon2.options.ts`, `apps/api/src/modules/auth/password.service.ts`
+- Modify: `apps/api/prisma/seed.ts`
 - Test: `apps/api/src/modules/auth/password.service.spec.ts`
 
 - [ ] **Step 1: Écrire le test qui échoue**
@@ -1094,28 +1097,38 @@ Expected: FAIL — module introuvable.
 
 - [ ] **Step 3: Implémenter le service**
 
-`apps/api/src/modules/auth/password.service.ts` :
+`apps/api/src/modules/auth/argon2.options.ts` — constante pure, sans décorateur, partagée avec le seed :
 
 ```ts
-import { Injectable } from '@nestjs/common';
 import argon2 from 'argon2';
 
-/** Paramètres recommandés par l'OWASP pour Argon2id. */
-const OPTIONS = {
+/** Paramètres recommandés par l'OWASP pour Argon2id. Source unique : le seed les importe aussi. */
+export const ARGON2_OPTIONS = {
   type: argon2.argon2id,
   memoryCost: 19456, // 19 MiB
   timeCost: 2,
   parallelism: 1,
 } as const;
+```
 
-/** Hachage réel servant à égaliser le temps de réponse quand le compte n'existe pas. */
-const DUMMY_HASH =
-  '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$2jJvVfUHkXqk3Q9pFn0QJz0hUxQDEtCNnA2vT3SfJ2M';
+`apps/api/src/modules/auth/password.service.ts` :
+
+```ts
+import { Injectable } from '@nestjs/common';
+import argon2 from 'argon2';
+import { ARGON2_OPTIONS } from './argon2.options';
 
 @Injectable()
 export class PasswordService {
+  /**
+   * Hachage factice réel, calculé une seule fois à la première demande.
+   * Une chaîne inventée serait rejetée par argon2 avant tout calcul, et
+   * burnTime() ne brûlerait alors aucun temps.
+   */
+  private dummyHash: Promise<string> | null = null;
+
   hash(plain: string): Promise<string> {
-    return argon2.hash(plain, OPTIONS);
+    return argon2.hash(plain, ARGON2_OPTIONS);
   }
 
   async verify(hash: string, plain: string): Promise<boolean> {
@@ -1133,20 +1146,23 @@ export class PasswordService {
    * en mesurant le temps de réponse.
    */
   async burnTime(): Promise<void> {
-    await this.verify(DUMMY_HASH, 'mot-de-passe-factice');
+    this.dummyHash ??= argon2.hash('mot-de-passe-factice', ARGON2_OPTIONS);
+    await argon2.verify(await this.dummyHash, 'autre-mot-de-passe');
   }
 }
 ```
 
+Dans `apps/api/prisma/seed.ts`, remplacer l'objet d'options inliné par `import { ARGON2_OPTIONS } from '../src/modules/auth/argon2.options';` et `argon2.hash('DemoJobTrack2026!', ARGON2_OPTIONS)`.
+
 - [ ] **Step 4: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test password.service`
-Expected: PASS — 4 tests.
+Expected: PASS — 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/modules/auth
+git add apps/api/src/modules/auth apps/api/prisma/seed.ts
 git commit -m "feat(api): hachage argon2id des mots de passe"
 ```
 
