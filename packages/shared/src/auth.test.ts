@@ -33,4 +33,9 @@ describe('loginSchema', () => {
     const result = loginSchema.safeParse({ email: 'a@b.com', password: 'x' });
     expect(result.success).toBe(true);
   });
+
+  it('refuse un mot de passe de connexion de plus de 128 caracteres', () => {
+    const result = loginSchema.safeParse({ email: 'a@b.com', password: 'x'.repeat(129) });
+    expect(result.success).toBe(false);
+  });
 });

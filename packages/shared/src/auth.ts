@@ -26,7 +26,10 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   email,
-  password: z.string().min(1, 'Le mot de passe est obligatoire.'),
+  password: z
+    .string()
+    .min(1, 'Le mot de passe est obligatoire.')
+    .max(128, 'Le mot de passe ne peut pas dépasser 128 caractères.'),
 });
 
 export const forgotPasswordSchema = z.object({ email });
