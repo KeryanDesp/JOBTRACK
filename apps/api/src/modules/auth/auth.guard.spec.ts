@@ -2,9 +2,11 @@ import type { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { SessionUser } from '@jobtrack/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CSRF_COOKIE, csrfTokenFor } from '../../common/csrf.guard';
+import { SESSION_COOKIE } from './auth.cookies';
 import type { AuthService } from './auth.service';
-import { AuthGuard, SESSION_COOKIE } from './auth.guard';
-import type { SessionService, StoredSession } from './session.service';
+import { AuthGuard } from './auth.guard';
+import type { SessionService, TouchedSession } from './session.service';
 
 const VALID_ID = 'a'.repeat(43);
 
@@ -17,9 +19,13 @@ function build(isPublic: boolean): AuthGuard {
   return new AuthGuard(reflector, sessions as unknown as SessionService, auth as unknown as AuthService);
 }
 
-function contextFor(request: Record<string, unknown>): ExecutionContext {
+/** `response` par defaut : un double minimal qui absorbe les appels a setCookie sans planter. */
+function contextFor(
+  request: Record<string, unknown>,
+  response: Record<string, unknown> = { setCookie: vi.fn() },
+): ExecutionContext {
   return {
-    switchToHttp: () => ({ getRequest: () => request }),
+    switchToHttp: () => ({ getRequest: () => request, getResponse: () => response }),
     getHandler: () => undefined,
     getClass: () => undefined,
   } as unknown as ExecutionContext;
@@ -35,13 +41,14 @@ async function captureError(promise: Promise<unknown>): Promise<UnauthorizedExce
   throw new Error('La promesse a ete resolue : un rejet etait attendu.');
 }
 
-const STORED_SESSION: StoredSession = {
+const STORED_SESSION: TouchedSession = {
   id: VALID_ID,
   userId: 'u1',
   userAgent: null,
   ip: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   lastSeenAt: '2026-01-01T00:00:00.000Z',
+  refreshed: false,
 };
 
 const STORED_USER: SessionUser = {
@@ -133,7 +140,7 @@ describe('AuthGuard', () => {
     auth.findSessionUser.mockResolvedValueOnce(STORED_USER);
     const guard = build(false);
     const request: Record<string, unknown> = {
-      cookies: { [SESSION_COOKIE]: 'valeur-signee' },
+      cookies: { [SESSION_COOKIE]: 'valeur-signee', [CSRF_COOKIE]: csrfTokenFor(VALID_ID) },
       unsignCookie: () => ({ valid: true, value: VALID_ID, renew: false }),
     };
     const context = contextFor(request);
@@ -141,5 +148,41 @@ describe('AuthGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.user).toEqual(STORED_USER);
     expect(request.session).toEqual(STORED_SESSION);
+  });
+
+  it('renouvelle les cookies quand la session vient d_etre rafraichie', async () => {
+    sessions.touch.mockResolvedValueOnce({ ...STORED_SESSION, refreshed: true });
+    auth.findSessionUser.mockResolvedValueOnce(STORED_USER);
+    const guard = build(false);
+    const setCookie = vi.fn<(name: string) => void>();
+    const context = contextFor(
+      {
+        cookies: { [SESSION_COOKIE]: 'valeur-signee', [CSRF_COOKIE]: csrfTokenFor(VALID_ID) },
+        unsignCookie: () => ({ valid: true, value: VALID_ID, renew: false }),
+      },
+      { setCookie },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(setCookie).toHaveBeenCalledTimes(2);
+    const cookieNames = setCookie.mock.calls.map(([name]) => name);
+    expect(cookieNames).toEqual(expect.arrayContaining([SESSION_COOKIE, CSRF_COOKIE]));
+  });
+
+  it('ne renouvelle pas les cookies quand le jeton csrf est deja a jour', async () => {
+    sessions.touch.mockResolvedValueOnce({ ...STORED_SESSION, refreshed: false });
+    auth.findSessionUser.mockResolvedValueOnce(STORED_USER);
+    const guard = build(false);
+    const setCookie = vi.fn();
+    const context = contextFor(
+      {
+        cookies: { [SESSION_COOKIE]: 'valeur-signee', [CSRF_COOKIE]: csrfTokenFor(VALID_ID) },
+        unsignCookie: () => ({ valid: true, value: VALID_ID, renew: false }),
+      },
+      { setCookie },
+    );
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(setCookie).not.toHaveBeenCalled();
   });
 });

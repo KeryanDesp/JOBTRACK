@@ -59,10 +59,21 @@ afterAll(async () => {
   await app.close();
 });
 
-function cookiesFrom(headers: Record<string, unknown>): string {
+function rawCookies(headers: Record<string, unknown>): string[] {
   const raw = headers['set-cookie'];
-  const list = Array.isArray(raw) ? raw.map(String) : [String(raw)];
-  return list.map((entry) => entry.split(';')[0]).join('; ');
+  return Array.isArray(raw) ? raw.map(String) : [String(raw)];
+}
+
+function cookiesFrom(headers: Record<string, unknown>): string {
+  return rawCookies(headers)
+    .map((entry) => entry.split(';')[0])
+    .join('; ');
+}
+
+function findCookie(headers: Record<string, unknown>, name: string): string {
+  const entry = rawCookies(headers).find((cookie) => cookie.startsWith(`${name}=`));
+  if (!entry) throw new Error(`Cookie ${name} absent de set-cookie.`);
+  return entry;
 }
 
 function csrfFrom(cookieHeader: string): string {
@@ -91,9 +102,21 @@ describe('Authentification', () => {
     expect(response.statusCode).toBe(201);
     expect(response.json<{ email: string }>().email).toBe(USER.email);
 
-    const setCookie = String(response.headers['set-cookie']);
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('SameSite=Lax');
+    const sessionCookie = findCookie(response.headers, 'jt_session');
+    const csrfCookie = findCookie(response.headers, 'jt_csrf');
+
+    // Session : httpOnly, immunisee au vol par XSS.
+    expect(sessionCookie).toContain('HttpOnly');
+    // CSRF : volontairement lisible en JavaScript, le frontend doit le recopier en en-tete.
+    expect(csrfCookie).not.toContain('HttpOnly');
+    // Meme duree de vie que la session Redis (30 jours), meme politique SameSite.
+    for (const cookie of [sessionCookie, csrfCookie]) {
+      expect(cookie).toContain('Max-Age=2592000');
+      expect(cookie).toContain('SameSite=Lax');
+      // Environnement de test = NODE_ENV != production : pas de flag Secure (HTTP local).
+      expect(cookie).not.toContain('Secure');
+    }
+
     expect(cookieHeader).toContain('jt_session=');
     expect(cookieHeader).toContain('jt_csrf=');
   });
@@ -124,6 +147,37 @@ describe('Authentification', () => {
     const body = response.json<{ code: string; details: Record<string, string> }>();
     expect(body.code).toBe('VALIDATION_ERROR');
     expect(body.details.password).toContain('12 caractères');
+  });
+
+  it('refuse un mauvais mot de passe avec le meme message qu_un compte inconnu', async () => {
+    await registerUser();
+
+    const wrongPassword = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: 'mauvais-mot-de-passe' },
+    });
+    const unknownAccount = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: `e2e-inconnu-${process.pid}@jobtrack.local`, password: USER.password },
+    });
+
+    expect(wrongPassword.statusCode).toBe(401);
+    expect(unknownAccount.statusCode).toBe(401);
+    expect(wrongPassword.json()).toEqual(unknownAccount.json());
+  });
+
+  it('refuse un corps json malforme', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: '{"email":',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('BAD_REQUEST');
   });
 
   it('refuse l_acces a /auth/me sans session', async () => {
@@ -177,6 +231,23 @@ describe('Authentification', () => {
       headers: { cookie: cookieHeader },
     });
     expect(after.statusCode).toBe(401);
+  });
+
+  it('la deconnexion expire les deux cookies', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+
+    const logout = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+    expect(logout.statusCode).toBe(204);
+
+    const sessionCookie = findCookie(logout.headers, 'jt_session');
+    const csrfCookie = findCookie(logout.headers, 'jt_csrf');
+    // @fastify/cookie expire une cookie effacee via `Expires` place dans le passe (pas Max-Age=0).
+    expect(sessionCookie).toContain('Expires=Thu, 01 Jan 1970');
+    expect(csrfCookie).toContain('Expires=Thu, 01 Jan 1970');
   });
 
   it('liste les sessions actives et revoque une session', async () => {

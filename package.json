@@ -10,7 +10,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "test:e2e": "pnpm --filter @jobtrack/api test:e2e",
+    "test:e2e": "turbo run test:e2e",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "db:migrate": "dotenv -e .env -- pnpm --filter @jobtrack/api exec prisma migrate dev",

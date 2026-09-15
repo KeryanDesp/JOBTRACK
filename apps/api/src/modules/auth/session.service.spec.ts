@@ -111,4 +111,21 @@ describe('SessionService', () => {
     const id = await sessions.create(USER_ID, { userAgent: 'a'.repeat(1000), ip: null });
     expect((await sessions.touch(id))?.userAgent).toHaveLength(256);
   });
+
+  it('signale le rafraichissement de lastSeenAt une fois par minute au plus', async () => {
+    const id = await sessions.create(USER_ID, { userAgent: null, ip: null });
+
+    // Immediatement apres create() : lastSeenAt est deja a jour, pas de reecriture.
+    expect((await sessions.touch(id))?.refreshed).toBe(false);
+
+    // Simule l'ecoulement du delai de staleness pour forcer la reecriture.
+    const key = `session:${id}`;
+    const stored = JSON.parse((await redis.client.get(key)) as string) as { lastSeenAt: string };
+    stored.lastSeenAt = new Date(Date.now() - 120_000).toISOString();
+    await redis.client.set(key, JSON.stringify(stored), 'KEEPTTL');
+
+    expect((await sessions.touch(id))?.refreshed).toBe(true);
+    // La reecriture vient de se produire : un appel immediat qui suit ne doit pas la refaire.
+    expect((await sessions.touch(id))?.refreshed).toBe(false);
+  });
 });

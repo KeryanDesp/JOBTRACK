@@ -12,6 +12,9 @@ export interface SessionData {
 
 export type StoredSession = SessionData & { id: string };
 
+/** `refreshed` : vrai exactement quand `touch()` a réécrit `lastSeenAt` (au plus une fois par minute). */
+export type TouchedSession = StoredSession & { refreshed: boolean };
+
 /**
  * 30 jours glissants, conformément à la spec. Exporté pour que le cookie de
  * session (maxAge) et la clé Redis (TTL) ne puissent jamais diverger.
@@ -78,7 +81,7 @@ export class SessionService {
    * (session glissante). Renvoie null pour un identifiant malformé, inconnu,
    * corrompu, ou révoqué entre la lecture et l'écriture.
    */
-  async touch(id: string): Promise<StoredSession | null> {
+  async touch(id: string): Promise<TouchedSession | null> {
     if (!SESSION_ID_PATTERN.test(id)) return null;
 
     const raw = await this.redis.client.get(this.key(id));
@@ -93,13 +96,13 @@ export class SessionService {
 
     const now = Date.now();
     const stale = now - Date.parse(data.lastSeenAt) > LAST_SEEN_STALENESS_MS;
-    const refreshed: SessionData = stale ? { ...data, lastSeenAt: new Date(now).toISOString() } : data;
+    const updated: SessionData = stale ? { ...data, lastSeenAt: new Date(now).toISOString() } : data;
 
     const pipeline = this.redis.client.multi();
     if (stale) {
       // XX : n'écrit que si la clé existe encore. Sans cela, un destroy() survenu
       // entre la lecture et l'écriture serait annulé et la session ressuscitée.
-      pipeline.set(this.key(id), JSON.stringify(refreshed), 'EX', SESSION_TTL_SECONDS, 'XX');
+      pipeline.set(this.key(id), JSON.stringify(updated), 'EX', SESSION_TTL_SECONDS, 'XX');
     } else {
       pipeline.expire(this.key(id), SESSION_TTL_SECONDS);
     }
@@ -114,7 +117,7 @@ export class SessionService {
     const first = results?.[0]?.[1];
     if (first === null || first === 0) return null;
 
-    return { id, ...refreshed };
+    return { id, ...updated, refreshed: stale };
   }
 
   async destroy(id: string, userId: string): Promise<void> {

@@ -10,6 +10,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
 import { RedisService } from './redis.service';
+import { serviceUnavailable } from './service-unavailable';
 
 export const RATE_LIMIT_KEY = 'rateLimit';
 
@@ -28,6 +29,20 @@ export const RateLimit = (options: RateLimitOptions | RateLimitOptions[]) =>
   SetMetadata(RATE_LIMIT_KEY, options);
 
 const EMAIL_MAX_LENGTH = 254;
+
+/**
+ * Clé Redis d'un compteur de débit. Exportée pour que tout code qui doit réinitialiser
+ * un compteur (ex. après une connexion réussie) construise exactement la même clé que
+ * cette garde, sans jamais pouvoir diverger.
+ */
+export function rateLimitKey(route: string, identity: string): string {
+  return `ratelimit:${route}:${identity}`;
+}
+
+/** Identité `ip+email` : email normalisé (minuscules, sans espaces) comme au moment du comptage. */
+export function ipEmailIdentity(ip: string, email: string): string {
+  return `${ip}:${email.trim().toLowerCase().slice(0, EMAIL_MAX_LENGTH)}`;
+}
 
 // INCR et EXPIRE dans un même script : pas de compteur éternel si le processus
 // meurt entre les deux, pas de fenêtre prolongée par deux premiers appels concurrents
@@ -69,7 +84,7 @@ export class RateLimitGuard implements CanActivate {
     options: RateLimitOptions,
   ): Promise<void> {
     const identity = this.identity(request, options);
-    const key = `ratelimit:${route}:${identity}`;
+    const key = rateLimitKey(route, identity);
 
     let count: unknown;
     try {
@@ -78,12 +93,12 @@ export class RateLimitGuard implements CanActivate {
       this.logger.error(
         `Compteur de débit indisponible pour ${route} ${identity} : ${(error as Error).message}`,
       );
-      throw this.unavailable();
+      throw serviceUnavailable();
     }
     if (typeof count !== 'number') {
       // Réponse Redis inattendue : on ne sait pas si la limite est respectée.
       this.logger.error(`Réponse Redis inattendue pour ${route} ${identity} : ${String(count)}`);
-      throw this.unavailable();
+      throw serviceUnavailable();
     }
 
     if (count > options.limit) {
@@ -97,30 +112,12 @@ export class RateLimitGuard implements CanActivate {
     }
   }
 
-  /**
-   * Redis indisponible : on ferme plutôt que d'ouvrir. Le limiteur est le seul
-   * rempart contre le bourrage d'identifiants, et les sessions vivent déjà dans
-   * Redis — le laisser en panne rendrait l'authentification incohérente de toute façon.
-   */
-  private unavailable(): HttpException {
-    return new HttpException(
-      {
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Service temporairement indisponible. Réessayez dans un instant.',
-      },
-      HttpStatus.SERVICE_UNAVAILABLE,
-    );
-  }
-
   private identity(request: FastifyRequest, options: RateLimitOptions): string {
     if (options.by === 'ip') return request.ip;
 
     // La garde s'exécute avant la validation : le corps est brut, peut-être absent.
     const body = request.body as { email?: unknown } | null | undefined;
     const raw = body && typeof body === 'object' ? body.email : undefined;
-    const email =
-      typeof raw === 'string' ? raw.trim().toLowerCase().slice(0, EMAIL_MAX_LENGTH) : 'anonyme';
-
-    return `${request.ip}:${email}`;
+    return ipEmailIdentity(request.ip, typeof raw === 'string' ? raw : 'anonyme');
   }
 }

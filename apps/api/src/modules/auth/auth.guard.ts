@@ -1,18 +1,27 @@
 import '@fastify/cookie'; // augmente FastifyRequest de `cookies` et `unsignCookie`
-import { type CanActivate, type ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  type CanActivate,
+  type ExecutionContext,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { SessionUser } from '@jobtrack/shared';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { CSRF_COOKIE, csrfTokenFor } from '../../common/csrf.guard';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
+import { serviceUnavailable } from '../../common/service-unavailable';
+import { SESSION_COOKIE, setAuthCookies } from './auth.cookies';
 import { AuthService } from './auth.service';
-import { SESSION_ID_PATTERN, SessionService, type StoredSession } from './session.service';
-
-export const SESSION_COOKIE = 'jt_session';
+import { SESSION_ID_PATTERN, SessionService, type StoredSession, type TouchedSession } from './session.service';
 
 export type AuthenticatedRequest = FastifyRequest & { user: SessionUser; session: StoredSession };
 
 @Injectable()
 export class AuthGuard implements CanActivate {
+  private readonly logger = new Logger(AuthGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly sessions: SessionService,
@@ -37,7 +46,15 @@ export class AuthGuard implements CanActivate {
       throw this.unauthorized();
     }
 
-    const session = await this.sessions.touch(unsigned.value);
+    let session: TouchedSession | null;
+    try {
+      session = await this.sessions.touch(unsigned.value);
+    } catch (error) {
+      // Redis indisponible : les sessions n'y vivent qu'à cet endroit, aucune requête
+      // authentifiée ne peut aboutir. Un 503 explicite plutôt qu'un 500 générique ou un faux 401.
+      this.logger.error(`Session Redis indisponible : ${(error as Error).message}`);
+      throw serviceUnavailable();
+    }
     if (!session) throw this.unauthorized();
 
     // Une requête Postgres par appel authentifié : c'est ce qui détecte un compte supprimé.
@@ -47,6 +64,12 @@ export class AuthGuard implements CanActivate {
       // L'utilisateur a été supprimé : la session ne doit pas survivre.
       await this.sessions.destroy(session.id, session.userId);
       throw this.unauthorized();
+    }
+
+    // Renouvelle les cookies au rythme du rafraîchissement Redis (une fois par minute au plus) :
+    // le maxAge du navigateur glisse comme le TTL de la session, et un cookie CSRF perdu se répare.
+    if (session.refreshed || request.cookies?.[CSRF_COOKIE] !== csrfTokenFor(session.id)) {
+      setAuthCookies(context.switchToHttp().getResponse<FastifyReply>(), session.id);
     }
 
     request.user = user;

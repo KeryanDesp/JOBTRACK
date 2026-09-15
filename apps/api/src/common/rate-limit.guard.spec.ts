@@ -2,7 +2,7 @@ import { HttpException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RedisService } from './redis.service';
-import { RateLimit, RateLimitGuard, type RateLimitOptions } from './rate-limit.guard';
+import { ipEmailIdentity, RateLimit, RateLimitGuard, rateLimitKey, type RateLimitOptions } from './rate-limit.guard';
 
 const redis = new RedisService();
 // Préfixe par processus : deux workers vitest ne doivent pas partager les compteurs.
@@ -109,6 +109,11 @@ describe('RateLimitGuard', () => {
     await expect(
       guard.canActivate(contextFor('7.7.7.7', { email: 'deux@example.com' })),
     ).rejects.toThrowError(HttpException);
+
+    // rateLimitKey/ipEmailIdentity doivent produire exactement la clé que la garde a écrite,
+    // sinon une remise à zéro externe (ex. après une connexion réussie) viserait la mauvaise clé.
+    const key = rateLimitKey(ROUTE, ipEmailIdentity('7.7.7.7', 'un@example.com'));
+    expect(await redis.client.get(key)).toBe('1');
   });
 
   it('refuse en 503 quand redis est indisponible', async () => {
