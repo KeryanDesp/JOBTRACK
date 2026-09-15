@@ -6,6 +6,7 @@ import { AppToaster } from './app-toaster';
 
 describe('AppToaster', () => {
   beforeEach(() => {
+    useThemeStore.setState({ mode: 'light' });
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockReturnValue({

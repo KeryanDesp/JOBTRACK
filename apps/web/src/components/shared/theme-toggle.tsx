@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { ThemeMode } from '@/lib/theme';
@@ -28,16 +29,14 @@ export function ThemeToggle() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {OPTIONS.map(({ mode: value, label, Icon }) => (
-          <DropdownMenuItem
-            key={value}
-            onSelect={() => setMode(value)}
-            className={value === mode ? 'text-primary' : undefined}
-          >
-            <Icon className="mr-2 size-4" />
-            {label}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuRadioGroup value={mode} onValueChange={(value) => setMode(value as ThemeMode)}>
+          {OPTIONS.map(({ mode: value, label, Icon }) => (
+            <DropdownMenuRadioItem key={value} value={value}>
+              <Icon className="mr-2 size-4" />
+              {label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
