@@ -35,6 +35,22 @@ describe('apiRequest', () => {
     });
   });
 
+  it('conserve les en-tetes fournis sous forme d_instance Headers', async () => {
+    // Un spread d'objet sur une instance Headers donne {} : les en-têtes seraient perdus.
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/profile', {
+      method: 'PATCH',
+      headers: new Headers({ 'x-csrf-token': 'jeton' }),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sent = new Headers(init.headers);
+    expect(sent.get('x-csrf-token')).toBe('jeton');
+    expect(sent.get('content-type')).toBe('application/json');
+  });
+
   it('signale une panne reseau avec un message comprehensible', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 

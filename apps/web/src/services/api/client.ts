@@ -31,15 +31,17 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
 
+  // new Headers() accepte les trois formes de HeadersInit ; un spread d'objet
+  // sur une instance Headers donnerait {} et perdrait silencieusement les en-têtes.
+  const headers = new Headers(init.headers);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+
   try {
     response = await fetch(`${BASE_URL}${path}`, {
       ...init,
       // Indispensable : le cookie de session est httpOnly et cross-origin en développement.
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...init.headers,
-      },
+      headers,
     });
   } catch {
     throw new ApiError(NETWORK_MESSAGE, 0);
