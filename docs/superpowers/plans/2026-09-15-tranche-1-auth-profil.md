@@ -852,6 +852,8 @@ git commit -m "feat(api): validation zod et format d erreur unifie"
 
 ## Task 4: Service de sessions
 
+> **Amendement après revue (code livré : `12f2f40` + correctif).** Deux bugs critiques prouvés sur Redis et corrigés : (1) `touch` ne prolongeait que la session, pas l'index `user_sessions:{userId}` — après 30 jours, une session active échappait à `list()` et à `destroyAllForUser()`, donc une réinitialisation de mot de passe ne la révoquait plus ; `touch` fait désormais `SADD` + `EXPIRE` sur l'index (le `SADD` recrée un index expiré, un `EXPIRE` seul serait un no-op). (2) Course `touch`/`destroy` : l'écriture est `SET … EX … XX`, et un résultat `null`/`0` renvoie « session absente » au lieu de ressusciter une session révoquée. Aussi : identifiant validé par `^[A-Za-z0-9_-]{43}$` avant tout accès Redis ; JSON corrompu supprimé (pas d'orpheline) ; `userAgent` tronqué à 256 ; `lastSeenAt` réécrit au plus une fois par minute (le TTL, lui, toujours prolongé) ; **`SESSION_TTL_SECONDS` exporté** — le cookie doit l'utiliser pour `maxAge` ; **`touch` renvoie `StoredSession` (avec `id`)**. 10 tests, `USER_ID` suffixé par `process.pid`. 27 tests API après cette tâche.
+
 > **Amendement.** Redis tourne via Homebrew sur 6379 (pas de `docker compose`). `RedisService` est paresseux depuis la tranche 0 (`lazyConnect: true`, connexion dans `onModuleInit`) : le test instancie le service directement sans appeler `onModuleInit`, ce qui fonctionne car ioredis se connecte à la première commande. Chaque test utilise un `USER_ID` propre pour ne pas entrer en collision avec des sessions réelles. 18 tests API attendus après cette tâche (13 + 5).
 
 Les sessions vivent dans Redis, pas en base : la révocation est alors immédiate et ne coûte pas une écriture Postgres à chaque requête. Ces tests s'exécutent contre le Redis local (Homebrew, 6379).
@@ -1172,7 +1174,7 @@ git commit -m "feat(api): hachage argon2id des mots de passe"
 
 ## Task 6: Service d'authentification et garde de session
 
-> **Amendement.** (1) 32 tests API attendus (22 après la tâche 4, +5 tâche 5, +5 ici). (2) **Course à l'inscription** : `findUnique` puis `create` ne suffit pas — deux inscriptions simultanées sur le même email passent le contrôle, et la seconde échoue sur la contrainte unique (Prisma `P2002`, ou l'index `User_email_lower_key`). Entourer le `create` d'un `try/catch` qui mappe `PrismaClientKnownRequestError` code `P2002` vers la même `ConflictException` `EMAIL_TAKEN` ; garder le `findUnique` préalable pour le cas courant. Ajouter un test qui insère l'email directement via Prisma puis appelle `register` sans passer par le contrôle — le 409 doit venir du `catch`. (3) `request.cookies` et `request.unsignCookie` n'existent sur `FastifyRequest` que si l'augmentation de types de `@fastify/cookie` est chargée : ajouter `import '@fastify/cookie';` en tête de `auth.guard.ts`. (4) **Valider la forme du cookie avant Redis** : la garde rejette tout identifiant ne correspondant pas à `^[A-Za-z0-9_-]{43}$` sans interroger Redis. (5) La revue qualité de la tâche 4 peut ajouter des exigences sur la garde — voir son amendement.
+> **Amendement.** (1) 37 tests API attendus (27 après la tâche 4 corrigée, +5 tâche 5, +5 ici). (2) **Course à l'inscription** : `findUnique` puis `create` ne suffit pas — deux inscriptions simultanées sur le même email passent le contrôle, et la seconde échoue sur la contrainte unique (Prisma `P2002`, ou l'index `User_email_lower_key`). Entourer le `create` d'un `try/catch` qui mappe `PrismaClientKnownRequestError` code `P2002` vers la même `ConflictException` `EMAIL_TAKEN` ; garder le `findUnique` préalable pour le cas courant. Ajouter un test qui insère l'email directement via Prisma puis appelle `register` sans passer par le contrôle — le 409 doit venir du `catch`. (3) `request.cookies` et `request.unsignCookie` n'existent sur `FastifyRequest` que si l'augmentation de types de `@fastify/cookie` est chargée : ajouter `import '@fastify/cookie';` en tête de `auth.guard.ts`. (4) **Valider la forme du cookie avant Redis** : la garde rejette tout identifiant ne correspondant pas à `^[A-Za-z0-9_-]{43}$` sans interroger Redis. (5) Exigences issues de la revue de la tâche 4 : la garde valide la forme du cookie avant d'appeler `touch` (rejet immédiat sans Redis), traite un `null` de `touch` comme « non authentifié », attache `request.session = touch(...)` (qui porte l'`id`) plutôt que de re-dériver l'id du cookie, et le cookie utilise `SESSION_TTL_SECONDS` pour `maxAge`. 37 tests API attendus (27 + 5 tâche 5 + 5 ici).
 
 **Files:**
 - Create: `apps/api/src/modules/auth/auth.service.ts`, `auth.guard.ts`
@@ -1445,7 +1447,7 @@ export class AuthGuard implements CanActivate {
 - [ ] **Step 5: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test`
-Expected: PASS — 32 tests au total.
+Expected: PASS — 37 tests au total.
 
 - [ ] **Step 6: Commit**
 
