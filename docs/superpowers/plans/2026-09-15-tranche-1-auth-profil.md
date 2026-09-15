@@ -413,6 +413,8 @@ git commit -m "feat(api): modele de donnees utilisateur et profil"
 
 ## Task 2: Contrat Zod partagé
 
+> **Amendement.** `packages/shared` compte déjà 8 tests (`env.test.ts`) et exporte `./health` ; les helpers d'environnement utilisent `z.preprocess`, réservé aux schémas d'environnement — les schémas de formulaires ci-dessous n'en utilisent pas, pour préserver `z.input<>` côté React Hook Form.
+
 Ces schémas sont la source de vérité : le backend les utilise pour valider, le frontend pour valider les formulaires. Aucune règle de validation n'est écrite deux fois.
 
 **Files:**
@@ -641,18 +643,19 @@ export type ProjectInput = z.infer<typeof projectSchema>;
 export type ReorderInput = z.infer<typeof reorderSchema>;
 ```
 
-`packages/shared/src/index.ts` :
+`packages/shared/src/index.ts` — `./health` existe depuis la tranche 0 :
 
 ```ts
 export * from './auth';
 export * from './env';
+export * from './health';
 export * from './profile';
 ```
 
 - [ ] **Step 5: Lancer les tests et construire**
 
 Run: `pnpm --filter @jobtrack/shared test && pnpm --filter @jobtrack/shared build`
-Expected: PASS — 9 tests, et `dist/` régénéré.
+Expected: PASS — 13 tests (8 env + 5 auth), et `dist/` régénéré (`index.js`, `index.cjs`, `index.d.ts`).
 
 - [ ] **Step 6: Commit**
 
