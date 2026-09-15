@@ -12,7 +12,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
 
   constructor() {
-    this.client = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: true });
+    this.client = new Redis(env.REDIS_URL, {
+      maxRetriesPerRequest: 2,
+      lazyConnect: true,
+      // Borne l'attente au démarrage : sans cela, un Redis qui absorbe les
+      // paquets retarderait onModuleInit de 10 s (délai par défaut d'ioredis).
+      connectTimeout: 2000,
+    });
 
     // Sans écouteur, ioredis écrit chaque erreur de connexion sur la console.
     // Niveau warn : une reconnexion transitoire est attendue, et isReachable()
