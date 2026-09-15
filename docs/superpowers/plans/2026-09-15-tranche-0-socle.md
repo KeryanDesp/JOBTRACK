@@ -575,6 +575,7 @@ git commit -m "feat(shared): contrat zod partage et validation de l environnemen
     "@fastify/cookie": "^9.4.0",
     "@fastify/helmet": "^11.1.0",
     "@prisma/client": "^5.20.0",
+    "dotenv": "^16.4.0",
     "ioredis": "^5.4.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
@@ -643,7 +644,15 @@ export default defineConfig({
 `apps/api/src/config/env.ts` :
 
 ```ts
+import { resolve } from 'node:path';
+import { config as loadDotenv } from 'dotenv';
 import { serverEnvSchema, type ServerEnv } from '@jobtrack/shared';
+
+// Le `.env` vit à la racine du monorepo. Selon qu'on lance depuis la racine
+// (`pnpm dev`) ou depuis `apps/api` (`pnpm --filter @jobtrack/api dev`),
+// il est à `./.env` ou à `../../.env`. Un fichier absent est ignoré sans
+// erreur : en CI et en production, les variables viennent de l'environnement.
+loadDotenv({ path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')] });
 
 /**
  * Valide l'environnement au démarrage. En cas d'erreur le processus s'arrête :
@@ -718,7 +727,10 @@ void bootstrap();
 - [ ] **Step 4: Vérifier le démarrage**
 
 Run: `pnpm --filter @jobtrack/api dev`
-Expected: le log `API démarrée sur http://localhost:3001/api/v1` s'affiche sans erreur. Arrêter avec Ctrl-C.
+Expected: le log `API démarrée sur http://localhost:3001/api/v1` s'affiche sans erreur — ce qui prouve au passage que le `.env` racine a bien été chargé depuis `apps/api`. Arrêter avec Ctrl-C.
+
+Run (depuis la racine) : `pnpm dev --filter @jobtrack/api`
+Expected: même log — le `.env` est aussi trouvé depuis la racine.
 
 Run: `API_PORT=3001 WEB_ORIGIN=pas-une-url pnpm --filter @jobtrack/api dev`
 Expected: le démarrage échoue avec `Configuration invalide. Corrigez votre fichier .env :` suivi de la ligne `- WEB_ORIGIN : Invalid url`. C'est le comportement voulu.
