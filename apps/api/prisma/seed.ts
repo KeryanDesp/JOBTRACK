@@ -1,15 +1,11 @@
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
+import { ARGON2_OPTIONS } from '../src/modules/auth/argon2.options';
 
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
-  const passwordHash = await argon2.hash('DemoJobTrack2026!', {
-    type: argon2.argon2id,
-    memoryCost: 19456,
-    timeCost: 2,
-    parallelism: 1,
-  });
+  const passwordHash = await argon2.hash('DemoJobTrack2026!', ARGON2_OPTIONS);
 
   // Le profil de démo est recréé de zéro à chaque seed : toute modification
   // faite à la main sur ce compte est perdue. C'est voulu pour une fixture.
