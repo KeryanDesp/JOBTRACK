@@ -16,8 +16,9 @@ interface ErrorPayload {
 }
 
 /**
- * Messages français pour les exceptions intégrées de Nest, qui n'ont pas de
- * `code` et portent un message technique en anglais (« Cannot GET /x »).
+ * Messages français par statut pour les erreurs qui n'ont pas de `code` :
+ * exceptions intégrées de Nest (« Cannot GET /x ») et erreurs levées par
+ * Fastify lui-même (corps trop volumineux, type de contenu refusé).
  */
 const BUILT_IN: Record<number, { code: string; message: string }> = {
   400: { code: 'BAD_REQUEST', message: 'Requête invalide.' },
@@ -37,6 +38,14 @@ const GENERIC: ErrorPayload = {
   message: 'Une erreur est survenue. Veuillez réessayer.',
 };
 
+/** Statuts 4xx dignes d'une trace : tentatives d'accès et limitation de débit. */
+const WARNED_STATUSES = new Set([401, 403, 429]);
+
+function knownClientError(statusCode: number): ErrorPayload {
+  const known = BUILT_IN[statusCode];
+  return known ? { statusCode, ...known } : { statusCode, code: 'HTTP_ERROR', message: 'Requête refusée.' };
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -47,14 +56,26 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (payload.statusCode >= 500) {
       // Le détail technique reste dans les logs ; l'utilisateur reçoit un message neutre.
-      this.logger.error(exception);
+      // Deux arguments : sans la pile en second, le Logger de Nest n'imprime qu'une ligne.
+      const error = exception instanceof Error ? exception : new Error(String(exception));
+      this.logger.error(error.message, error.stack);
+    } else if (WARNED_STATUSES.has(payload.statusCode)) {
+      this.logger.warn(`${payload.statusCode} ${payload.code}`);
     }
 
     void reply.status(payload.statusCode).send(payload);
   }
 
   private toPayload(exception: unknown): ErrorPayload {
-    if (!(exception instanceof HttpException)) return GENERIC;
+    if (!(exception instanceof HttpException)) {
+      // Erreur levée par Fastify avant Nest (413, 415…) : un `statusCode` numérique
+      // sans HttpException. La traiter comme inattendue en ferait un faux 500.
+      const statusCode = (exception as { statusCode?: unknown } | null)?.statusCode;
+      if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) {
+        return knownClientError(statusCode);
+      }
+      return GENERIC;
+    }
 
     const statusCode = exception.getStatus();
     const response = exception.getResponse();
@@ -65,10 +86,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return { statusCode, ...body };
     }
 
-    // Exception intégrée de Nest : message technique anglais, remplacé par statut.
-    const known = BUILT_IN[statusCode];
-    if (known) return { statusCode, ...known };
-
-    return statusCode >= 500 ? GENERIC : { statusCode, code: 'HTTP_ERROR', message: 'Requête refusée.' };
+    return statusCode >= 500 ? GENERIC : knownClientError(statusCode);
   }
 }

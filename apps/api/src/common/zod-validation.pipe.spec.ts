@@ -30,4 +30,23 @@ describe('ZodValidationPipe', () => {
       expect(response.details.age).toBeDefined();
     }
   });
+
+  it('accepte un schema a transformation et renvoie sa sortie', () => {
+    const transforming = z.object({ n: z.union([z.literal(''), z.coerce.number()]).transform((v) => (v === '' ? undefined : v)) });
+    const pipe = new ZodValidationPipe(transforming);
+    expect(pipe.transform({ n: '' })).toEqual({});
+    expect(pipe.transform({ n: '4' })).toEqual({ n: 4 });
+  });
+
+  it('rattache une erreur globale a la cle form', () => {
+    const withRefine = z.object({ a: z.number(), b: z.number() }).refine((v) => v.a <= v.b, { message: 'a doit etre <= b' });
+    const pipe = new ZodValidationPipe(withRefine);
+    try {
+      pipe.transform({ a: 2, b: 1 });
+      expect.unreachable();
+    } catch (error) {
+      const response = (error as BadRequestException).getResponse() as { details: Record<string, string> };
+      expect(response.details.form).toBe('a doit etre <= b');
+    }
+  });
 });

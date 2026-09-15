@@ -55,4 +55,21 @@ describe('HttpExceptionFilter', () => {
     expect(errorSpy).toHaveBeenCalledOnce();
     errorSpy.mockRestore();
   });
+
+  it('classe une erreur Fastify portant un statusCode 4xx comme erreur client, pas comme 500', () => {
+    const fastifyError = Object.assign(new Error('Request body is too large'), {
+      statusCode: 413,
+      code: 'FST_ERR_CTP_BODY_TOO_LARGE',
+    });
+    const { status, body } = run(fastifyError);
+    expect(status).toBe(413);
+    expect(body).toEqual({ statusCode: 413, code: 'PAYLOAD_TOO_LARGE', message: 'Le contenu envoyé est trop volumineux.' });
+  });
+
+  it('journalise la pile d_une erreur inattendue', () => {
+    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    run(new Error('boum'));
+    expect(errorSpy).toHaveBeenCalledWith('boum', expect.stringContaining('Error: boum'));
+    errorSpy.mockRestore();
+  });
 });
