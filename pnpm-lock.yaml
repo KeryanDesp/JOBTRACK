@@ -179,7 +179,7 @@ importers:
   packages/config:
     dependencies:
       eslint:
-        specifier: '>=9'
+        specifier: ^10.0.0
         version: 10.10.0
       prettier:
         specifier: '>=3.3'
