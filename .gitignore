@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+*.log
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+playwright-report/
+test-results/
+
+# Documents personnels utilisés comme fixtures locales — jamais versionnés
+fixtures/private/
