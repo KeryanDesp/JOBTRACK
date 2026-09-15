@@ -3,10 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "files": ["tsconfig.base.json", "eslint.config.js", "prettier.config.js"],
+  "files": ["tsconfig.base.json", "eslint.factory.js", "prettier.config.js"],
   "exports": {
     "./tsconfig.base.json": "./tsconfig.base.json",
-    "./eslint": "./eslint.config.js",
+    "./eslint": "./eslint.factory.js",
     "./prettier": "./prettier.config.js"
   },
   "peerDependencies": {
