@@ -936,18 +936,26 @@ Expected: FAIL — `Cannot find module './health.service'`.
 
 - [ ] **Step 5: Implémenter le module health**
 
-`apps/api/src/modules/health/health.service.ts` :
+`packages/shared/src/health.ts` — le contrat, exporté depuis `index.ts` :
 
 ```ts
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../common/prisma.service';
-import { RedisService } from '../../common/redis.service';
-
+/** Rapport de la sonde `GET /health`. Contrat unique, consommé par l'API et le frontend. */
 export interface HealthReport {
   status: 'ok' | 'degraded';
   services: { database: 'up' | 'down'; redis: 'up' | 'down' };
   timestamp: string;
 }
+```
+
+`apps/api/src/modules/health/health.service.ts` :
+
+```ts
+import { Injectable } from '@nestjs/common';
+import type { HealthReport } from '@jobtrack/shared';
+import { PrismaService } from '../../common/prisma.service';
+import { RedisService } from '../../common/redis.service';
+
+export type { HealthReport };
 
 @Injectable()
 export class HealthService {
@@ -2368,6 +2376,8 @@ git commit -m "feat(web): coquille applicative, navigation definitive et page 40
 
 ## Task 11: Client API et TanStack Query
 
+> **Amendement après revue.** (1) Le test du 401 utilise `toMatchObject` sur `status`, `code` et `message` — `toThrowError(instance)` ne compare que le message. (2) `Content-Type: application/json` n'est posé que si `init.body` est une chaîne : un `FormData` (import de CV, tranche 2) doit laisser le navigateur écrire `multipart/form-data` et sa frontière. (3) `BASE_URL` perd sa barre finale : Fastify ne tolère pas `//health` (404 vérifié). (4) **`HealthReport` vit dans `packages/shared/src/health.ts`** et est importé par `apps/api` et `apps/web` — pas de DTO dupliqué. 24 tests web après cette tâche (7 client).
+
 > **Amendement.** (1) `import.meta.env` n'est typé que si `vite/client` est référencé : cette tâche crée `apps/web/src/vite-env.d.ts` (fichier standard du scaffold Vite, jamais créé jusqu'ici) avec la déclaration de `VITE_API_URL`. (2) `main.tsx` conserve `AppToaster` (tâche 8). (3) 17 tests existent déjà ; on en attend 22 après cette tâche. (4) **Les en-têtes sont fusionnés via `new Headers(init.headers)`**, jamais par spread d'objet : un spread sur une instance `Headers` donne `{}` et perdrait l'en-tête CSRF de la tranche 1 sans erreur de type. Un test le garantit.
 
 Ce client est le seul point de sortie HTTP de l'application. Toutes les tranches suivantes l'utilisent — d'où l'importance de fixer ici `credentials: 'include'` (indispensable au cookie de session de la tranche 1) et le format d'erreur lisible.
@@ -2521,13 +2531,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 `apps/web/src/services/api/health.ts` :
 
 ```ts
+import type { HealthReport } from '@jobtrack/shared';
 import { apiRequest } from './client';
 
-export interface HealthReport {
-  status: 'ok' | 'degraded';
-  services: { database: 'up' | 'down'; redis: 'up' | 'down' };
-  timestamp: string;
-}
+export type { HealthReport };
 
 export function fetchHealth(): Promise<HealthReport> {
   return apiRequest<HealthReport>('/health');
@@ -2599,7 +2606,7 @@ createRoot(container).render(
 - [ ] **Step 6: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 22 tests au total.
+Expected: PASS — 24 tests au total.
 
 - [ ] **Step 7: Commit**
 
