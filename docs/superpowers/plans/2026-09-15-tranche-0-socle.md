@@ -365,6 +365,14 @@ git commit -m "chore: postgres 16 et redis 7 en docker compose"
 
 ## Task 3: Paquet partagé (contrat Zod)
 
+> **Amendement — configuration ESLint du paquet.** `@jobtrack/config/eslint` expose une **fabrique**, pas une configuration figée : `tsconfigRootDir` doit être la racine du paquet consommateur, faute de quoi `allowDefaultProject` ne correspond à rien et le lint plante fatalement. Ce paquet doit donc déclarer `eslint` (`^10.0.0`) en devDependency et créer son propre `eslint.config.js` :
+>
+> ```js
+> import { createEslintConfig } from '@jobtrack/config/eslint';
+>
+> export default createEslintConfig(import.meta.dirname);
+> ```
+
 `packages/shared` est la source de vérité du contrat d'API. Il est compilé par tsup vers `dist/` avec ses déclarations de types, ce qui le rend consommable à la fois par Vite (web) et par tsc (api).
 
 **Files:**
@@ -528,6 +536,14 @@ git commit -m "feat(shared): contrat zod partage et validation de l environnemen
 ---
 
 ## Task 4: API NestJS sur adaptateur Fastify
+
+> **Amendement — configuration ESLint du paquet.** `@jobtrack/config/eslint` expose une **fabrique**, pas une configuration figée : `tsconfigRootDir` doit être la racine du paquet consommateur, faute de quoi `allowDefaultProject` ne correspond à rien et le lint plante fatalement. Ce paquet doit donc déclarer `eslint` (`^10.0.0`) en devDependency et créer son propre `eslint.config.js` :
+>
+> ```js
+> import { createEslintConfig } from '@jobtrack/config/eslint';
+>
+> export default createEslintConfig(import.meta.dirname);
+> ```
 
 **Files:**
 - Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/nest-cli.json`, `apps/api/vitest.config.ts`
@@ -970,6 +986,14 @@ git commit -m "feat(api): prisma, redis et sonde health"
 ---
 
 ## Task 6: Application web et design system
+
+> **Amendement — configuration ESLint du paquet.** `@jobtrack/config/eslint` expose une **fabrique**, pas une configuration figée : `tsconfigRootDir` doit être la racine du paquet consommateur, faute de quoi `allowDefaultProject` ne correspond à rien et le lint plante fatalement. Ce paquet doit donc déclarer `eslint` (`^10.0.0`) en devDependency et créer son propre `eslint.config.js` :
+>
+> ```js
+> import { createEslintConfig } from '@jobtrack/config/eslint';
+>
+> export default createEslintConfig(import.meta.dirname);
+> ```
 
 Le fichier `tokens.css` est le cœur du design system. Aucune couleur, aucun rayon et aucune ombre ne doit être écrit en dur ailleurs dans l'application.
 
