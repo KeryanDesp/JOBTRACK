@@ -3237,6 +3237,8 @@ git commit -m "feat(web): landing page complete avec ses sept sections"
 
 ## Task 13: Intégration continue et recette
 
+> **Amendement.** La CI n'exécute que les tests unitaires ; les tests Playwright en CI (installation du navigateur, `webServer` qui démarre `pnpm dev`) sont un suivi de tranche 1. `node-version: 20` résout un 20.x ≥ 20.19 — requis pour `import.meta.dirname` et `require(esm)` ; la machine de développement est en Node 26.
+
 **Files:**
 - Create: `.github/workflows/ci.yml`
 - Create: `README.md`
@@ -3312,9 +3314,10 @@ CV adapté à chaque candidature et suivi complet du processus.
 ## Démarrage
 
 ```bash
-cp .env.example .env          # puis renseigner SESSION_SECRET
+cp .env.example .env          # puis SESSION_SECRET=$(openssl rand -base64 48)
 docker compose up -d          # Postgres 16 + Redis 7
 pnpm install
+pnpm --filter @jobtrack/api exec prisma generate --allow-no-models
 pnpm dev                      # web sur :5173, api sur :3001
 ```
 
@@ -3348,6 +3351,7 @@ nouveau port dans le `DATABASE_URL` de votre `.env`.
 | `pnpm lint` | ESLint |
 | `pnpm build` | Build de production |
 | `pnpm db:migrate` | Applique les migrations Prisma |
+| `pnpm --filter @jobtrack/web test:e2e` | Tests Playwright (après `pnpm --filter @jobtrack/web exec playwright install chromium`) |
 
 ## Documentation
 
@@ -3358,11 +3362,17 @@ Les spécifications et les plans d'implémentation sont dans `docs/superpowers/`
 
 Vérifier chacun des points suivants avant de déclarer la tranche terminée.
 
-Run: `docker compose down -v && docker compose up -d && pnpm install && pnpm dev`
-Expected: l'application démarre sans intervention manuelle autre que la copie de `.env`.
+> **Amendement — infrastructure Homebrew.** Sur cette machine les services tournent déjà via `brew services` (voir tâche 2) ; pas de `docker compose`. La recette vérifie simplement que tout démarre depuis un état propre du dépôt.
 
-Run: `curl -s localhost:3001/api/v1/health`
+Run: `pnpm install --frozen-lockfile && pnpm --filter @jobtrack/api exec prisma generate --allow-no-models && pnpm build`
+Expected: aucune erreur.
+
+Run (borné, depuis `apps/api`) : `timeout 15 node dist/main.js` puis `curl -s localhost:3001/api/v1/health`
+
 Expected: `{"status":"ok","services":{"database":"up","redis":"up"},...}`.
+
+Run: `pnpm --filter @jobtrack/web test:e2e`
+Expected: 8 tests Playwright verts (desktop + mobile).
 
 Ouvrir `http://localhost:5173` :
 - [ ] La landing affiche ses sept sections, en français, sans défilement horizontal.
