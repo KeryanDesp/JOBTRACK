@@ -1,4 +1,5 @@
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1';
+// Sans le `/` final : Fastify ne tolère pas les doubles barres, `//health` renverrait 404.
+const BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace(/\/+$/, '');
 
 const GENERIC_MESSAGE = 'Une erreur est survenue. Veuillez réessayer.';
 const NETWORK_MESSAGE = 'Connexion au serveur impossible. Vérifiez votre connexion internet.';
@@ -34,7 +35,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   // new Headers() accepte les trois formes de HeadersInit ; un spread d'objet
   // sur une instance Headers donnerait {} et perdrait silencieusement les en-têtes.
   const headers = new Headers(init.headers);
-  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  // JSON par défaut uniquement pour un corps texte : un FormData doit laisser le
+  // navigateur poser lui-même `multipart/form-data` avec sa frontière.
+  if (!headers.has('Content-Type') && typeof init.body === 'string') {
+    headers.set('Content-Type', 'application/json');
+  }
 
   try {
     response = await fetch(`${BASE_URL}${path}`, {

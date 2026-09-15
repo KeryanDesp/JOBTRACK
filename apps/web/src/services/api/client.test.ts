@@ -21,9 +21,13 @@ describe('apiRequest', () => {
   it('lève une ApiError portant le message lisible du serveur', async () => {
     stubFetch(Response.json({ message: 'Identifiants invalides.', code: 'INVALID_CREDENTIALS' }, { status: 401 }));
 
-    await expect(apiRequest('/auth/login', { method: 'POST' })).rejects.toThrowError(
-      new ApiError('Identifiants invalides.', 401, 'INVALID_CREDENTIALS'),
-    );
+    // toMatchObject et non toThrowError : ce dernier ne compare que le message.
+    await expect(apiRequest('/auth/login', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+      code: 'INVALID_CREDENTIALS',
+      message: 'Identifiants invalides.',
+    });
   });
 
   it('remplace une reponse illisible par un message francais generique', async () => {
@@ -42,6 +46,7 @@ describe('apiRequest', () => {
 
     await apiRequest('/profile', {
       method: 'PATCH',
+      body: '{}',
       headers: new Headers({ 'x-csrf-token': 'jeton' }),
     });
 
@@ -49,6 +54,27 @@ describe('apiRequest', () => {
     const sent = new Headers(init.headers);
     expect(sent.get('x-csrf-token')).toBe('jeton');
     expect(sent.get('content-type')).toBe('application/json');
+  });
+
+  it('ne force pas de Content-Type sur un FormData', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/resume/import', { method: 'POST', body: new FormData() });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).has('content-type')).toBe(false);
+  });
+
+  it('supprime la barre finale de l_URL de base', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/health');
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain('//health');
+    expect(url.endsWith('/health')).toBe(true);
   });
 
   it('signale une panne reseau avec un message comprehensible', async () => {

@@ -1,12 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma.service';
+import type { HealthReport } from '@jobtrack/shared';
 import { RedisService } from '../../common/redis.service';
 
-export interface HealthReport {
-  status: 'ok' | 'degraded';
-  services: { database: 'up' | 'down'; redis: 'up' | 'down' };
-  timestamp: string;
-}
+export type { HealthReport };
 
 @Injectable()
 export class HealthService {
