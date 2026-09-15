@@ -1048,6 +1048,8 @@ git commit -m "feat(api): prisma, redis et sonde health"
 
 ## Task 6: Application web et design system
 
+> **Amendement après revue.** Les valeurs OKLCH ci-dessous ont été vérifiées par reconversion en sRGB (culori, ΔE2000) : violets et fonds sombres exacts à ΔE ≤ 0,65 ; `destructive` et `warning` recalculés depuis leurs hex (ils dérivaient de 3,6 et 2,3). Contrastes WCAG des cinq paires clés tous ≥ 4,71:1 (AA texte normal). L'`@import 'tailwindcss'` porte `source('../../')` pour limiter le scan à `apps/web`.
+
 > **Amendement — configuration ESLint du paquet.** `@jobtrack/config/eslint` expose une **fabrique**, pas une configuration figée : `tsconfigRootDir` doit être la racine du paquet consommateur, faute de quoi `allowDefaultProject` ne correspond à rien et le lint plante fatalement. Ce paquet doit donc déclarer `eslint` (`^10.0.0`) en devDependency et créer son propre `eslint.config.js` :
 >
 > ```js
@@ -1173,7 +1175,8 @@ import '@testing-library/jest-dom/vitest';
 `apps/web/src/styles/tokens.css` — les valeurs OKLCH correspondent aux hexadécimaux du cahier des charges, rappelés en commentaire.
 
 ```css
-@import 'tailwindcss';
+/* source() limite le scan des classes à apps/web : sans cela Tailwind parcourt tout le monorepo. */
+@import 'tailwindcss' source('../../');
 @import 'tw-animate-css';
 @import '@fontsource-variable/inter';
 
@@ -1249,10 +1252,10 @@ import '@testing-library/jest-dom/vitest';
   --accent: oklch(0.969 0.014 293); /* #F5F3FF — violet très atténué */
   --accent-foreground: oklch(0.491 0.234 293); /* #6D28D9 */
 
-  --destructive: oklch(0.577 0.245 27.3); /* #DC2626 */
+  --destructive: oklch(0.577 0.215 27.3); /* #DC2626 */
   --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.627 0.17 149); /* #16A34A */
-  --warning: oklch(0.646 0.15 58); /* #D97706 */
+  --success: oklch(0.627 0.170 149.2); /* #16A34A */
+  --warning: oklch(0.666 0.157 58.3); /* #D97706 */
 
   --border: oklch(0.922 0.004 286); /* #E5E7EB */
   --input: oklch(0.922 0.004 286);
@@ -1301,8 +1304,8 @@ import '@testing-library/jest-dom/vitest';
 
   --destructive: oklch(0.637 0.208 25.3); /* #EF4444 */
   --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.723 0.19 149.6); /* #22C55E */
-  --warning: oklch(0.769 0.16 70); /* #F59E0B */
+  --success: oklch(0.723 0.192 149.6); /* #22C55E */
+  --warning: oklch(0.769 0.165 70.1); /* #F59E0B */
 
   --border: oklch(0.274 0.006 286); /* #27272A */
   --input: oklch(0.274 0.006 286);
@@ -2682,6 +2685,8 @@ export function DashboardPreview() {
   );
 }
 ```
+
+> **Amendement après revue (tâche 6).** Le bloc `prefers-reduced-motion` de `tokens.css` neutralise les animations CSS, mais **pas** Framer Motion, qui anime `transform`/`opacity` en JavaScript. Avant d'ajouter la première animation, envelopper l'application dans `<MotionConfig reducedMotion="user">` (depuis `framer-motion`) dans `apps/web/src/main.tsx`, autour du `RouterProvider`. Sinon la promesse « respecter le réglage système » du cahier des charges est fausse pour tout ce qui bouge dans l'app.
 
 `apps/web/src/features/landing/sections/hero-section.tsx` :
 
