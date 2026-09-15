@@ -24,7 +24,7 @@ export function createEslintConfig(tsconfigRootDir) {
           // toutes hors du `include` de src. `**` est refusé par typescript-eslint :
           // n'utilise que des motifs simples.
           projectService: {
-            allowDefaultProject: ['*.js', '*.config.*', 'prisma/*.ts', 'e2e/*.ts'],
+            allowDefaultProject: ['*.js', '*.config.*', 'prisma/*.ts'],
           },
           tsconfigRootDir,
         },

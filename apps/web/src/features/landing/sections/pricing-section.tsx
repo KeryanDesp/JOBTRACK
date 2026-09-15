@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -46,7 +47,10 @@ export function PricingSection() {
             key={plan.name}
             className={cn('p-6', plan.highlighted && 'border-primary/40 shadow-md')}
           >
-            <p className="text-sm font-medium">{plan.name}</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">{plan.name}</p>
+              {plan.highlighted && <Badge>Recommandé</Badge>}
+            </div>
             <p className="mt-3">
               <span className="text-3xl font-semibold tracking-tight">{plan.price}</span>
               <span className="text-muted-foreground text-sm">{plan.period}</span>

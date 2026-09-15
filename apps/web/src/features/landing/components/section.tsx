@@ -12,7 +12,7 @@ interface SectionProps {
 
 export function Section({ id, eyebrow, title, description, children, className }: SectionProps) {
   return (
-    <section id={id} className={cn('border-border/60 border-t px-6 py-20 lg:py-28', className)}>
+    <section id={id} className={cn('border-border/60 scroll-mt-20 border-t px-6 py-20 lg:py-28', className)}>
       <div className="mx-auto max-w-5xl">
         {eyebrow && <p className="text-primary mb-3 text-sm font-medium">{eyebrow}</p>}
         <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-balance lg:text-4xl">
