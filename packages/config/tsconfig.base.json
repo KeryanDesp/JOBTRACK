@@ -4,6 +4,9 @@
     "target": "ES2022",
     "lib": ["ES2022"],
     "module": "ESNext",
+    // Toute surcharge de "module" dans un tsconfig consommateur doit s'accompagner
+    // d'une "moduleResolution" compatible (ex. "module": "CommonJS" + "moduleResolution": "Node10") :
+    // "Bundler" exige "module": "preserve" ou "es2015"+, sinon TS5095.
     "moduleResolution": "Bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
