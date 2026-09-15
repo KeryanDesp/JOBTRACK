@@ -850,7 +850,9 @@ git commit -m "feat(api): validation zod et format d erreur unifie"
 
 ## Task 4: Service de sessions
 
-Les sessions vivent dans Redis, pas en base : la révocation est alors immédiate et ne coûte pas une écriture Postgres à chaque requête. Ces tests s'exécutent contre le Redis de `docker compose`.
+> **Amendement.** Redis tourne via Homebrew sur 6379 (pas de `docker compose`). `RedisService` est paresseux depuis la tranche 0 (`lazyConnect: true`, connexion dans `onModuleInit`) : le test instancie le service directement sans appeler `onModuleInit`, ce qui fonctionne car ioredis se connecte à la première commande. Chaque test utilise un `USER_ID` propre pour ne pas entrer en collision avec des sessions réelles. 18 tests API attendus après cette tâche (13 + 5).
+
+Les sessions vivent dans Redis, pas en base : la révocation est alors immédiate et ne coûte pas une écriture Postgres à chaque requête. Ces tests s'exécutent contre le Redis local (Homebrew, 6379).
 
 **Files:**
 - Create: `apps/api/src/modules/auth/session.service.ts`
@@ -922,7 +924,7 @@ describe('SessionService', () => {
 
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
-Run: `docker compose up -d && pnpm --filter @jobtrack/api test session.service`
+Run: `pnpm --filter @jobtrack/api test session.service`
 Expected: FAIL — `Cannot find module './session.service'`.
 
 - [ ] **Step 3: Implémenter le service**
