@@ -1,16 +1,27 @@
-import { Link } from 'react-router-dom';
-import { Logo } from '@/components/shared/logo';
-import { Button } from '@/components/ui/button';
+import { LandingFooter } from './components/landing-footer';
+import { LandingHeader } from './components/landing-header';
+import { AnalysisSection } from './sections/analysis-section';
+import { HeroSection } from './sections/hero-section';
+import { PipelineSection } from './sections/pipeline-section';
+import { PricingSection } from './sections/pricing-section';
+import { ResumeSection } from './sections/resume-section';
+import { SourcesSection } from './sections/sources-section';
+import { StatsSection } from './sections/stats-section';
 
-/** Page d'accueil provisoire. La landing complète arrive en tâche 12. */
 export function LandingPage() {
   return (
-    <div className="bg-background flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center">
-      <Logo />
-      <h1 className="text-3xl font-semibold tracking-tight">Toutes vos opportunités. Un seul endroit.</h1>
-      <Button asChild>
-        <Link to="/dashboard">Ouvrir l'application</Link>
-      </Button>
+    <div className="bg-background min-h-screen">
+      <LandingHeader />
+      <main>
+        <HeroSection />
+        <SourcesSection />
+        <AnalysisSection />
+        <ResumeSection />
+        <PipelineSection />
+        <StatsSection />
+        <PricingSection />
+      </main>
+      <LandingFooter />
     </div>
   );
 }
