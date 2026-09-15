@@ -46,6 +46,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # --allow-no-models : le schéma est vide jusqu'à la tranche 1 ; le drapeau reste inoffensif ensuite.
       - run: pnpm --filter @jobtrack/api exec prisma generate --allow-no-models
+      - run: pnpm --filter @jobtrack/api exec prisma migrate deploy
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm test
+      - run: pnpm test:e2e
