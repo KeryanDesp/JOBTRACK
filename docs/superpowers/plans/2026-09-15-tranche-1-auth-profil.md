@@ -672,12 +672,14 @@ git commit -m "feat(shared): schemas zod d authentification et de profil"
 
 ## Task 3: Validation et format d'erreur unifié
 
+> **Amendement.** Le filtre se branche dans `configureApp` (`app.setup.ts`), pas dans `main.ts`. Point d'attention pour l'implémentation : les exceptions **intégrées** de Nest (route inconnue → `NotFoundException` avec `message: "Cannot GET /x"`, corps JSON malformé → `BadRequestException`) n'ont pas de `code` et portent un message en anglais ; le filtre doit leur substituer un message français par statut (404 → « Ressource introuvable. », 400 → « Requête invalide. », 405, 413, 415…) plutôt que d'exposer `exception.message`.
+
 Le cahier des charges interdit d'afficher un code HTTP nu à l'utilisateur. Le filtre écrit ici garantit que toute erreur sortant de l'API porte un message français lisible.
 
 **Files:**
 - Create: `apps/api/src/common/zod-validation.pipe.ts`, `apps/api/src/common/http-exception.filter.ts`
 - Test: `apps/api/src/common/zod-validation.pipe.spec.ts`
-- Modify: `apps/api/src/main.ts`
+- Modify: `apps/api/src/app.setup.ts`
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -833,7 +835,7 @@ en ajoutant l'import `import { HttpExceptionFilter } from './common/http-excepti
 - [ ] **Step 5: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test`
-Expected: PASS — 5 tests au total.
+Expected: PASS — 10 tests au total (8 existants + 2).
 
 - [ ] **Step 6: Commit**
 
