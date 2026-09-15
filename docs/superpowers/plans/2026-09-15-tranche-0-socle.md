@@ -2000,11 +2000,14 @@ git commit -m "feat(web): composants partages logo, entete, etat vide et etat d 
 
 ## Task 10: Navigation, coquille applicative et routage
 
+> **Amendement.** `routes.tsx` importe `LandingPage`, qui n'existe qu'à la tâche 12. Cette tâche crée donc un **`apps/web/src/features/landing/landing-page.tsx` provisoire** — au même chemin, remplacé intégralement en tâche 12 — pour que le routeur compile. `main.tsx` monte aussi `AppToaster` (tâche 8). Le sélecteur de thème est déjà en radio accessible (tâche 8).
+
 **Files:**
 - Create: `apps/web/src/constants/navigation.ts`
 - Create: `apps/web/src/app/layouts/app-layout.tsx`, `apps/web/src/app/layouts/app-sidebar.tsx`, `apps/web/src/app/layouts/app-bottom-nav.tsx`
 - Create: `apps/web/src/app/router/routes.tsx`
 - Create: `apps/web/src/features/misc/coming-soon-page.tsx`, `apps/web/src/features/misc/not-found-page.tsx`
+- Create: `apps/web/src/features/landing/landing-page.tsx` (provisoire — voir amendement)
 - Test: `apps/web/src/app/layouts/app-sidebar.test.tsx`
 - Modify: `apps/web/src/main.tsx`
 
@@ -2278,6 +2281,27 @@ export function NotFoundPage() {
 
 - [ ] **Step 7: Câbler le routeur**
 
+`apps/web/src/features/landing/landing-page.tsx` — **provisoire**, remplacé en tâche 12 :
+
+```tsx
+import { Link } from 'react-router-dom';
+import { Logo } from '@/components/shared/logo';
+import { Button } from '@/components/ui/button';
+
+/** Page d'accueil provisoire. La landing complète arrive en tâche 12. */
+export function LandingPage() {
+  return (
+    <div className="bg-background flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-center">
+      <Logo />
+      <h1 className="text-3xl font-semibold tracking-tight">Toutes vos opportunités. Un seul endroit.</h1>
+      <Button asChild>
+        <Link to="/dashboard">Ouvrir l'application</Link>
+      </Button>
+    </div>
+  );
+}
+```
+
 `apps/web/src/app/router/routes.tsx` :
 
 ```tsx
@@ -2306,6 +2330,7 @@ export const router = createBrowserRouter([
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
+import { AppToaster } from './app/providers/app-toaster';
 import { ThemeProvider } from './app/providers/theme-provider';
 import { router } from './app/router/routes';
 import './styles/tokens.css';
@@ -2317,6 +2342,7 @@ createRoot(container).render(
   <StrictMode>
     <ThemeProvider>
       <RouterProvider router={router} />
+      <AppToaster />
     </ThemeProvider>
   </StrictMode>,
 );
@@ -2325,7 +2351,7 @@ createRoot(container).render(
 - [ ] **Step 8: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 13 tests au total.
+Expected: PASS — 14 tests au total.
 
 - [ ] **Step 9: Commit**
 
