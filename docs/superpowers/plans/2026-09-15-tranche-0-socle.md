@@ -2612,6 +2612,8 @@ git commit -m "feat(web): client api unique et provider tanstack query"
 
 ## Task 12: Landing page
 
+> **Amendement.** (1) Le profil Playwright `iPhone 13` impose WebKit, que le plan n'installe pas : le projet mobile utilise `devices['Pixel 7']` (Chromium). (2) Cette tâche enveloppe `RouterProvider` et `AppToaster` dans `<MotionConfig reducedMotion="user">` dans `main.tsx` — première animation Framer Motion du projet. (3) Les liens `/login` et `/register` mènent à la page 404 jusqu'à la tranche 1 : c'est attendu. (4) `landing-page.tsx` provisoire de la tâche 10 est remplacé intégralement.
+
 Une section = un fichier. Le composant `Section` porte l'espacement et la largeur communes ; aucune section ne redéfinit sa propre grille.
 
 **Point de vigilance (spec §55) :** les chiffres affichés (120 offres, 68 pertinentes…) sont des illustrations produit, pas des statistiques réelles. Chaque bloc chiffré porte la mention « Exemple illustratif ». Ne jamais les présenter comme des mesures.
@@ -2620,6 +2622,7 @@ Une section = un fichier. Le composant `Section` porte l'espacement et la largeu
 - Create: `apps/web/src/features/landing/landing-page.tsx`
 - Create: `apps/web/src/features/landing/components/section.tsx`, `landing-header.tsx`, `landing-footer.tsx`, `dashboard-preview.tsx`
 - Create: `apps/web/src/features/landing/sections/hero-section.tsx`, `sources-section.tsx`, `analysis-section.tsx`, `resume-section.tsx`, `pipeline-section.tsx`, `stats-section.tsx`, `pricing-section.tsx`
+- Modify: `apps/web/src/main.tsx` (`MotionConfig`)
 - Test: `apps/web/e2e/landing.spec.ts`, `apps/web/playwright.config.ts`
 
 - [ ] **Step 1: Écrire la primitive de section et l'en-tête**
@@ -3067,7 +3070,28 @@ export function PricingSection() {
 }
 ```
 
-- [ ] **Step 5: Écrire le pied de page et assembler**
+- [ ] **Step 5: Écrire le pied de page, assembler et activer le respect du mouvement réduit**
+
+`apps/web/src/main.tsx` — envelopper le routeur et le toaster :
+
+```tsx
+import { MotionConfig } from 'framer-motion';
+// … imports existants …
+
+createRoot(container).render(
+  <StrictMode>
+    <ThemeProvider>
+      <QueryProvider>
+        {/* reducedMotion="user" : Framer Motion respecte prefers-reduced-motion, que le CSS seul ne couvre pas. */}
+        <MotionConfig reducedMotion="user">
+          <RouterProvider router={router} />
+          <AppToaster />
+        </MotionConfig>
+      </QueryProvider>
+    </ThemeProvider>
+  </StrictMode>,
+);
+```
 
 `apps/web/src/features/landing/components/landing-footer.tsx` :
 
@@ -3144,7 +3168,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile', use: { ...devices['iPhone 13'] } },
+    // Pixel 7 et non iPhone 13 : le profil iPhone impose WebKit, que l'on n'installe pas.
+    { name: 'mobile', use: { ...devices['Pixel 7'] } },
   ],
 });
 ```
