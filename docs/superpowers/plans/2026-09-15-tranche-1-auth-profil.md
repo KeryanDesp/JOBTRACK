@@ -3614,7 +3614,7 @@ export function LoginPage() {
 }
 ```
 
-Ajouter la dépendance : `pnpm --filter @jobtrack/web add @hookform/resolvers`.
+`@hookform/resolvers` (5.x, compatible zod 3.25) est déjà installé depuis la tranche 0 — rien à ajouter.
 
 - [ ] **Step 5: Implémenter les trois autres pages**
 
@@ -3662,7 +3662,7 @@ export const router = createBrowserRouter([
           { path: '/settings', element: <SettingsPage /> },
           ...NAV_ITEMS.filter((item) => !LIVE_ROUTES.has(item.to)).map((item) => ({
             path: item.to,
-            element: <ComingSoonPage />,
+            element: <ComingSoonPage label={item.label} />,
           })),
         ],
       },

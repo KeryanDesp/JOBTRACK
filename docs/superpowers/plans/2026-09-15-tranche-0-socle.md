@@ -3399,6 +3399,17 @@ git commit -m "chore: integration continue et documentation de demarrage"
 
 ---
 
+## Amendements de la revue finale de branche
+
+Après les treize tâches, une revue transverse a imposé quatre changements (`0db89b0`) :
+
+1. **`postinstall` racine** : `pnpm --filter @jobtrack/api exec prisma generate --allow-no-models`. Sans lui, `pnpm dev` échouait sur un clone frais (`@prisma/client` n'existe qu'après génération) — le critère d'acceptation 1 n'était pas tenu.
+2. **Drapeaux `future` de React Router 6.30** sur `createBrowserRouter` (`v7_fetcherPersist`, `v7_normalizeFormMethod`, `v7_partialHydration`, `v7_relativeSplatPath`, `v7_skipActionErrorRevalidation`), `RouterProvider` (`v7_startTransition`) et les `MemoryRouter` de test : aucun effet observable aujourd'hui, plus d'avertissements.
+3. **`shouldRetry` extrait de `QueryProvider` et testé** (3 tests) : un 4xx n'est jamais rejoué — la gestion de session de la tranche 1 en dépend.
+4. **`apps/web/src/services/api/health.ts` supprimé** : `fetchHealth` n'avait aucun consommateur prévu. `HealthReport` reste dans `packages/shared` pour l'API.
+
+Vérifié en vrai navigateur par la revue : Helmet par défaut **ne bloque pas** le `fetch` cross-origin du front vers l'API (CORS aligné sur `WEB_ORIGIN`) — ne pas « corriger » ce point. Bundle web : 619 kB (195 kB gzip), dominé par react-dom et framer-motion ; le découpage par route se justifiera quand la tranche 1 alourdira `AppLayout`. Seams encore non testés, à couvrir en tranche 1 : rendu de `AppLayout`/`Outlet` sur une route de `NAV_ITEMS`, abonnement `matchMedia` de `ThemeProvider`.
+
 ## Ce que la tranche 0 ne livre pas
 
 Authentification, profil, import de CV, offres, IA, match score, PDF, candidatures, analytics réels, automatisation, abonnement. La tranche 1 enchaîne avec l'authentification et le profil — voir `docs/superpowers/plans/2026-09-15-tranche-1-auth-profil.md`.
