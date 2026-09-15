@@ -2002,6 +2002,8 @@ git commit -m "feat(web): composants partages logo, entete, etat vide et etat d 
 
 ## Task 10: Navigation, coquille applicative et routage
 
+> **Amendement après revue.** (1) `declaration: false` dans `apps/web/tsconfig.json` et `apps/api/tsconfig.json` : la valeur héritée de la base déclenchait TS2742 sur les types inférés de bibliothèques et faisait émettre des `.d.ts` morts — seul `packages/shared` publie des types. (2) `ComingSoonPage` reçoit `label` en prop depuis `routes.tsx` (`element: <ComingSoonPage label={item.label} />`) au lieu de le déduire de l'URL. (3) Le compte des entrées vit dans `src/constants/navigation.test.ts` (3 tests) ; le test de la sidebar ne fait qu'itérer `NAV_ITEMS`. Une `SheetDescription` masquée accompagne le panneau mobile (exigence Radix). 17 tests web après cette tâche.
+
 > **Amendement.** `routes.tsx` importe `LandingPage`, qui n'existe qu'à la tâche 12. Cette tâche crée donc un **`apps/web/src/features/landing/landing-page.tsx` provisoire** — au même chemin, remplacé intégralement en tâche 12 — pour que le routeur compile. `main.tsx` monte aussi `AppToaster` (tâche 8). Le sélecteur de thème est déjà en radio accessible (tâche 8).
 
 **Files:**
@@ -2353,7 +2355,7 @@ createRoot(container).render(
 - [ ] **Step 8: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 14 tests au total.
+Expected: PASS — 17 tests au total (14 + 3 sur les constantes de navigation).
 
 - [ ] **Step 9: Commit**
 
@@ -2366,7 +2368,7 @@ git commit -m "feat(web): coquille applicative, navigation definitive et page 40
 
 ## Task 11: Client API et TanStack Query
 
-> **Amendement.** (1) `import.meta.env` n'est typé que si `vite/client` est référencé : cette tâche crée `apps/web/src/vite-env.d.ts` (fichier standard du scaffold Vite, jamais créé jusqu'ici) avec la déclaration de `VITE_API_URL`. (2) `main.tsx` conserve `AppToaster` (tâche 8). (3) 14 tests existent déjà ; on en attend 18 après cette tâche.
+> **Amendement.** (1) `import.meta.env` n'est typé que si `vite/client` est référencé : cette tâche crée `apps/web/src/vite-env.d.ts` (fichier standard du scaffold Vite, jamais créé jusqu'ici) avec la déclaration de `VITE_API_URL`. (2) `main.tsx` conserve `AppToaster` (tâche 8). (3) 17 tests existent déjà ; on en attend 22 après cette tâche. (4) **Les en-têtes sont fusionnés via `new Headers(init.headers)`**, jamais par spread d'objet : un spread sur une instance `Headers` donne `{}` et perdrait l'en-tête CSRF de la tranche 1 sans erreur de type. Un test le garantit.
 
 Ce client est le seul point de sortie HTTP de l'application. Toutes les tranches suivantes l'utilisent — d'où l'importance de fixer ici `credentials: 'include'` (indispensable au cookie de session de la tranche 1) et le format d'erreur lisible.
 
@@ -2488,15 +2490,17 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
 
+  // `new Headers()` accepte les trois formes de HeadersInit ; un spread d'objet
+  // sur une instance Headers donnerait `{}` et perdrait silencieusement les en-têtes.
+  const headers = new Headers(init.headers);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+
   try {
     response = await fetch(`${BASE_URL}${path}`, {
       ...init,
       // Indispensable : le cookie de session est httpOnly et cross-origin en développement.
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...init.headers,
-      },
+      headers,
     });
   } catch {
     throw new ApiError(NETWORK_MESSAGE, 0);
@@ -2595,7 +2599,7 @@ createRoot(container).render(
 - [ ] **Step 6: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 18 tests au total.
+Expected: PASS — 22 tests au total.
 
 - [ ] **Step 7: Commit**
 

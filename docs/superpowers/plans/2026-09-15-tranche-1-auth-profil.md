@@ -3178,18 +3178,14 @@ function readCsrfCookie(): string | null {
 }
 ```
 
-puis remplacer la construction des en-têtes par :
+puis, juste après la construction existante de `headers` (`new Headers(init.headers)` + `Content-Type` par défaut, en place depuis la tranche 0), ajouter :
 
 ```ts
-    const headers = new Headers({ 'Content-Type': 'application/json', ...init.headers });
-
-    // Double-submit : le serveur compare cet en-tête au cookie jt_csrf.
-    if (MUTATING.has((init.method ?? 'GET').toUpperCase())) {
-      const csrf = readCsrfCookie();
-      if (csrf) headers.set('x-csrf-token', csrf);
-    }
-
-    response = await fetch(`${BASE_URL}${path}`, { ...init, credentials: 'include', headers });
+  // Double-submit : le serveur compare cet en-tête au cookie jt_csrf.
+  if (MUTATING.has((init.method ?? 'GET').toUpperCase())) {
+    const csrf = readCsrfCookie();
+    if (csrf) headers.set('x-csrf-token', csrf);
+  }
 ```
 
 - [ ] **Step 4: Écrire les appels typés**
@@ -3681,7 +3677,7 @@ Dans `apps/web/src/constants/navigation.ts`, passer l'entrée `/settings` à `av
 - [ ] **Step 7: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 22 tests au total. Le test « affiche les neuf entrées » de la Task 10 de la tranche 0 devient « dix entrées » : mettre à jour l'assertion `toHaveLength(9)` en `toHaveLength(10)` et le test des badges « Bientôt » suit automatiquement `NAV_ITEMS`.
+Expected: PASS — 22 tests au total. Le test des constantes `src/constants/navigation.test.ts` liste les libellés attendus : y ajouter « Mon profil » à la bonne position ; le test de la sidebar et celui des badges « Bientôt » suivent `NAV_ITEMS` automatiquement.
 
 - [ ] **Step 8: Commit**
 
