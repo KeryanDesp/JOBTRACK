@@ -781,6 +781,14 @@ git commit -m "feat(api): nestjs sur adaptateur fastify avec validation de l env
 
 ## Task 5: Prisma, Redis et sonde /health
 
+> **Amendement après revue.** Les fichiers ci-dessous sont la version *initiale* ; la revue a imposé trois compléments, reproduits en bac à sable et mesurés :
+>
+> 1. **Chaque `isReachable()` est borné à 1,5 s** par `apps/api/src/common/with-timeout.ts` (`withTimeout(promise, ms, label)`, minuteur nettoyé en `finally`, 3 tests). Sans cela, un Redis qui absorbe les paquets bloquait `/health` ≈ 30 s et Prisma sans limite — une sonde de vivacité qui se bloque est pire que pas de sonde. Mesuré après correctif : réponse 200 « dégradé » en 1,5 s.
+> 2. **`RedisService`** : `lazyConnect: true`, `connectTimeout: 2000`, connexion explicite dans `onModuleInit` sous `try/catch` (un Redis absent ne doit pas empêcher l'API de démarrer), et un écouteur `'error'` qui journalise en `warn` via le `Logger` Nest — sinon ioredis écrit `Unhandled error event` sur la console à chaque reconnexion.
+> 3. **Deux tests de non-régression** supplémentaires dans `health.service.spec.ts` : les deux dépendances en panne → `degraded` avec les deux `down` ; `timestamp` en ISO 8601 strict.
+>
+> Le `try/catch` reste à l'intérieur de chaque `isReachable()` : `check()` ne change pas et `Promise.all` y reste sûr, les deux promesses ne rejetant jamais.
+
 **Files:**
 - Create: `apps/api/prisma/schema.prisma`
 - Create: `apps/api/src/common/prisma.service.ts`, `apps/api/src/common/redis.service.ts`, `apps/api/src/common/common.module.ts`
