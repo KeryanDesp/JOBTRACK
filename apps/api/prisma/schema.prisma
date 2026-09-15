@@ -7,5 +7,208 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Les modèles de données arrivent en tranche 1 (User, Profile et ses relations).
-// La tranche 0 n'a besoin que d'une connexion fonctionnelle pour la sonde /health.
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  profile       Profile?
+  oauthAccounts OAuthAccount[]
+}
+
+enum OAuthProvider {
+  GOOGLE
+}
+
+model OAuthAccount {
+  id                String        @id @default(cuid())
+  userId            String
+  provider          OAuthProvider
+  providerAccountId String
+  createdAt         DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Profile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  firstName       String
+  lastName        String
+  phone           String?
+  city            String?
+  country         String?
+  title           String?
+  summary         String?
+  yearsExperience Int?
+  avatarUrl       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferences    JobPreferences?
+  experiences    Experience[]
+  educations     Education[]
+  skills         Skill[]
+  languages      Language[]
+  certifications Certification[]
+  projects       Project[]
+}
+
+model Experience {
+  id          String    @id @default(cuid())
+  profileId   String
+  company     String
+  role        String
+  location    String?
+  startDate   DateTime
+  endDate     DateTime?
+  isCurrent   Boolean   @default(false)
+  description String?
+  sortOrder   Int       @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model Education {
+  id          String    @id @default(cuid())
+  profileId   String
+  school      String
+  degree      String
+  field       String?
+  startDate   DateTime
+  endDate     DateTime?
+  description String?
+  sortOrder   Int       @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+enum SkillCategory {
+  TECHNICAL
+  SOFT
+  TOOL
+  OTHER
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model Skill {
+  id        String        @id @default(cuid())
+  profileId String
+  name      String
+  category  SkillCategory @default(TECHNICAL)
+  level     SkillLevel    @default(INTERMEDIATE)
+  sortOrder Int           @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+enum LanguageLevel {
+  A1
+  A2
+  B1
+  B2
+  C1
+  C2
+  NATIVE
+}
+
+model Language {
+  id        String        @id @default(cuid())
+  profileId String
+  name      String
+  level     LanguageLevel
+  sortOrder Int           @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model Certification {
+  id            String    @id @default(cuid())
+  profileId     String
+  name          String
+  issuer        String
+  issuedAt      DateTime
+  expiresAt     DateTime?
+  credentialUrl String?
+  sortOrder     Int       @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model Project {
+  id           String   @id @default(cuid())
+  profileId    String
+  name         String
+  description  String?
+  url          String?
+  technologies String[]
+  sortOrder    Int      @default(0)
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+enum RemoteMode {
+  ONSITE
+  HYBRID
+  REMOTE
+}
+
+enum ContractType {
+  CDI
+  CDD
+  INTERNSHIP
+  APPRENTICESHIP
+  FREELANCE
+  PART_TIME
+}
+
+enum ExperienceLevel {
+  STUDENT
+  JUNIOR
+  MID
+  SENIOR
+  LEAD
+}
+
+model JobPreferences {
+  id                String            @id @default(cuid())
+  profileId         String            @unique
+  desiredRoles      String[]
+  desiredCategories String[]
+  salaryMin         Int?
+  salaryMax         Int?
+  currency          String            @default("EUR")
+  locations         String[]
+  searchRadiusKm    Int               @default(25)
+  remoteModes       RemoteMode[]
+  contractTypes     ContractType[]
+  availability      String?
+  experienceLevel   ExperienceLevel?
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
