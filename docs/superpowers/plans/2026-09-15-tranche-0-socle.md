@@ -243,7 +243,15 @@ git commit -m "chore: initialiser le monorepo pnpm + turborepo"
 
 ---
 
-## Task 2: Infrastructure Docker et contrat de configuration
+## Task 2: Infrastructure locale et contrat de configuration
+
+> **Amendement du 2026-09-15 — état réel de la machine.** Docker n'est pas installé, et deux PostgreSQL tournent déjà : un PostgreSQL 17 (installeur EDB, `/Library/PostgreSQL/17`) sur le port **5432**, et un PostgreSQL 14 Homebrew sur le port **5433**. Aucun des deux ne doit être arrêté ni déplacé.
+>
+> Décision : les services locaux passent par Homebrew, et le PostgreSQL 16 de JobTrack écoute sur le port **5434**, libre.
+>
+> **Ceci est déjà fait — ne pas le refaire :** `postgresql@16` et `redis` sont installés, `port = 5434` est écrit dans `/opt/homebrew/var/postgresql@16/postgresql.conf` (sauvegarde en `.bak-jobtrack`), les deux services sont démarrés via `brew services`, et le rôle `jobtrack` (mot de passe `jobtrack`) ainsi que la base `jobtrack` existent.
+>
+> `docker-compose.yml` reste néanmoins versionné et inchangé : il sert à l'intégration continue et à toute machine qui préférera Docker. C'est uniquement la procédure de démarrage **locale** qui diffère, via le fichier `.env` — non versionné — qui pointe sur 5434.
 
 **Files:**
 - Create: `docker-compose.yml`, `.env.example`
@@ -318,13 +326,33 @@ GOOGLE_CALLBACK_URL=http://localhost:3001/api/v1/auth/google/callback
 VITE_API_URL=http://localhost:3001/api/v1
 ```
 
-- [ ] **Step 3: Démarrer et vérifier l'infrastructure**
+- [ ] **Step 3: Vérifier l'infrastructure locale et écrire le .env**
 
-Run: `docker compose up -d && sleep 5 && docker compose ps`
-Expected: les deux services apparaissent avec le statut `healthy`.
+Les services tournent déjà (voir l'amendement en tête de tâche). Se contenter de vérifier :
 
-Run: `cp .env.example .env`
-Expected: aucune sortie ; `.env` existe et est ignoré par git (vérifier avec `git status --short` qui ne doit pas le lister).
+Run: `pg_isready -h 127.0.0.1 -p 5434 && redis-cli ping`
+Expected: `127.0.0.1:5434 - accepting connections` puis `PONG`.
+
+Run: `PGPASSWORD=jobtrack psql -h 127.0.0.1 -p 5434 -U jobtrack -d jobtrack -tAc "select 1"`
+Expected: `1`.
+
+Puis créer le `.env` local à partir de `.env.example`, en y corrigeant **le seul point qui diffère sur cette machine** — le port de la base :
+
+```bash
+cp .env.example .env
+```
+
+et dans `.env`, remplacer la ligne `DATABASE_URL` par :
+
+```
+DATABASE_URL=postgresql://jobtrack:jobtrack@localhost:5434/jobtrack?schema=public
+```
+
+puis renseigner `SESSION_SECRET` avec la sortie de `openssl rand -base64 48`.
+
+`.env.example` conserve le port 5432 : c'est celui du `docker-compose.yml` et de l'intégration continue. Seul le `.env` local, non versionné, pointe sur 5434.
+
+Expected: `git status --short` ne liste pas `.env`.
 
 - [ ] **Step 4: Commit**
 
@@ -3105,6 +3133,18 @@ docker compose up -d          # Postgres 16 + Redis 7
 pnpm install
 pnpm dev                      # web sur :5173, api sur :3001
 ```
+
+### Sans Docker (Homebrew, macOS)
+
+```bash
+brew install postgresql@16 redis
+brew services start postgresql@16 && brew services start redis
+createdb jobtrack
+```
+
+Si le port 5432 est déjà occupé par un autre PostgreSQL, changez `port`
+dans `/opt/homebrew/var/postgresql@16/postgresql.conf` et reportez le
+nouveau port dans le `DATABASE_URL` de votre `.env`.
 
 ## Structure
 
