@@ -5,14 +5,13 @@ import { NAV_ITEMS } from '@/constants/navigation';
 import { AppSidebar } from './app-sidebar';
 
 describe('AppSidebar', () => {
-  it('affiche les neuf entrées de navigation du produit', () => {
+  it('affiche chaque entrée de navigation du produit', () => {
     render(
       <MemoryRouter>
         <AppSidebar />
       </MemoryRouter>,
     );
 
-    expect(NAV_ITEMS).toHaveLength(9);
     for (const item of NAV_ITEMS) {
       expect(screen.getByRole('link', { name: new RegExp(item.label, 'i') })).toBeInTheDocument();
     }

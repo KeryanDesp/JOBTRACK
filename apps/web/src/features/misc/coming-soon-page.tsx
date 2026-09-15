@@ -1,12 +1,12 @@
 import { Construction } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
 import { EmptyState } from '@/components/shared/empty-state';
-import { NAV_ITEMS } from '@/constants/navigation';
 
-export function ComingSoonPage() {
-  const { pathname } = useLocation();
-  const label = NAV_ITEMS.find((item) => item.to === pathname)?.label ?? 'Cette section';
+interface ComingSoonPageProps {
+  /** Libellé de la section, fourni par la route — pas déduit de l'URL. */
+  label: string;
+}
 
+export function ComingSoonPage({ label }: ComingSoonPageProps) {
   return (
     <EmptyState
       icon={Construction}

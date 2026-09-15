@@ -6,7 +6,10 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "declaration": false
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }
