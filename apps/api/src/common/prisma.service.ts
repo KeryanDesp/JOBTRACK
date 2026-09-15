@@ -1,11 +1,16 @@
 import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { env } from '../config/env';
 import { withTimeout } from './with-timeout';
 
 const HEALTH_TIMEOUT_MS = 1500;
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  constructor() {
+    super({ datasourceUrl: env.DATABASE_URL });
+  }
+
   async onModuleInit(): Promise<void> {
     await this.$connect();
   }

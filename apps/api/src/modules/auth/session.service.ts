@@ -19,7 +19,7 @@ export type StoredSession = SessionData & { id: string };
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 /** 32 octets en base64url, sans remplissage : exactement 43 caractères. */
-const ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+export const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 /** `lastSeenAt` n'est réécrit qu'au-delà de ce délai : le TTL, lui, est toujours prolongé. */
 const LAST_SEEN_STALENESS_MS = 60_000;
@@ -79,7 +79,7 @@ export class SessionService {
    * corrompu, ou révoqué entre la lecture et l'écriture.
    */
   async touch(id: string): Promise<StoredSession | null> {
-    if (!ID_PATTERN.test(id)) return null;
+    if (!SESSION_ID_PATTERN.test(id)) return null;
 
     const raw = await this.redis.client.get(this.key(id));
     if (!raw) return null;
@@ -118,7 +118,7 @@ export class SessionService {
   }
 
   async destroy(id: string, userId: string): Promise<void> {
-    if (!ID_PATTERN.test(id)) return;
+    if (!SESSION_ID_PATTERN.test(id)) return;
     await this.redis.client.multi().del(this.key(id)).srem(this.indexKey(userId), id).exec();
   }
 
