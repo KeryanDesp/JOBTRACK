@@ -1096,7 +1096,7 @@ Le fichier `tokens.css` est le cœur du design system. Aucune couleur, aucun ray
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.53.0",
     "react-router-dom": "^6.27.0",
-    "tailwind-merge": "^2.5.0",
+    "tailwind-merge": "^3.0.0",
     "zod": "^3.23.0",
     "zustand": "^5.0.0"
   },
