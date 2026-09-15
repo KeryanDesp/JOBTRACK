@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JobTrack — Toutes vos opportunités. Un seul endroit.</title>
+    <meta
+      name="description"
+      content="JobTrack centralise vos recherches d'emploi, analyse les opportunités et vous aide à postuler plus intelligemment."
+    />
+    <script>
+      // Applique le thème avant le premier paint. Doit rester synchronisé
+      // avec src/lib/theme.ts (même clé de stockage, même logique).
+      (function () {
+        try {
+          var mode = localStorage.getItem('jobtrack-theme') || 'light';
+          var isDark =
+            mode === 'dark' ||
+            (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (error) {
+          // localStorage indisponible (navigation privée) : on garde le thème clair.
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
