@@ -27,4 +27,15 @@ describe('HealthService', () => {
     expect(result.status).toBe('degraded');
     expect(result.services.redis).toBe('down');
   });
+
+  it('rapporte degraded quand les deux dependances sont en panne', async () => {
+    const result = await build(false, false).check();
+    expect(result.status).toBe('degraded');
+    expect(result.services).toEqual({ database: 'down', redis: 'down' });
+  });
+
+  it('horodate le rapport en ISO 8601', async () => {
+    const result = await build(true, true).check();
+    expect(result.timestamp).toBe(new Date(result.timestamp).toISOString());
+  });
 });
