@@ -1,39 +1,46 @@
-import '@fastify/cookie'; // augmente FastifyRequest de `cookies`
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type CanActivate, type ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { FastifyRequest } from 'fastify';
-import { IS_PUBLIC_KEY } from './decorators/public.decorator';
+import { env } from '../config/env';
+import type { AuthenticatedRequest } from '../modules/auth/auth.guard';
+import { NO_CSRF_KEY } from './decorators/no-csrf.decorator';
 
 export const CSRF_COOKIE = 'jt_csrf';
 export const CSRF_HEADER = 'x-csrf-token';
 
-const MUTATING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+/** Méthodes sûres (RFC 9110) : liste blanche, tout le reste est une mutation. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** Jeton CSRF dérivé de la session : posé dans le cookie lisible, attendu dans l'en-tête. */
+export function csrfTokenFor(sessionId: string): string {
+  return createHmac('sha256', env.SESSION_SECRET).update(sessionId).digest('base64url');
+}
 
 /**
- * Double soumission : le cookie CSRF est lisible en JavaScript, le cookie de session ne l'est pas.
- * Un site tiers peut forcer l'envoi du cookie de session, mais pas lire le cookie CSRF
- * pour en recopier la valeur dans l'en-tête. Les routes publiques (connexion, inscription)
- * sont exemptées : elles n'agissent pas au nom d'une session existante.
+ * Le jeton est lié à la session (HMAC du secret serveur sur l'identifiant de session) :
+ * un site tiers ne peut ni le lire (CORS + cookie de session httpOnly) ni le forger,
+ * et un cookie déposé par un sous-domaine compromis ne correspond à aucune session.
+ * S'exécute après AuthGuard : `request.session` est garanti sur une route non publique.
  */
 @Injectable()
 export class CsrfGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+    const exempt = this.reflector.getAllAndOverride<boolean | undefined>(NO_CSRF_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic) return true;
+    if (exempt) return true;
 
-    const request = context.switchToHttp().getRequest<FastifyRequest>();
-    if (!MUTATING.has(request.method)) return true;
+    const request = context
+      .switchToHttp()
+      .getRequest<Partial<AuthenticatedRequest> & { method: string; headers: Record<string, unknown> }>();
+    if (SAFE_METHODS.has(request.method)) return true;
 
-    const cookie = request.cookies?.[CSRF_COOKIE];
     const header = request.headers[CSRF_HEADER];
-
-    if (!cookie || typeof header !== 'string' || !sameToken(cookie, header)) {
+    const session = request.session;
+    if (!session || typeof header !== 'string' || !sameToken(csrfTokenFor(session.id), header)) {
       throw new ForbiddenException({
         code: 'CSRF_MISMATCH',
         message: 'Requête refusée. Rechargez la page et réessayez.',
@@ -44,8 +51,8 @@ export class CsrfGuard implements CanActivate {
 }
 
 /** Comparaison en temps constant ; longueurs différentes → faux sans lever. */
-function sameToken(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
+function sameToken(expected: string, actual: string): boolean {
+  const left = Buffer.from(expected);
+  const right = Buffer.from(actual);
   return left.length === right.length && timingSafeEqual(left, right);
 }
