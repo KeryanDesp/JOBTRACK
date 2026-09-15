@@ -17,7 +17,7 @@ createRoot(container).render(
       <QueryProvider>
         {/* reducedMotion="user" : Framer Motion respecte prefers-reduced-motion, que le CSS seul ne couvre pas. */}
         <MotionConfig reducedMotion="user">
-          <RouterProvider router={router} />
+          <RouterProvider router={router} future={{ v7_startTransition: true }} />
           <AppToaster />
         </MotionConfig>
       </QueryProvider>

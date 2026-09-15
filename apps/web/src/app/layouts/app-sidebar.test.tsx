@@ -7,7 +7,7 @@ import { AppSidebar } from './app-sidebar';
 describe('AppSidebar', () => {
   it('affiche chaque entrée de navigation du produit', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppSidebar />
       </MemoryRouter>,
     );
@@ -19,7 +19,7 @@ describe('AppSidebar', () => {
 
   it('marque « Bientôt » les entrées dont la tranche n_est pas livrée', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppSidebar />
       </MemoryRouter>,
     );

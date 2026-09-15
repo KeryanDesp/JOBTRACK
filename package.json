@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.4.2",
-  "engines": { "node": ">=20.11" },
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
@@ -12,7 +14,8 @@
     "typecheck": "turbo run typecheck",
     "db:migrate": "pnpm --filter @jobtrack/api exec prisma migrate dev",
     "db:seed": "pnpm --filter @jobtrack/api exec prisma db seed",
-    "db:studio": "pnpm --filter @jobtrack/api exec prisma studio"
+    "db:studio": "pnpm --filter @jobtrack/api exec prisma studio",
+    "postinstall": "pnpm --filter @jobtrack/api exec prisma generate --allow-no-models"
   },
   "devDependencies": {
     "turbo": "^2.1.0",

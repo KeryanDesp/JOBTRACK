@@ -17,4 +17,15 @@ export const router = createBrowserRouter([
     })),
   },
   { path: '*', element: <NotFoundPage /> },
-]);
+], {
+  // Comportements de React Router v7 adoptés dès maintenant : aucun effet
+  // observable aujourd'hui (pas de <Form>, ni de fetcher, ni de splat), et
+  // cela évite de les basculer plus tard sur des écrans qui en dépendront.
+  future: {
+    v7_fetcherPersist: true,
+    v7_normalizeFormMethod: true,
+    v7_partialHydration: true,
+    v7_relativeSplatPath: true,
+    v7_skipActionErrorRevalidation: true,
+  },
+});
