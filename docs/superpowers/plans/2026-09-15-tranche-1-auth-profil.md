@@ -1172,6 +1172,8 @@ git commit -m "feat(api): hachage argon2id des mots de passe"
 
 ## Task 6: Service d'authentification et garde de session
 
+> **Amendement.** (1) 32 tests API attendus (22 après la tâche 4, +5 tâche 5, +5 ici). (2) **Course à l'inscription** : `findUnique` puis `create` ne suffit pas — deux inscriptions simultanées sur le même email passent le contrôle, et la seconde échoue sur la contrainte unique (Prisma `P2002`, ou l'index `User_email_lower_key`). Entourer le `create` d'un `try/catch` qui mappe `PrismaClientKnownRequestError` code `P2002` vers la même `ConflictException` `EMAIL_TAKEN` ; garder le `findUnique` préalable pour le cas courant. Ajouter un test qui insère l'email directement via Prisma puis appelle `register` sans passer par le contrôle — le 409 doit venir du `catch`. (3) `request.cookies` et `request.unsignCookie` n'existent sur `FastifyRequest` que si l'augmentation de types de `@fastify/cookie` est chargée : ajouter `import '@fastify/cookie';` en tête de `auth.guard.ts`. (4) **Valider la forme du cookie avant Redis** : la garde rejette tout identifiant ne correspondant pas à `^[A-Za-z0-9_-]{43}$` sans interroger Redis. (5) La revue qualité de la tâche 4 peut ajouter des exigences sur la garde — voir son amendement.
+
 **Files:**
 - Create: `apps/api/src/modules/auth/auth.service.ts`, `auth.guard.ts`
 - Create: `apps/api/src/common/decorators/public.decorator.ts`, `current-user.decorator.ts`
@@ -1443,7 +1445,7 @@ export class AuthGuard implements CanActivate {
 - [ ] **Step 5: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test`
-Expected: PASS — 14 tests au total.
+Expected: PASS — 32 tests au total.
 
 - [ ] **Step 6: Commit**
 
