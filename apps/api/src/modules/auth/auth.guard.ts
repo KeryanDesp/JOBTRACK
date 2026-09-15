@@ -27,11 +27,12 @@ export class AuthGuard implements CanActivate {
     if (isPublic) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const raw = request.cookies[SESSION_COOKIE];
+    const raw = request.cookies?.[SESSION_COOKIE];
     if (!raw) throw this.unauthorized();
 
     const unsigned = request.unsignCookie(raw);
-    // Forme vérifiée avant tout accès Redis : un cookie forgé ne coûte rien.
+    // Défense en profondeur : une valeur signée par nous mais malformée n'atteint pas Redis.
+    // (Un cookie forgé est déjà rejeté par la signature.)
     if (!unsigned.valid || !unsigned.value || !SESSION_ID_PATTERN.test(unsigned.value)) {
       throw this.unauthorized();
     }
@@ -39,6 +40,8 @@ export class AuthGuard implements CanActivate {
     const session = await this.sessions.touch(unsigned.value);
     if (!session) throw this.unauthorized();
 
+    // Une requête Postgres par appel authentifié : c'est ce qui détecte un compte supprimé.
+    // Choix assumé ; alternative future : porter email/nom dans la session Redis.
     const user = await this.auth.findSessionUser(session.userId);
     if (!user) {
       // L'utilisateur a été supprimé : la session ne doit pas survivre.

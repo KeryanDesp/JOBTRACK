@@ -62,6 +62,13 @@ export class AuthService {
     const valid = await this.passwords.verify(user.passwordHash, password);
     if (!valid) throw new UnauthorizedException(INVALID_CREDENTIALS);
 
+    // Paramètres argon2 relevés depuis la création du compte : on re-hache à la volée,
+    // sinon burnTime() (coût actuel) et verify (ancien coût) redeviendraient distinguables.
+    if (this.passwords.needsRehash(user.passwordHash)) {
+      const passwordHash = await this.passwords.hash(password);
+      await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    }
+
     return this.toSessionUser(user);
   }
 
@@ -74,6 +81,7 @@ export class AuthService {
     return {
       id: user.id,
       email: user.email,
+      // register() crée toujours un profil ; le repli vide ne couvre qu'une base incohérente.
       firstName: user.profile?.firstName ?? '',
       lastName: user.profile?.lastName ?? '',
     };
