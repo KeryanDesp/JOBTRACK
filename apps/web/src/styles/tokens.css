@@ -1,4 +1,5 @@
-@import 'tailwindcss';
+/* source() limite le scan des classes à apps/web : sans cela Tailwind parcourt tout le monorepo. */
+@import 'tailwindcss' source('../../');
 @import 'tw-animate-css';
 @import '@fontsource-variable/inter';
 
@@ -74,10 +75,10 @@
   --accent: oklch(0.969 0.014 293); /* #F5F3FF — violet très atténué */
   --accent-foreground: oklch(0.491 0.234 293); /* #6D28D9 */
 
-  --destructive: oklch(0.577 0.245 27.3); /* #DC2626 */
+  --destructive: oklch(0.577 0.215 27.3); /* #DC2626 */
   --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.627 0.17 149); /* #16A34A */
-  --warning: oklch(0.646 0.15 58); /* #D97706 */
+  --success: oklch(0.627 0.170 149.2); /* #16A34A */
+  --warning: oklch(0.666 0.157 58.3); /* #D97706 */
 
   --border: oklch(0.922 0.004 286); /* #E5E7EB */
   --input: oklch(0.922 0.004 286);
@@ -126,8 +127,8 @@
 
   --destructive: oklch(0.637 0.208 25.3); /* #EF4444 */
   --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.723 0.19 149.6); /* #22C55E */
-  --warning: oklch(0.769 0.16 70); /* #F59E0B */
+  --success: oklch(0.723 0.192 149.6); /* #22C55E */
+  --warning: oklch(0.769 0.165 70.1); /* #F59E0B */
 
   --border: oklch(0.274 0.006 286); /* #27272A */
   --input: oklch(0.274 0.006 286);
