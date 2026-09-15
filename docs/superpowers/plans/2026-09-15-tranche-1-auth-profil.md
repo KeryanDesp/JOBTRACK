@@ -51,7 +51,7 @@
 
 ## Task 1: Modèle de données
 
-> **Amendement après exécution.** (1) La CLI Prisma ne lit `.env` que dans `apps/api/` : les scripts racine `db:migrate`, `db:seed`, `db:studio` passent par `dotenv -e .env --` (`dotenv-cli` en devDependency racine). (2) `@types/node` est déclaré dans `apps/api` — sans lui, `prisma/seed.ts` (hors `src/`) perdait les types de `console`/`process` sous ESLint ; le script `lint` de l'API couvre `src prisma`. (3) `argon2` est natif : `pnpm approve-builds argon2` l'ajoute à `allowBuilds` (binaire précompilé disponible pour Node 26, pas de compilation). (4) Vérifier le seed par `psql` plutôt que par `prisma studio` (interactif). Migration : `20260915182235_auth_and_profile`.
+> **Amendement après exécution.** (1) La CLI Prisma ne lit `.env` que dans `apps/api/` : les scripts racine `db:migrate`, `db:seed`, `db:studio` passent par `dotenv -e .env --` (`dotenv-cli` en devDependency racine). (2) `@types/node` est déclaré dans `apps/api` — sans lui, `prisma/seed.ts` (hors `src/`) perdait les types de `console`/`process` sous ESLint ; le script `lint` de l'API couvre `src prisma`. (3) `argon2` est natif : `pnpm approve-builds argon2` l'ajoute à `allowBuilds` (binaire précompilé disponible pour Node 26, pas de compilation). (4) Vérifier le seed par `psql` plutôt que par `prisma studio` (interactif). Migrations : `20260915182235_auth_and_profile`, puis `20260915183811_date_columns_and_email_lower_index` (revue qualité : `@db.Date` sur les six dates calendaires ; index unique manuel `User_email_lower_key` sur `lower(email)` — Prisma ne l'exprime pas mais ne le supprime pas non plus, vérifié). **Ne jamais ajouter `@@unique([profileId, sortOrder])`** : le réordonnancement par `$transaction` d'`updateMany` collisionnerait à la première permutation.
 
 **Files:**
 - Modify: `apps/api/prisma/schema.prisma`
@@ -132,8 +132,8 @@ model Experience {
   company     String
   role        String
   location    String?
-  startDate   DateTime
-  endDate     DateTime?
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
   isCurrent   Boolean   @default(false)
   description String?
   sortOrder   Int       @default(0)
@@ -149,8 +149,8 @@ model Education {
   school      String
   degree      String
   field       String?
-  startDate   DateTime
-  endDate     DateTime?
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
   description String?
   sortOrder   Int       @default(0)
 
@@ -213,8 +213,8 @@ model Certification {
   profileId     String
   name          String
   issuer        String
-  issuedAt      DateTime
-  expiresAt     DateTime?
+  issuedAt      DateTime  @db.Date
+  expiresAt     DateTime? @db.Date
   credentialUrl String?
   sortOrder     Int       @default(0)
 
@@ -551,7 +551,9 @@ export interface ActiveSession {
 import { z } from 'zod';
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().or(z.literal(''));
-const isoDate = z.string().datetime({ offset: true }).or(z.string().date());
+// Date calendaire au format AAAA-MM-JJ uniquement : les colonnes sont en @db.Date,
+// et accepter un datetime avec fuseau réintroduirait l'ambiguïté « quel minuit ».
+const isoDate = z.string().date('Date invalide (AAAA-MM-JJ attendu).');
 
 export const profileSchema = z.object({
   firstName: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
