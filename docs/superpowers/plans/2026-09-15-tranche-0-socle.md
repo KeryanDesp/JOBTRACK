@@ -1898,7 +1898,7 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
       <div className="bg-muted mb-4 flex size-12 items-center justify-center rounded-full">
         <Icon className="text-muted-foreground size-5" />
       </div>
-      <h3 className="text-base font-semibold">{title}</h3>
+      <p className="text-base font-semibold">{title}</p>
       <p className="text-muted-foreground mt-1 max-w-sm text-sm">{description}</p>
       {action && (
         <Button className="mt-6" onClick={action.onClick}>
@@ -1920,12 +1920,14 @@ interface ErrorStateProps {
   /** Message lisible par un humain, en français. Jamais un code HTTP brut. */
   message: string;
   onRetry: () => void;
+  /** `alert` interrompt le lecteur d'écran (erreur de page) ; `status` est poli (section). */
+  role?: 'alert' | 'status';
 }
 
-export function ErrorState({ message, onRetry }: ErrorStateProps) {
+export function ErrorState({ message, onRetry, role = 'alert' }: ErrorStateProps) {
   return (
     <div
-      role="alert"
+      role={role}
       className="flex flex-col items-center justify-center px-6 py-16 text-center"
     >
       <div className="bg-destructive/10 mb-4 flex size-12 items-center justify-center rounded-full">
@@ -1953,7 +1955,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="text-muted-foreground mt-1 text-sm">{description}</p>}

@@ -14,7 +14,8 @@ export function EmptyState({ icon: Icon, title, description, action }: EmptyStat
       <div className="bg-muted mb-4 flex size-12 items-center justify-center rounded-full">
         <Icon className="text-muted-foreground size-5" />
       </div>
-      <h3 className="text-base font-semibold">{title}</h3>
+      {/* Un <p> et non un titre : ce bloc n'est pas un repère de navigation, et un h3 sous le h1 de page casserait l'ordre des titres. */}
+      <p className="text-base font-semibold">{title}</p>
       <p className="text-muted-foreground mt-1 max-w-sm text-sm">{description}</p>
       {action && (
         <Button className="mt-6" onClick={action.onClick}>
