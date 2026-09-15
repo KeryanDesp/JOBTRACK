@@ -35,3 +35,8 @@ export function clearAuthCookies(reply: FastifyReply): void {
   reply.clearCookie(SESSION_COOKIE, BASE);
   reply.clearCookie(CSRF_COOKIE, BASE);
 }
+
+/** Cookie éphémère portant le `state` du flux OAuth Google, entre `/auth/google` et son callback. */
+export const OAUTH_STATE_COOKIE = 'jt_oauth_state';
+
+export const OAUTH_STATE_OPTIONS = { ...BASE, httpOnly: true } as const;

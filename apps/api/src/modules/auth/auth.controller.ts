@@ -1,6 +1,7 @@
+import { randomBytes } from 'node:crypto';
 import {
-  Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Logger, NotFoundException, Param,
-  Post, Req, Res,
+  Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Inject, Logger, NotFoundException, Param,
+  Post, Query, Req, Res,
 } from '@nestjs/common';
 import {
   forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, type ActiveSession,
@@ -12,13 +13,20 @@ import { NoCsrf } from '../../common/decorators/no-csrf.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { ipEmailIdentity, RateLimit, rateLimitKey } from '../../common/rate-limit.guard';
 import { RedisService } from '../../common/redis.service';
+import { env } from '../../config/env';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
-import { clearAuthCookies, setAuthCookies } from './auth.cookies';
+import { clearAuthCookies, OAUTH_STATE_COOKIE, OAUTH_STATE_OPTIONS, setAuthCookies } from './auth.cookies';
 import type { AuthenticatedRequest } from './auth.guard';
 import { LOGIN_ROUTE } from './auth.routes';
 import { AuthService } from './auth.service';
+import { GoogleService } from './google.service';
 import { PasswordResetFlow } from './password-reset.flow';
 import { SessionService } from './session.service';
+
+const GOOGLE_NOT_CONFIGURED = {
+  code: 'GOOGLE_NOT_CONFIGURED',
+  message: "La connexion Google n'est pas disponible pour le moment.",
+};
 
 @Controller('auth')
 export class AuthController {
@@ -29,6 +37,7 @@ export class AuthController {
     private readonly sessions: SessionService,
     private readonly redis: RedisService,
     private readonly resetFlow: PasswordResetFlow,
+    @Inject(GoogleService) private readonly google: GoogleService | null,
   ) {}
 
   @Public()
@@ -156,6 +165,66 @@ export class AuthController {
       throw new NotFoundException({ code: 'SESSION_NOT_FOUND', message: 'Cette session est introuvable.' });
     }
     await this.sessions.destroy(id, request.user.id);
+  }
+
+  @Public()
+  @Get('google')
+  startGoogle(@Res({ passthrough: true }) reply: FastifyReply): { url: string } {
+    const google = this.requireGoogle();
+    // Le state, dans un cookie signé, garantit que le callback répond à une demande
+    // partie de ce navigateur (protection CSRF du flux OAuth).
+    const state = randomBytes(24).toString('base64url');
+    reply.setCookie(OAUTH_STATE_COOKIE, state, { ...OAUTH_STATE_OPTIONS, signed: true, httpOnly: true, maxAge: 600 });
+    return { url: google.buildAuthUrl(state) };
+  }
+
+  @Public()
+  @Get('google/callback')
+  async googleCallback(
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Req() request: FastifyRequest,
+    // Pas de `passthrough` : cette route ne renvoie jamais de corps, seulement une redirection ;
+    // c'est nous qui envoyons la réponse, Nest ne doit pas tenter de la compléter derrière nous.
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const google = this.requireGoogle();
+    const stored = request.cookies?.[OAUTH_STATE_COOKIE];
+    const unsigned = stored ? request.unsignCookie(stored) : null;
+    reply.clearCookie(OAUTH_STATE_COOKIE, OAUTH_STATE_OPTIONS);
+
+    if (!code || !state || !unsigned?.valid || unsigned.value !== state) {
+      this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
+      return;
+    }
+
+    try {
+      const profile = await google.exchangeCode(code);
+      const user = await this.auth.findOrCreateFromGoogle(profile);
+      await this.openSession(user.id, request, reply);
+    } catch (error) {
+      // Navigation de navigateur : une page d'erreur JSON n'aurait aucun sens.
+      this.logger.warn(`Connexion Google refusée : ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+      this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
+      return;
+    }
+    this.redirectTo(reply, `${env.WEB_ORIGIN}/profile`);
+  }
+
+  private requireGoogle(): GoogleService {
+    if (!this.google) {
+      throw new HttpException(GOOGLE_NOT_CONFIGURED, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return this.google;
+  }
+
+  /**
+   * `reply.redirect(url)` sans code explicite réutiliserait le statut déjà posé par Nest
+   * avant l'exécution du handler (200 par défaut sur un GET) au lieu de retomber sur 302 :
+   * Fastify ne redéfinit le code par défaut que si aucun `.code()` n'a encore été appelé.
+   */
+  private redirectTo(reply: FastifyReply, url: string): void {
+    reply.redirect(url, HttpStatus.FOUND);
   }
 
   private async openSession(userId: string, request: FastifyRequest, reply: FastifyReply): Promise<void> {

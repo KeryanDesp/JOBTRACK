@@ -1,16 +1,26 @@
+import { UnauthorizedException } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../../app.module';
 import { configureApp, createAdapter } from '../../app.setup';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
+import { env } from '../../config/env';
+import { GoogleService, type GoogleProfile } from './google.service';
 import { PasswordResetService } from './password-reset.service';
 import { SessionService } from './session.service';
 
 let app: NestFastifyApplication;
 let prisma: PrismaService;
 let redis: RedisService;
+
+// Remplace le GoogleService (null en local/CI, GOOGLE_* absent) : les tests e2e ne doivent
+// jamais appeler les vrais points de terminaison Google.
+const fakeGoogle = {
+  buildAuthUrl: (state: string) => `https://accounts.google.com/o/oauth2/v2/auth?state=${state}`,
+  exchangeCode: vi.fn<(code: string) => Promise<GoogleProfile>>(),
+};
 
 const USER = {
   email: `e2e-${process.pid}@jobtrack.local`,
@@ -47,7 +57,10 @@ async function clearResetToken(userId: string): Promise<void> {
 }
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(GoogleService)
+    .useValue(fakeGoogle)
+    .compile();
   app = moduleRef.createNestApplication<NestFastifyApplication>(createAdapter());
   await configureApp(app); // helmet, cookies, CORS, préfixe, filtre : identique au bootstrap
   await app.init();
@@ -60,6 +73,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await clearUsers();
   await clearRateLimits(); // les inscriptions répétées des tests dépasseraient la limite par IP
+  fakeGoogle.exchangeCode.mockReset();
 });
 
 afterAll(async () => {
@@ -404,5 +418,91 @@ describe('Réinitialisation du mot de passe', () => {
       payload: { email: USER.email, password: 'nouveau-mot-de-passe-2026' },
     });
     expect(login.statusCode).toBe(200);
+  });
+});
+
+describe('Connexion Google', () => {
+  const GOOGLE_PROFILE: GoogleProfile = {
+    providerAccountId: 'sub-e2e',
+    email: `e2e-google-${process.pid}@jobtrack.local`,
+    firstName: 'Gé',
+    lastName: 'Oauth',
+  };
+
+  /** Démarre le flux : renvoie le cookie de state à relayer et le state extrait de l'url. */
+  async function startFlow() {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/auth/google' });
+    const cookieHeader = cookiesFrom(response.headers);
+    const state = new URL(response.json<{ url: string }>().url).searchParams.get('state') ?? '';
+    return { response, cookieHeader, state };
+  }
+
+  it('demarre le flux google avec un state signe', async () => {
+    const { response, cookieHeader, state } = await startFlow();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ url: string }>().url).toContain('state=');
+    expect(state).not.toBe('');
+
+    const stateCookie = findCookie(response.headers, 'jt_oauth_state');
+    expect(stateCookie).toContain('HttpOnly');
+    expect(cookieHeader).toContain('jt_oauth_state=');
+  });
+
+  it('refuse un callback dont le state ne correspond pas', async () => {
+    const { cookieHeader } = await startFlow();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/google/callback?code=x&state=autre',
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
+    expect(fakeGoogle.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it('cree le compte et ouvre une session au callback', async () => {
+    const { cookieHeader, state } = await startFlow();
+    fakeGoogle.exchangeCode.mockResolvedValueOnce(GOOGLE_PROFILE);
+
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/api/v1/auth/google/callback?code=code-e2e&state=${state}`,
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/profile`);
+    expect(findCookie(callback.headers, 'jt_session')).toContain('jt_session=');
+    expect(findCookie(callback.headers, 'jt_csrf')).toContain('jt_csrf=');
+    // Le cookie de state, à usage unique, ne doit pas survivre au callback.
+    expect(findCookie(callback.headers, 'jt_oauth_state')).toContain('Expires=Thu, 01 Jan 1970');
+
+    const newCookies = cookiesFrom(callback.headers);
+    const me = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: newCookies } });
+    expect(me.statusCode).toBe(200);
+    expect(me.json<{ email: string }>().email).toBe(GOOGLE_PROFILE.email);
+  });
+
+  it('redirige vers la page de connexion quand google refuse', async () => {
+    const { cookieHeader, state } = await startFlow();
+    fakeGoogle.exchangeCode.mockRejectedValueOnce(
+      new UnauthorizedException({
+        code: 'GOOGLE_AUTH_FAILED',
+        message: 'La connexion Google a échoué. Veuillez réessayer.',
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/auth/google/callback?code=code-e2e&state=${state}`,
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
+    expect(rawCookies(response.headers).some((cookie) => cookie.startsWith('jt_session='))).toBe(false);
   });
 });

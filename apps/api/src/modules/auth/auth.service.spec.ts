@@ -19,16 +19,28 @@ const INPUT = {
 
 const GOOGLE_EMAIL = `google-${process.pid}@jobtrack.local`;
 
+// Distinct de GOOGLE_EMAIL ci-dessus (compte sans mot de passe) : ici, un vrai flux
+// findOrCreateFromGoogle, avec un deuxième email pour le cas « le sub gagne ».
+const GOOGLE_OAUTH_EMAIL = `google-oauth-${process.pid}@jobtrack.local`;
+const GOOGLE_OAUTH_EMAIL_ALT = `google-oauth-alt-${process.pid}@jobtrack.local`;
+const GOOGLE_OAUTH_SUB = `sub-${process.pid}`;
+
 const INVALID_CREDENTIALS = { code: 'INVALID_CREDENTIALS', message: 'Identifiants invalides.' };
+
+async function clearGoogleOAuthUsers(): Promise<void> {
+  await prisma.user.deleteMany({ where: { email: { in: [GOOGLE_OAUTH_EMAIL, GOOGLE_OAUTH_EMAIL_ALT] } } });
+}
 
 beforeEach(async () => {
   await prisma.user.deleteMany({ where: { email: INPUT.email } });
   await prisma.user.deleteMany({ where: { email: GOOGLE_EMAIL } });
+  await clearGoogleOAuthUsers();
 });
 
 afterAll(async () => {
   await prisma.user.deleteMany({ where: { email: INPUT.email } });
   await prisma.user.deleteMany({ where: { email: GOOGLE_EMAIL } });
+  await clearGoogleOAuthUsers();
   await prisma.$disconnect();
 });
 
@@ -124,5 +136,81 @@ describe('AuthService', () => {
 
   it('findSessionUser renvoie null pour un id inexistant', async () => {
     await expect(service.findSessionUser('inexistant')).resolves.toBeNull();
+  });
+
+  it('cree un compte google avec profil, preferences et email verifie', async () => {
+    const user = await service.findOrCreateFromGoogle({
+      providerAccountId: GOOGLE_OAUTH_SUB,
+      email: GOOGLE_OAUTH_EMAIL,
+      firstName: 'Personne',
+      lastName: 'Exemple',
+    });
+
+    expect(user.email).toBe(GOOGLE_OAUTH_EMAIL);
+    expect(user.firstName).toBe('Personne');
+    expect(user.lastName).toBe('Exemple');
+
+    const stored = await prisma.user.findUnique({
+      where: { email: GOOGLE_OAUTH_EMAIL },
+      include: { oauthAccounts: true },
+    });
+    expect(stored?.emailVerifiedAt).not.toBeNull();
+    expect(stored?.passwordHash).toBeNull();
+    expect(stored?.oauthAccounts).toHaveLength(1);
+    expect(stored?.oauthAccounts[0]).toMatchObject({
+      provider: 'GOOGLE',
+      providerAccountId: GOOGLE_OAUTH_SUB,
+    });
+  });
+
+  it('relie un compte google a un utilisateur existant portant le meme email', async () => {
+    const registered = await service.register({
+      email: GOOGLE_OAUTH_EMAIL,
+      password: 'motdepasse-solide-2026',
+      firstName: 'Existant',
+      lastName: 'Utilisateur',
+    });
+
+    const linked = await service.findOrCreateFromGoogle({
+      providerAccountId: GOOGLE_OAUTH_SUB,
+      email: GOOGLE_OAUTH_EMAIL,
+      firstName: 'Personne',
+      lastName: 'Exemple',
+    });
+
+    expect(linked.id).toBe(registered.id);
+
+    const stored = await prisma.user.findUnique({
+      where: { email: GOOGLE_OAUTH_EMAIL },
+      include: { oauthAccounts: true },
+    });
+    expect(stored?.oauthAccounts).toHaveLength(1);
+    expect(stored?.passwordHash).not.toBeNull(); // le mot de passe existant n'est jamais touche
+  });
+
+  it('retrouve l_utilisateur par son compte google deja lie', async () => {
+    const first = await service.findOrCreateFromGoogle({
+      providerAccountId: GOOGLE_OAUTH_SUB,
+      email: GOOGLE_OAUTH_EMAIL,
+      firstName: 'Personne',
+      lastName: 'Exemple',
+    });
+
+    // Meme sub, email different cote Google : le rattachement deja pose l'emporte.
+    const second = await service.findOrCreateFromGoogle({
+      providerAccountId: GOOGLE_OAUTH_SUB,
+      email: GOOGLE_OAUTH_EMAIL_ALT,
+      firstName: 'Autre',
+      lastName: 'Nom',
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.email).toBe(GOOGLE_OAUTH_EMAIL);
+
+    const stored = await prisma.user.findUnique({
+      where: { id: first.id },
+      include: { oauthAccounts: true },
+    });
+    expect(stored?.oauthAccounts).toHaveLength(1);
   });
 });
