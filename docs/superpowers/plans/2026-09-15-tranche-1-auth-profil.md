@@ -415,6 +415,8 @@ git commit -m "feat(api): modele de donnees utilisateur et profil"
 
 ## Task 2: Contrat Zod partagé
 
+> **Amendement après revue (code livré : `fd2605a` + correctif).** Le code ci-dessous est la version initiale ; la revue a imposé, tous reproduits avec zod 3.25 : (1) `optionalNumber(max)` — union `'' | coerce.number` puis `'' → undefined` : sinon un `<input type="number">` vide devenait **0** (`Number('') === 0`). (2) `optionalText(max)` — `'' | blanc → null` (effacer), clé absente **inchangée** (ne jamais mapper `undefined → null`, sinon une clé omise effacerait le champ) ; idem `url`/`credentialUrl`. (3) `experienceSchema` : `startDate ≤ endDate`, et `endDate` forcé à `null` si `isCurrent`. (4) `jobPreferencesSchema` : `salaryMin ≤ salaryMax` ; `searchRadiusKm` vaut 25 même pour `''`. (5) `loginSchema.password.max(128)` — sans borne, argon2 vérifierait une chaîne de 10 Mo. Aucun `z.preprocess` : `z.input` reste typé pour React Hook Form. 26 tests dans `packages/shared`. **Conséquence pour la tâche 11** : `PATCH /profile` doit passer l'objet validé tel quel à Prisma — `null` efface, clé absente n'écrit rien.
+
 > **Amendement.** `packages/shared` compte déjà 8 tests (`env.test.ts`) et exporte `./health` ; les helpers d'environnement utilisent `z.preprocess`, réservé aux schémas d'environnement — les schémas de formulaires ci-dessous n'en utilisent pas, pour préserver `z.input<>` côté React Hook Form.
 
 Ces schémas sont la source de vérité : le backend les utilise pour valider, le frontend pour valider les formulaires. Aucune règle de validation n'est écrite deux fois.
