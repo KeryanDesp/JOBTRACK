@@ -51,6 +51,8 @@
 
 ## Task 1: Modèle de données
 
+> **Amendement après exécution.** (1) La CLI Prisma ne lit `.env` que dans `apps/api/` : les scripts racine `db:migrate`, `db:seed`, `db:studio` passent par `dotenv -e .env --` (`dotenv-cli` en devDependency racine). (2) `@types/node` est déclaré dans `apps/api` — sans lui, `prisma/seed.ts` (hors `src/`) perdait les types de `console`/`process` sous ESLint ; le script `lint` de l'API couvre `src prisma`. (3) `argon2` est natif : `pnpm approve-builds argon2` l'ajoute à `allowBuilds` (binaire précompilé disponible pour Node 26, pas de compilation). (4) Vérifier le seed par `psql` plutôt que par `prisma studio` (interactif). Migration : `20260915182235_auth_and_profile`.
+
 **Files:**
 - Modify: `apps/api/prisma/schema.prisma`
 - Create: `apps/api/prisma/seed.ts`
@@ -399,8 +401,8 @@ Ajouter dans `apps/api/package.json` :
 Run: `pnpm install && pnpm db:seed`
 Expected: `Seed terminé — compte de démonstration : demo@jobtrack.local`.
 
-Run: `pnpm --filter @jobtrack/api exec prisma studio`
-Expected: la table `Profile` contient Camille Démo avec ses relations. Fermer Studio.
+Run: `PGPASSWORD=jobtrack psql -h 127.0.0.1 -p 5434 -U jobtrack -d jobtrack -tAc 'select u.email, p."firstName" from "User" u join "Profile" p on p."userId"=u.id'`
+Expected: `demo@jobtrack.local|Camille`. Relancer `pnpm db:seed` : idempotent, toujours une seule ligne.
 
 - [ ] **Step 5: Commit**
 
