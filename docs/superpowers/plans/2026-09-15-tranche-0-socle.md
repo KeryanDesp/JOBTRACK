@@ -390,10 +390,14 @@ git commit -m "chore: postgres 16 et redis 7 en docker compose"
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
   "scripts": {
     "build": "tsup",
@@ -414,18 +418,28 @@ git commit -m "chore: postgres 16 et redis 7 en docker compose"
 }
 ```
 
-`packages/shared/tsup.config.ts` :
+`packages/shared/tsup.config.ts` — **double build**. `apps/api` est du CommonJS avec une résolution `Node` classique qui ignore `exports` : sans sortie `.cjs`, `tsc` compile mais `require('@jobtrack/shared')` plante à l'exécution (`ERR_PACKAGE_PATH_NOT_EXPORTED`). `clean: true` doit rester sur une seule des deux entrées, sinon le second build efface le premier.
 
 ```ts
 import { defineConfig } from 'tsup';
 
-export default defineConfig({
-  entry: ['src/index.ts'],
-  format: ['esm'],
-  dts: true,
-  clean: true,
-  sourcemap: true,
-});
+export default defineConfig([
+  {
+    entry: ['src/index.ts'],
+    format: ['esm'],
+    dts: true,
+    clean: true,
+    sourcemap: true,
+  },
+  {
+    entry: ['src/index.ts'],
+    format: ['cjs'],
+    dts: false,
+    clean: false,
+    sourcemap: true,
+    outExtension: () => ({ js: '.cjs' }),
+  },
+]);
 ```
 
 `packages/shared/tsconfig.json` :
@@ -495,13 +509,14 @@ import { z } from 'zod';
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(3001),
-  WEB_ORIGIN: z.string().url(),
+  WEB_ORIGIN: z.string().trim().url(),
 
-  DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1),
+  // `.trim()` partout : une valeur composée d'espaces passerait sinon `.min()`.
+  DATABASE_URL: z.string().trim().min(1),
+  REDIS_URL: z.string().trim().min(1),
 
   // 32 caractères minimum : un secret plus court affaiblit la signature de session.
-  SESSION_SECRET: z.string().min(32),
+  SESSION_SECRET: z.string().trim().min(32),
 
   // Optionnels en tranche 0 ; requis dès que Google est branché (tranche 1).
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -524,7 +539,7 @@ Run: `pnpm --filter @jobtrack/shared test`
 Expected: PASS — 4 tests.
 
 Run: `pnpm --filter @jobtrack/shared build`
-Expected: `dist/index.js` et `dist/index.d.ts` sont générés.
+Expected: `dist/index.js`, `dist/index.cjs` et `dist/index.d.ts` sont générés.
 
 - [ ] **Step 6: Commit**
 
