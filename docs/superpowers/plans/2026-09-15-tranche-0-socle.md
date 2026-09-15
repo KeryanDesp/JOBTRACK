@@ -1504,6 +1504,13 @@ git commit -m "feat(web): composants shadcn/ui de base"
 
 ## Task 8: Thème clair / sombre / système
 
+> **Amendement après revue.** Le code ci-dessous est la version initiale ; l'état livré diffère sur quatre points, tous vérifiés dans un vrai navigateur :
+>
+> 1. **`theme-toggle.tsx` utilise `DropdownMenuRadioGroup` / `DropdownMenuRadioItem`** (déjà générés par shadcn) au lieu de `DropdownMenuItem` + `text-primary`. Radix pose `role="menuitemradio"` et `aria-checked`, shadcn rend un indicateur — l'état actif n'est plus porté par la seule couleur (WCAG 1.4.1). Le test vérifie `aria-checked="true"` avant et après le changement de mode.
+> 2. **Une seule application du thème.** `setMode` ne fait que `storeTheme` + `set` ; `ThemeProvider` est le seul endroit qui touche au DOM. Un test qui rend `ThemeToggle` doit donc l'envelopper dans `ThemeProvider`.
+> 3. **`app/providers/app-toaster.tsx`** monte le `Toaster` de sonner avec `theme={mode}` depuis le store (`ThemeMode` et `ToasterProps['theme']` ont les mêmes valeurs) ; testé via l'attribut `data-sonner-theme`, qui n'apparaît qu'une fois un toast émis.
+> 4. **`src/test/setup.ts`** porte trois polyfills jsdom indispensables et mesurés : un pont `localStorage`/`sessionStorage` vers `globalThis` (absents sous vitest 2 + jsdom 25), des stubs `ResizeObserver` / `PointerEvent` / pointer capture pour Radix, et un court-circuit de `Element.prototype.matches(':fullscreen' | ':modal')` — jsdom les résout par une récursion non mémoïsée que Radix déclenche par nœud : **10,5 s par clic, ramené à 94 ms**. Les tests remettent le store à `{ mode: 'light' }` en `beforeEach`.
+
 **Files:**
 - Create: `apps/web/src/lib/theme.ts`, `apps/web/src/stores/theme-store.ts`
 - Create: `apps/web/src/app/providers/theme-provider.tsx`
@@ -1780,7 +1787,7 @@ export function ThemeToggle() {
 - [ ] **Step 9: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 7 tests au total.
+Expected: PASS — 8 tests au total (6 thème + 1 sélecteur + 1 toaster).
 
 - [ ] **Step 10: Commit**
 
@@ -1980,7 +1987,7 @@ export function Logo({ className }: { className?: string }) {
 - [ ] **Step 4: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/web test`
-Expected: PASS — 11 tests au total.
+Expected: PASS — 12 tests au total.
 
 - [ ] **Step 5: Commit**
 
