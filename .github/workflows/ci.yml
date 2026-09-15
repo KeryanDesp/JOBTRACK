@@ -51,4 +51,5 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
-      - run: pnpm test:e2e
+      # e2e API uniquement : la suite Playwright du web (navigateurs, serveur Vite) reste hors CI pour l'instant.
+      - run: pnpm turbo run test:e2e --filter=@jobtrack/api
