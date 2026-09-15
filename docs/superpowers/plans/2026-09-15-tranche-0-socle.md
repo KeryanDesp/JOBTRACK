@@ -552,6 +552,8 @@ git commit -m "feat(shared): contrat zod partage et validation de l environnemen
 
 ## Task 4: API NestJS sur adaptateur Fastify
 
+> **Amendement après revue.** (1) `apps/api` étant CommonJS, son fichier de lint se nomme **`eslint.config.mjs`** — un `.js` en syntaxe ESM déclenche `MODULE_TYPELESS_PACKAGE_JSON` à chaque lint. (2) Pas d'alias `@/*` dans le tsconfig : `nest build` ne le réécrit pas et il planterait au `require`. (3) La configuration transverse vit dans `src/app.setup.ts` (`configureApp`, `createAdapter`), réutilisée telle quelle par les tests e2e de la tranche 1. (4) `trustProxy` n'est activé qu'en production : sinon un client forgerait `X-Forwarded-For` et contournerait le rate limiting par IP.
+
 > **Amendement — configuration ESLint du paquet.** `@jobtrack/config/eslint` expose une **fabrique**, pas une configuration figée : `tsconfigRootDir` doit être la racine du paquet consommateur, faute de quoi `allowDefaultProject` ne correspond à rien et le lint plante fatalement. Ce paquet doit donc déclarer `eslint` (`^10.0.0`) en devDependency et créer son propre `eslint.config.js` :
 >
 > ```js
@@ -562,7 +564,7 @@ git commit -m "feat(shared): contrat zod partage et validation de l environnemen
 
 **Files:**
 - Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/nest-cli.json`, `apps/api/vitest.config.ts`
-- Create: `apps/api/src/main.ts`, `apps/api/src/app.module.ts`, `apps/api/src/config/env.ts`
+- Create: `apps/api/src/main.ts`, `apps/api/src/app.setup.ts`, `apps/api/src/app.module.ts`, `apps/api/src/config/env.ts`
 
 - [ ] **Step 1: Créer le paquet API**
 
@@ -630,9 +632,7 @@ git commit -m "feat(shared): contrat zod partage et validation de l environnemen
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "rootDir": "src"
   },
   "include": ["src/**/*"]
 }
@@ -703,24 +703,20 @@ import { Module } from '@nestjs/common';
 export class AppModule {}
 ```
 
-`apps/api/src/main.ts` :
+`apps/api/src/app.setup.ts` — configuration transverse, sans effet de bord, importable par les tests :
 
 ```ts
-import 'reflect-metadata';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
-import { Logger } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import { AppModule } from './app.module';
 import { env } from './config/env';
 
-async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter({ trustProxy: true }),
-  );
-
+/**
+ * Applique à l'application toute la configuration transverse : sécurité HTTP,
+ * cookies, CORS et préfixe d'API. Partagée entre le bootstrap réel et les
+ * tests end-to-end, pour que les deux ne divergent jamais.
+ */
+export async function configureApp(app: NestFastifyApplication): Promise<void> {
   await app.register(helmet);
   await app.register(cookie, { secret: env.SESSION_SECRET });
 
@@ -731,6 +727,30 @@ async function bootstrap(): Promise<void> {
   });
 
   app.setGlobalPrefix('api/v1');
+}
+
+export function createAdapter(): FastifyAdapter {
+  // Ne faire confiance aux en-têtes X-Forwarded-* qu'en production, derrière
+  // un vrai proxy. Sinon un client pourrait forger son IP et contourner le
+  // rate limiting par adresse.
+  return new FastifyAdapter({ trustProxy: env.NODE_ENV === 'production' });
+}
+```
+
+`apps/api/src/main.ts` — point d'entrée, rien d'autre :
+
+```ts
+import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { AppModule } from './app.module';
+import { configureApp, createAdapter } from './app.setup';
+import { env } from './config/env';
+
+async function bootstrap(): Promise<void> {
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, createAdapter());
+  await configureApp(app);
 
   await app.listen({ port: env.API_PORT, host: '0.0.0.0' });
   Logger.log(`API démarrée sur http://localhost:${env.API_PORT}/api/v1`, 'Bootstrap');

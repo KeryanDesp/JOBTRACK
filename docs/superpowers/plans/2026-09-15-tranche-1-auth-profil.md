@@ -815,13 +815,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
 - [ ] **Step 4: Brancher le filtre**
 
-Dans `apps/api/src/main.ts`, après `app.setGlobalPrefix('api/v1')` :
+Dans `apps/api/src/app.setup.ts`, à la fin de `configureApp`, après `app.setGlobalPrefix('api/v1')` :
 
 ```ts
-app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalFilters(new HttpExceptionFilter());
 ```
 
-en ajoutant l'import `import { HttpExceptionFilter } from './common/http-exception.filter';`.
+en ajoutant l'import `import { HttpExceptionFilter } from './common/http-exception.filter';`. Le filtre est ainsi actif dans le bootstrap **et** dans les tests e2e, qui appellent la même fonction.
 
 - [ ] **Step 5: Lancer les tests**
 
@@ -1896,13 +1896,11 @@ export default defineConfig({
 
 ```ts
 import { Test } from '@nestjs/testing';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import cookie from '@fastify/cookie';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
+import { configureApp, createAdapter } from '../src/app.setup';
 import { PrismaService } from '../src/common/prisma.service';
-import { HttpExceptionFilter } from '../src/common/http-exception.filter';
-import { env } from '../src/config/env';
 
 let app: NestFastifyApplication;
 let prisma: PrismaService;
@@ -1916,10 +1914,8 @@ const USER = {
 
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-  await app.register(cookie, { secret: env.SESSION_SECRET });
-  app.setGlobalPrefix('api/v1');
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app = moduleRef.createNestApplication<NestFastifyApplication>(createAdapter());
+  await configureApp(app); // helmet, cookies, CORS, préfixe, filtre : identique au bootstrap
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
 
@@ -2709,14 +2705,12 @@ C'est le test le plus important de la tranche. Sans lui, rien ne fusionne.
 `apps/api/test/profile.e2e.spec.ts` :
 
 ```ts
-import cookie from '@fastify/cookie';
 import { Test } from '@nestjs/testing';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
-import { HttpExceptionFilter } from '../src/common/http-exception.filter';
+import { configureApp, createAdapter } from '../src/app.setup';
 import { PrismaService } from '../src/common/prisma.service';
-import { env } from '../src/config/env';
 
 let app: NestFastifyApplication;
 let prisma: PrismaService;
@@ -2728,10 +2722,8 @@ interface Actor {
 
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-  await app.register(cookie, { secret: env.SESSION_SECRET });
-  app.setGlobalPrefix('api/v1');
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app = moduleRef.createNestApplication<NestFastifyApplication>(createAdapter());
+  await configureApp(app); // helmet, cookies, CORS, préfixe, filtre : identique au bootstrap
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
 
