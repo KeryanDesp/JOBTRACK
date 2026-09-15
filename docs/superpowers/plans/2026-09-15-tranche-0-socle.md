@@ -1095,9 +1095,11 @@ export default defineConfig({
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*", "vite.config.ts"]
+  "include": ["src/**/*", "e2e/**/*", "vite.config.ts"]
 }
 ```
+
+> `e2e/**/*` est délibérément inclus : sans lui, les spécifications Playwright retombent sur le projet par défaut d'ESLint et perdent le lint typé. Le `allowDefaultProject` de la config partagée les couvre en secours, mais un vrai typage vaut mieux qu'un repli.
 
 `apps/web/src/test/setup.ts` :
 
