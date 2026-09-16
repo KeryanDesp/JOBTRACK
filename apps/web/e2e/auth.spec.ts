@@ -21,7 +21,11 @@ test('inscription, saisie du profil, deconnexion et reconnexion', async ({ page 
   await page.getByLabel('Mot de passe').fill(PASSWORD);
   await page.getByRole('button', { name: 'Créer mon compte' }).click();
 
-  await expect(page).toHaveURL('/profile');
+  // L'inscription mène désormais à l'accueil (`/onboarding`, voir onboarding.spec.ts pour
+  // ce parcours) : ce test-ci ne s'intéresse qu'au profil, on y va donc directement plutôt
+  // que de traverser l'accueil.
+  await expect(page).toHaveURL('/onboarding');
+  await page.goto('/profile');
   await expect(page.getByRole('heading', { level: 1, name: 'Mon profil' })).toBeVisible();
 
   // Informations personnelles : premier des trois boutons « Enregistrer » de la page.
