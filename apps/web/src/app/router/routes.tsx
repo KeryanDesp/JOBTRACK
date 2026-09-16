@@ -6,6 +6,7 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { ImportCvPage } from '@/features/cv-import/pages/import-cv-page';
 import { LandingPage } from '@/features/landing/landing-page';
+import { JobsPage } from '@/features/jobs/pages/jobs-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
 import { OnboardingPage } from '@/features/onboarding/pages/onboarding-page';
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
           ...NAV_ITEMS.map((item) => {
             if (item.to === '/profile') return { path: item.to, element: <ProfilePage /> };
             if (item.to === '/settings') return { path: item.to, element: <SettingsPage /> };
+            if (item.to === '/jobs') return { path: item.to, element: <JobsPage /> };
             return { path: item.to, element: <ComingSoonPage label={item.label} /> };
           }),
         ],
