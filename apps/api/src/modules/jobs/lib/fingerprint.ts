@@ -20,8 +20,55 @@ export interface FingerprintInput {
   externalId: string;
 }
 
+/**
+ * Formes juridiques à retirer en fin de raison sociale (« ACME S.A.S. »,
+ * « Acme SAS », « Acme » doivent produire la même clé) : jamais au milieu du
+ * nom, seulement en dernier mot, pour ne pas tronquer un nom d'entreprise qui
+ * les contiendrait légitimement ailleurs.
+ */
+const LEGAL_FORM_SUFFIXES = new Set(['sas', 'sasu', 'sarl', 'sa', 'eurl', 'sci', 'snc', 'scop']);
+
+/**
+ * Recolle les lettres isolées (« s », « a », « s » → « sas », issues de
+ * « S.A.S. » une fois la ponctuation transformée en espaces par
+ * `normalizeForKey`) en un seul mot, pour ne pas les confondre avec des
+ * initiales ou des mots distincts.
+ */
+function glueIsolatedLetters(words: string[]): string[] {
+  const glued: string[] = [];
+  let buffer = '';
+  for (const word of words) {
+    if (word.length === 1) {
+      buffer += word;
+      continue;
+    }
+    if (buffer) {
+      glued.push(buffer);
+      buffer = '';
+    }
+    glued.push(word);
+  }
+  if (buffer) glued.push(buffer);
+  return glued;
+}
+
+/**
+ * Normalisation d'une raison sociale pour la clé d'empreinte uniquement
+ * (jamais pour l'affichage) : `normalizeForKey`, puis lettres isolées
+ * recollées et forme juridique finale retirée — « ACME S.A.S. », « Acme
+ * SAS » et « Acme » donnent la même clé.
+ */
+export function normalizeCompany(company: string): string {
+  const base = normalizeForKey(company);
+  if (!base) return base;
+  const words = glueIsolatedLetters(base.split(' '));
+  const last = words.at(-1);
+  if (words.length > 1 && last && LEGAL_FORM_SUFFIXES.has(last)) words.pop();
+  return words.join(' ');
+}
+
 export function jobFingerprint(input: FingerprintInput): string {
-  const normCompany = normalizeForKey(input.company ?? '');
+  const normCompany = normalizeCompany(input.company ?? '');
   const normTitle = normalizeForKey(input.title);
   const locationKey = input.communeCode ?? normalizeForKey(input.locationLabel ?? '');
 

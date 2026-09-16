@@ -1,3 +1,5 @@
+import { stripControlChars } from '../../common/text/control-chars';
+
 /**
  * Validation d'un fichier de CV envoyé par le client, avant tout stockage ou appel au
  * service d'extraction : taille, cohérence déclarée/réelle du type, et nom de fichier
@@ -61,31 +63,6 @@ function invalid(message: string): never {
 function extensionOf(fileName: string): string | null {
   const match = /\.([a-zA-Z0-9]+)$/.exec(fileName);
   return match ? (match[1] ?? '').toLowerCase() : null;
-}
-
-/**
- * Contrôles de direction de texte (« bidi override », U+202A-U+202E et U+2066-U+2069) :
- * détournés pour déguiser une extension (ex. faire lire « exe.gpj » comme « cv.jpg » à
- * l'écran). Un nom de fichier affiché tel quel ne doit jamais en contenir.
- */
-function isBidiOverride(code: number): boolean {
-  return (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
-}
-
-/**
- * Retire les caractères de contrôle (0x00-0x1F, 0x7F) et les contrôles bidi d'une chaîne.
- * Écrit caractère par caractère plutôt qu'avec une classe de caractères de contrôle en
- * regex (bannie par `no-control-regex`, et de toute façon moins lisible qu'une comparaison
- * de code point).
- */
-function stripControlChars(value: string): string {
-  let result = '';
-  for (const char of value) {
-    const code = char.codePointAt(0) ?? 0;
-    const isAsciiControl = code < 0x20 || code === 0x7f;
-    if (!isAsciiControl && !isBidiOverride(code)) result += char;
-  }
-  return result;
 }
 
 /**

@@ -47,4 +47,38 @@ describe('detectRemoteMode', () => {
   it('renvoie null quand rien n_est mentionne', () => {
     expect(detectRemoteMode('Poste de comptable au sein d_une agence a Nancy.')).toBeNull();
   });
+
+  it('negation « teletravail : non »', () => {
+    expect(detectRemoteMode('Modalites de travail — Télétravail : non.')).toBeNull();
+  });
+
+  it('negation « teletravail non » sans ponctuation', () => {
+    expect(detectRemoteMode('Télétravail non, presence obligatoire sur site.')).toBeNull();
+  });
+
+  it('negation « le teletravail n_est pas possible »', () => {
+    expect(detectRemoteMode('Le télétravail n\'est pas possible sur ce poste de production.')).toBeNull();
+  });
+
+  it('negation « teletravail refuse »', () => {
+    expect(detectRemoteMode('Télétravail refusé pour ce poste.')).toBeNull();
+  });
+
+  it('negation « teletravail non autorise »', () => {
+    expect(detectRemoteMode('Télétravail non autorisé sur ce site classe.')).toBeNull();
+  });
+
+  it('negation « teletravail exclu »', () => {
+    expect(detectRemoteMode('Télétravail exclu, poste en atelier.')).toBeNull();
+  });
+
+  it('reste sous 20 ms sur une tres longue suite de chiffres (quantificateur borne, pas de backtracking quadratique)', () => {
+    const input = '9'.repeat(20000);
+    const start = performance.now();
+    const result = detectRemoteMode(input);
+    const duration = performance.now() - start;
+
+    expect(result).toBeNull();
+    expect(duration).toBeLessThan(20);
+  });
 });

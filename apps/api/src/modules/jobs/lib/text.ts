@@ -1,38 +1,11 @@
+import { stripControlChars } from '../../../common/text/control-chars';
+
 /**
  * Nettoyage de texte pour les offres France Travail : caractères de contrôle et
- * séquences bidi retirés, sauts de ligne normalisés, troncature à une longueur
- * maximale sur une frontière de mot. Une variante existe déjà dans le module
- * `cv-import` (`stripControlChars`, pour un nom de fichier sur une seule ligne),
- * mais elle n'est pas exportée et ne préserve pas les sauts de ligne — nécessaires
- * ici pour une description multi-paragraphes. Réimplémentée localement plutôt que
- * d'élargir la surface de `cv-import` pour cette tâche.
+ * séquences bidi retirés (via le helper commun `stripControlChars`, `keepNewlines`
+ * pour préserver les paragraphes), sauts de ligne normalisés, troncature à une
+ * longueur maximale sur une frontière de mot.
  */
-
-/**
- * Contrôles de direction de texte (« bidi override », U+202A-U+202E et
- * U+2066-U+2069) : jamais légitimes dans un texte affiché tel quel.
- */
-function isBidiOverride(codePoint: number): boolean {
-  return (codePoint >= 0x202a && codePoint <= 0x202e) || (codePoint >= 0x2066 && codePoint <= 0x2069);
-}
-
-/**
- * Caractères de contrôle ASCII (0x00-0x1F, 0x7F), à l'exception du saut de
- * ligne (0x0A) déjà normalisé en amont et volontairement conservé.
- */
-function isAsciiControl(codePoint: number): boolean {
-  return (codePoint < 0x20 && codePoint !== 0x0a) || codePoint === 0x7f;
-}
-
-/** Écrit caractère par caractère plutôt qu'avec une classe de contrôle en regex (bannie par `no-control-regex`). */
-function stripControlChars(value: string): string {
-  let result = '';
-  for (const char of value) {
-    const code = char.codePointAt(0) ?? 0;
-    if (!isAsciiControl(code) && !isBidiOverride(code)) result += char;
-  }
-  return result;
-}
 
 const ELLIPSIS = '…';
 
@@ -47,16 +20,19 @@ function truncateAtWordBoundary(text: string, max: number): string {
 
 /**
  * Nettoie un texte issu d'une source externe : `\r\n`/`\r` → `\n`, caractères de
- * contrôle et bidi retirés, espaces de fin de ligne coupés, séquences de 3 sauts
- * de ligne ou plus réduites à une seule ligne vide, puis troncature à `max`
- * caractères sur une frontière de mot (jamais au milieu d'un mot).
+ * contrôle et bidi retirés, espaces de fin de ligne coupés (`trimEnd`, en O(n) —
+ * une regexp ancrée en fin de ligne comme `/[ \t]+$/` dégénère en O(n²) sur une
+ * ligne à très nombreux espaces suivis d'un caractère non blanc, le moteur
+ * rejouant le backtracking depuis chaque position de départ), séquences de 3
+ * sauts de ligne ou plus réduites à une seule ligne vide, puis troncature à
+ * `max` caractères sur une frontière de mot (jamais au milieu d'un mot).
  */
 export function cleanText(input: string, max: number): string {
   const withUnixNewlines = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const withoutControlChars = stripControlChars(withUnixNewlines);
+  const withoutControlChars = stripControlChars(withUnixNewlines, { keepNewlines: true });
   const withoutTrailingSpaces = withoutControlChars
     .split('\n')
-    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .map((line) => line.trimEnd())
     .join('\n');
   const withoutExtraBlankLines = withoutTrailingSpaces.replace(/\n{3,}/g, '\n\n');
   const trimmed = withoutExtraBlankLines.trim();
@@ -66,9 +42,15 @@ export function cleanText(input: string, max: number): string {
 /**
  * Mentions de genre parasites à retirer d'une clé de normalisation :
  * « h/f », « (h/f) », « f/h », « h/f/x », « (f/h/x) », « h-f »… (accents déjà
- * retirés et texte déjà en minuscules au moment de l'appel).
+ * retirés et texte déjà en minuscules au moment de l'appel). Encadrée par des
+ * lookarounds `(?<![a-z0-9])…(?![a-z0-9])` : sans eux, la seule alternance
+ * « f/h » matcherait à tort à l'intérieur de « chef/hôtesse » (le « f » de
+ * « chef » collé au « h » de « hôtesse »). Les lookarounds garantissent que
+ * les lettres isolées « h »/« f »/« x » ne touchent aucune autre lettre ou
+ * chiffre du texte environnant.
  */
-const GENDER_MENTION_PATTERN = /\(?\s*(h\s*[/-]\s*f(?:\s*[/-]\s*x)?|f\s*[/-]\s*h(?:\s*[/-]\s*x)?)\s*\)?/g;
+const GENDER_MENTION_PATTERN =
+  /(?<![a-z0-9])\(?\s*(h\s*[/-]\s*f(?:\s*[/-]\s*x)?|f\s*[/-]\s*h(?:\s*[/-]\s*x)?)\s*\)?(?![a-z0-9])/g;
 
 /**
  * Normalise une chaîne pour en faire une clé de comparaison stable : forme NFD
@@ -84,18 +66,49 @@ export function normalizeForKey(input: string): string {
   return withoutPunctuation.trim().replace(/\s+/g, ' ');
 }
 
-/** Met en majuscule la première lettre de chaque mot (suites de lettres), sans toucher chiffres ni ponctuation. */
+/**
+ * Particules françaises toujours en minuscules dans un nom de lieu composé
+ * (« Aix-en-Provence », « Saint-Julien-en-Born »), sauf en tout premier mot.
+ * Les formes élidées (« d' », « l' ») sont incluses sans l'apostrophe : le
+ * motif de mise en forme ne capture que des suites de lettres, l'apostrophe
+ * n'en fait jamais partie.
+ */
+const LOWERCASE_PARTICLES = new Set([
+  'de',
+  'du',
+  'des',
+  'la',
+  'le',
+  'les',
+  'sur',
+  'sous',
+  'en',
+  'et',
+  'aux',
+  'd',
+  'l',
+]);
+
+/**
+ * Met en majuscule la première lettre de chaque mot (suites de lettres), sans
+ * toucher chiffres ni ponctuation ; les particules (« en », « de »…) restent
+ * en minuscules sauf en première position.
+ */
 function titleCaseWords(value: string): string {
-  return value.replace(
-    /[A-Za-zÀ-ÖØ-öø-ÿ]+/g,
-    (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
-  );
+  let isFirstWord = true;
+  return value.replace(/[A-Za-zÀ-ÖØ-öø-ÿ]+/g, (word) => {
+    const lower = word.toLowerCase();
+    const keepLowercase = !isFirstWord && LOWERCASE_PARTICLES.has(lower);
+    isFirstWord = false;
+    return keepLowercase ? lower : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
 }
 
 /**
  * Nettoie un libellé de lieu France Travail (« 57 - METZ » → « Metz (57) »,
- * « 75 - PARIS 01 » → « Paris 01 (75) »). Sans code préfixé (« METZ »), met
- * simplement le nom en forme de titre.
+ * « 75 - PARIS 01 » → « Paris 01 (75) », « 13 - AIX EN PROVENCE » →
+ * « Aix en Provence (13) »). Sans code préfixé (« METZ »), met simplement le
+ * nom en forme de titre.
  */
 export function cleanLocationLabel(input: string | null | undefined): string | null {
   if (!input) return null;

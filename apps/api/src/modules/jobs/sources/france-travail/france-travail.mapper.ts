@@ -12,10 +12,10 @@ import type { FranceTravailOffer } from './france-travail.schemas';
  * brouillon d'offre canonique (ou `null` si l'offre est inexploitable) sort.
  */
 
+const MAX_LABEL_LENGTH = 200;
 const MAX_DESCRIPTION_LENGTH = 20_000;
 const MAX_COMPANY_NAME_LENGTH = 200;
 const MAX_COMPANY_DESCRIPTION_LENGTH = 5_000;
-const MAX_SALARY_LABEL_LENGTH = 200;
 const FALLBACK_OFFER_URL = 'https://candidat.francetravail.fr/offres/recherche/detail/';
 
 /** `typeContrat` → `ContractType` (spec §5). Un code inconnu ne fait jamais deviner un contrat. */
@@ -33,8 +33,22 @@ const CONTRACT_TYPE_BY_CODE: Record<string, ContractType> = {
 /** `natureContrat` signalant un apprentissage ou une professionnalisation. */
 const APPRENTICESHIP_NATURE_CODES = new Set(['E2', 'FS']);
 
+const POSTAL_CODE_PATTERN = /^\d{5}$/;
+
 function isHttpUrl(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * Nettoie un libellé texte (contrôles, bidi, troncature à `max`) et renvoie
+ * `null` si le résultat est vide — un libellé réduit à des caractères de
+ * contrôle ou à des espaces n'est pas exploitable, jamais une chaîne vide
+ * silencieuse.
+ */
+function cleanLabel(value: string | null | undefined, max: number = MAX_LABEL_LENGTH): string | null {
+  if (!value) return null;
+  const cleaned = cleanText(value, max);
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 /** Parse une date ISO France Travail ; renvoie `null` si absente ou invalide (jamais une exception). */
@@ -42,6 +56,12 @@ function parseDateOrNull(value: string | null | undefined): Date | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** `nombrePostes` n'est un nombre de postes exploitable que s'il s'agit d'un entier strictement positif. */
+function positiveInteger(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return null;
+  return value;
 }
 
 /**
@@ -56,8 +76,15 @@ function departmentCodeFromCommuneCode(communeCode: string): string {
   return upper.slice(0, 2);
 }
 
-/** Repli sur le code postal quand `commune` est absent (mêmes règles DOM). */
-function departmentCodeFromPostalCode(postalCode: string): string {
+/**
+ * Repli sur le code postal quand `commune` est absent : `null` si le code
+ * postal n'a pas cinq chiffres, ou s'il commence par `20` — la Corse a deux
+ * départements (`2A`/`2B`) indiscernables depuis le seul code postal, jamais
+ * deviné. DOM (`97x`/`98x`) : trois premiers caractères, comme pour la commune.
+ */
+function departmentCodeFromPostalCode(postalCode: string): string | null {
+  if (!POSTAL_CODE_PATTERN.test(postalCode)) return null;
+  if (postalCode.startsWith('20')) return null;
   if (postalCode.startsWith('97') || postalCode.startsWith('98')) return postalCode.slice(0, 3);
   return postalCode.slice(0, 2);
 }
@@ -66,7 +93,7 @@ function mapSkills(offer: FranceTravailOffer): JobDraftSkill[] {
   const seen = new Set<string>();
   const skills: JobDraftSkill[] = [];
   for (const competence of offer.competences) {
-    const name = competence.libelle?.trim();
+    const name = cleanLabel(competence.libelle);
     if (!name) continue;
     const key = normalizeForKey(name);
     if (!key || seen.has(key)) continue;
@@ -80,13 +107,14 @@ function mapRequirements(offer: FranceTravailOffer): JobDraftRequirement[] {
   const requirements: JobDraftRequirement[] = [];
 
   for (const formation of offer.formations) {
-    const label = [formation.niveauLibelle, formation.domaineLibelle].filter(Boolean).join(' – ');
+    const rawLabel = [formation.niveauLibelle, formation.domaineLibelle].filter(Boolean).join(' – ');
+    const label = cleanLabel(rawLabel);
     if (!label) continue;
     requirements.push({ kind: 'EDUCATION', label, required: formation.exigence === 'E' });
   }
 
   for (const langue of offer.langues) {
-    const label = langue.libelle?.trim();
+    const label = cleanLabel(langue.libelle);
     if (!label) continue;
     requirements.push({ kind: 'LANGUAGE', label, required: langue.exigence === 'E' });
   }
@@ -94,7 +122,12 @@ function mapRequirements(offer: FranceTravailOffer): JobDraftRequirement[] {
   return requirements;
 }
 
-/** Contrat + nature (apprentissage) : l'apprentissage prévaut sur le code `typeContrat` sous-jacent. */
+/**
+ * Contrat + nature (apprentissage) : l'apprentissage prévaut sur le code
+ * `typeContrat` sous-jacent. `Object.hasOwn` (et non un simple accès `[code]`)
+ * évite qu'un code inattendu comme `constructor` ne résolve une propriété
+ * héritée du prototype de l'objet plutôt que `undefined`.
+ */
 function mapContract(offer: FranceTravailOffer): { contractType: ContractType | null; isApprenticeship: boolean } {
   const isApprenticeship =
     (offer.natureContrat != null && APPRENTICESHIP_NATURE_CODES.has(offer.natureContrat)) ||
@@ -102,7 +135,9 @@ function mapContract(offer: FranceTravailOffer): { contractType: ContractType | 
 
   if (isApprenticeship) return { contractType: 'APPRENTICESHIP', isApprenticeship: true };
 
-  const contractType = offer.typeContrat ? CONTRACT_TYPE_BY_CODE[offer.typeContrat] ?? null : null;
+  const code = offer.typeContrat;
+  const contractType =
+    code && Object.hasOwn(CONTRACT_TYPE_BY_CODE, code) ? CONTRACT_TYPE_BY_CODE[code] ?? null : null;
   return { contractType, isApprenticeship: false };
 }
 
@@ -128,46 +163,44 @@ function mapLocation(offer: FranceTravailOffer): {
     departmentCode,
     latitude: lieu?.latitude ?? null,
     longitude: lieu?.longitude ?? null,
-    locationLabel: cleanLocationLabel(lieu?.libelle),
+    locationLabel: cleanLocationLabel(cleanLabel(lieu?.libelle)),
   };
 }
 
+/** URL de repli vers la fiche candidat : `id` échappé, une offre France Travail pouvant contenir `/` ou des espaces. */
 function mapSourceUrl(offer: FranceTravailOffer, id: string): string {
   const urlOrigine = offer.origineOffre?.urlOrigine;
-  return isHttpUrl(urlOrigine) ? urlOrigine : `${FALLBACK_OFFER_URL}${id}`;
+  return isHttpUrl(urlOrigine) ? urlOrigine : `${FALLBACK_OFFER_URL}${encodeURIComponent(id)}`;
 }
 
 /**
  * Normalise une offre France Travail (déjà validée par le schéma Zod) en
- * `JobDraft`. Renvoie `null` si l'offre n'a ni identifiant ni intitulé —
- * inexploitable, jamais bloquant pour le reste du lot (l'ingestion l'ignore
- * et la compte, spec §5).
+ * `JobDraft`. Renvoie `null` si l'offre n'a ni identifiant ni intitulé
+ * exploitable (vide, ou réduit à des espaces/caractères de contrôle une fois
+ * nettoyé) — inexploitable, jamais bloquant pour le reste du lot (l'ingestion
+ * l'ignore et la compte, spec §5).
  */
 export function mapFranceTravailOffer(offer: FranceTravailOffer, now: Date = new Date()): JobDraft | null {
   const id = offer.id;
-  const title = offer.intitule;
+  const title = cleanLabel(offer.intitule);
   if (!id || !title) return null;
 
   const { contractType, isApprenticeship } = mapContract(offer);
+  const experienceLabel = cleanLabel(offer.experienceLibelle);
   const { level: experienceLevel, required: experienceRequired } = mapExperience(
     offer.experienceExige,
-    offer.experienceLibelle,
+    experienceLabel,
   );
   const { minAnnual: salaryMinAnnual, maxAnnual: salaryMaxAnnual } = parseSalaryLabel(offer.salaire?.libelle);
   const description = cleanText(offer.description ?? '', MAX_DESCRIPTION_LENGTH);
   const remoteMode = detectRemoteMode(`${title}\n${offer.description ?? ''}`);
   const location = mapLocation(offer);
 
-  const companyNom = offer.entreprise?.nom;
-  const companyName = companyNom ? cleanText(companyNom, MAX_COMPANY_NAME_LENGTH) : null;
-  const companyDescriptionRaw = offer.entreprise?.description;
-  const companyDescription = companyDescriptionRaw
-    ? cleanText(companyDescriptionRaw, MAX_COMPANY_DESCRIPTION_LENGTH)
-    : null;
+  const companyName = cleanLabel(offer.entreprise?.nom, MAX_COMPANY_NAME_LENGTH);
+  const companyDescription = cleanLabel(offer.entreprise?.description, MAX_COMPANY_DESCRIPTION_LENGTH);
   const companyUrlRaw = offer.entreprise?.url;
   const companyLogoRaw = offer.entreprise?.logo;
   const applyUrlRaw = offer.contact?.urlPostulation;
-  const salaireLibelle = offer.salaire?.libelle;
 
   const publishedAt = parseDateOrNull(offer.dateCreation) ?? parseDateOrNull(offer.dateActualisation) ?? now;
   const sourceUpdatedAt = parseDateOrNull(offer.dateActualisation);
@@ -186,26 +219,26 @@ export function mapFranceTravailOffer(offer: FranceTravailOffer, now: Date = new
     latitude: location.latitude,
     longitude: location.longitude,
     contractType,
-    contractLabel: offer.typeContratLibelle ?? offer.typeContrat ?? null,
+    contractLabel: cleanLabel(offer.typeContratLibelle ?? offer.typeContrat),
     contractNature: offer.natureContrat ?? null,
     remoteMode,
     remoteModeInferred: remoteMode !== null,
     experienceLevel,
-    experienceLabel: offer.experienceLibelle ?? null,
+    experienceLabel,
     experienceRequired,
     salaryMinAnnual,
     salaryMaxAnnual,
-    salaryLabel: salaireLibelle ? cleanText(salaireLibelle, MAX_SALARY_LABEL_LENGTH) : null,
+    salaryLabel: cleanLabel(offer.salaire?.libelle),
     currency: 'EUR',
-    workingTimeLabel: offer.dureeTravailLibelle ?? null,
+    workingTimeLabel: cleanLabel(offer.dureeTravailLibelle),
     isFullTime: offer.tempsPlein ?? null,
     isApprenticeship,
-    positionsCount: offer.nombrePostes ?? null,
+    positionsCount: positiveInteger(offer.nombrePostes),
     accessibleTh: offer.accessibleTH ?? null,
-    sectorLabel: offer.secteurActiviteLibelle ?? null,
+    sectorLabel: cleanLabel(offer.secteurActiviteLibelle),
     romeCode: offer.romeCode ?? null,
-    romeLabel: offer.romeLibelle ?? null,
-    qualificationLabel: offer.qualificationLibelle ?? null,
+    romeLabel: cleanLabel(offer.romeLibelle),
+    qualificationLabel: cleanLabel(offer.qualificationLibelle),
     publishedAt,
     sourceUpdatedAt,
     skills: mapSkills(offer),
@@ -215,7 +248,7 @@ export function mapFranceTravailOffer(offer: FranceTravailOffer, now: Date = new
       externalId: id,
       url: mapSourceUrl(offer, id),
       applyUrl: isHttpUrl(applyUrlRaw) ? applyUrlRaw : null,
-      partnerName: offer.origineOffre?.partenaires?.[0]?.nom ?? null,
+      partnerName: cleanLabel(offer.origineOffre?.partenaires?.[0]?.nom),
       publishedAt,
       sourceUpdatedAt,
     },

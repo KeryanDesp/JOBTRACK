@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { jobFingerprint } from './fingerprint';
+import { jobFingerprint, normalizeCompany } from './fingerprint';
 
 const BASE = {
   company: 'Solaris Ingénierie',
@@ -57,5 +57,31 @@ describe('jobFingerprint', () => {
     const withCompany = jobFingerprint(BASE);
     const withoutCompany = jobFingerprint({ ...BASE, company: '' });
     expect(withCompany).not.toBe(withoutCompany);
+  });
+
+  it('une forme juridique abregee, developpee ou absente donnent la meme empreinte', () => {
+    const abbreviated = jobFingerprint({ ...BASE, company: 'ACME S.A.S.' });
+    const spelled = jobFingerprint({ ...BASE, company: 'Acme SAS' });
+    const bare = jobFingerprint({ ...BASE, company: 'Acme' });
+    expect(abbreviated).toBe(spelled);
+    expect(spelled).toBe(bare);
+  });
+});
+
+describe('normalizeCompany', () => {
+  it('recolle les lettres isolees d_une forme juridique abregee et la retire', () => {
+    expect(normalizeCompany('ACME S.A.S.')).toBe('acme');
+  });
+
+  it('retire une forme juridique deja developpee', () => {
+    expect(normalizeCompany('Acme SAS')).toBe('acme');
+  });
+
+  it('laisse un nom sans forme juridique intact', () => {
+    expect(normalizeCompany('Acme')).toBe('acme');
+  });
+
+  it('ne retire une forme juridique que si elle est le dernier mot', () => {
+    expect(normalizeCompany('SA Foncière du Centre')).toBe('sa fonciere du centre');
   });
 });

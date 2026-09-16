@@ -33,6 +33,128 @@ describe('mapFranceTravailOffer — cas invalides', () => {
   it('renvoie null quand l_intitule est absent', () => {
     expect(mapFranceTravailOffer(buildOffer({ id: 'FT-X', intitule: null }))).toBeNull();
   });
+
+  it('renvoie null quand l_intitule ne contient que des espaces', () => {
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-X', intitule: '   ' }))).toBeNull();
+  });
+
+  it('renvoie null quand l_intitule ne contient que des caracteres de controle', () => {
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-X', intitule: '\u0000\u202e' }))).toBeNull();
+  });
+});
+
+describe('mapFranceTravailOffer — nettoyage des libelles', () => {
+  it('nettoie les caracteres de controle et bidi dans l_intitule sans le vider', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9010', intitule: 'Développeur\u0000 web\u202e' }));
+    expect(draft?.title).toBe('Développeur web');
+  });
+
+  it('nettoie les caracteres de controle dans le libelle de lieu avant mise en forme', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9011',
+        intitule: 'Poste',
+        lieuTravail: { libelle: '57 - METZ\u0000', latitude: null, longitude: null, codePostal: '57000', commune: '57463' },
+      }),
+    );
+    expect(draft?.locationLabel).toBe('Metz (57)');
+  });
+
+  it('ecarte une competence reduite a des caracteres de controle une fois nettoyee', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9012',
+        intitule: 'Poste',
+        competences: [{ code: '1', libelle: '\u0000\u0000', exigence: 'E' }],
+      }),
+    );
+    expect(draft?.skills).toEqual([]);
+  });
+});
+
+describe('mapFranceTravailOffer — positionsCount', () => {
+  it('renvoie null quand nombrePostes est nul ou negatif', () => {
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-9020', intitule: 'Poste', nombrePostes: 0 }))?.positionsCount).toBeNull();
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-9021', intitule: 'Poste', nombrePostes: -1 }))?.positionsCount).toBeNull();
+  });
+
+  it('renvoie null quand nombrePostes n_est pas un entier', () => {
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-9022', intitule: 'Poste', nombrePostes: 1.5 }))?.positionsCount).toBeNull();
+  });
+
+  it('conserve un entier strictement positif', () => {
+    expect(mapFranceTravailOffer(buildOffer({ id: 'FT-9023', intitule: 'Poste', nombrePostes: 2 }))?.positionsCount).toBe(2);
+  });
+});
+
+describe('mapFranceTravailOffer — code contrat inconnu ou hostile', () => {
+  it('un code typeContrat absent du dictionnaire renvoie null', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9030', intitule: 'Poste', typeContrat: 'ZZZ' }));
+    expect(draft?.contractType).toBeNull();
+  });
+
+  it('« constructor » ne resout pas une propriete heritee du prototype', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9031', intitule: 'Poste', typeContrat: 'constructor' }));
+    expect(draft?.contractType).toBeNull();
+  });
+});
+
+describe('mapFranceTravailOffer — url de repli echappee', () => {
+  it('echappe l_identifiant dans l_url de repli', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT 001/A', intitule: 'Poste' }));
+    expect(draft?.source.url).toBe('https://candidat.francetravail.fr/offres/recherche/detail/FT%20001%2FA');
+  });
+});
+
+describe('mapFranceTravailOffer — departement depuis le code postal (sans commune)', () => {
+  it('deduit le departement depuis un code postal valide', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9040',
+        intitule: 'Poste',
+        lieuTravail: { libelle: 'PARIS', latitude: null, longitude: null, codePostal: '75001', commune: null },
+      }),
+    );
+    expect(draft?.departmentCode).toBe('75');
+  });
+
+  it('renvoie null quand le code postal commence par 20 (Corse ambigue entre 2A et 2B)', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9041',
+        intitule: 'Poste',
+        lieuTravail: { libelle: 'AJACCIO', latitude: null, longitude: null, codePostal: '20000', commune: null },
+      }),
+    );
+    expect(draft?.departmentCode).toBeNull();
+  });
+
+  it('renvoie null quand le code postal n_a pas cinq chiffres', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9042',
+        intitule: 'Poste',
+        lieuTravail: { libelle: 'INCONNU', latitude: null, longitude: null, codePostal: '750', commune: null },
+      }),
+    );
+    expect(draft?.departmentCode).toBeNull();
+  });
+});
+
+describe('mapFranceTravailOffer — FT-0020 (salaire absent, ajoute par le fixup du client)', () => {
+  const draft = mapFranceTravailOffer(findOffer(page1, 'FT-0020'));
+
+  it('un salaire nul (et non un libelle inconnu) renvoie des montants et un libelle nuls', () => {
+    expect(draft?.salaryMinAnnual).toBeNull();
+    expect(draft?.salaryMaxAnnual).toBeNull();
+    expect(draft?.salaryLabel).toBeNull();
+  });
+
+  it('le reste de l_offre se mappe normalement malgre le salaire absent', () => {
+    expect(draft?.contractType).toBe('CDI');
+    expect(draft?.communeCode).toBe('35238');
+    expect(draft?.departmentCode).toBe('35');
+  });
 });
 
 describe('mapFranceTravailOffer — FT-0001 (CDI, cadre)', () => {
