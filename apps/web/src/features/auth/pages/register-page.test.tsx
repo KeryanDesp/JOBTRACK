@@ -59,7 +59,7 @@ describe('RegisterPage', () => {
     });
   });
 
-  it('redirige vers l_accueil apres une inscription reussie', async () => {
+  it('redirige vers l_onboarding apres une inscription reussie', async () => {
     const user = userEvent.setup();
     register.mockResolvedValue({
       id: '1',

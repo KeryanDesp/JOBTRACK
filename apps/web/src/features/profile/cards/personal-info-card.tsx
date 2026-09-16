@@ -13,11 +13,11 @@ import { FormFieldError } from '@/features/auth/components/form-field-error';
 import { ServerErrorAlert } from '@/features/auth/components/server-error-alert';
 import { useSession, useSetSession } from '@/features/auth/hooks/use-session';
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
+import { profileKeys } from '@/features/profile/lib/query-keys';
 import { zodResolverWith } from '@/lib/forms';
 import { fetchProfile, updateProfile } from '@/services/api/profile';
 
 const FIELDS = ['firstName', 'lastName', 'phone', 'city', 'country'] as const;
-const PROFILE_QUERY_KEY = ['profile'] as const;
 
 function toFormValues(profile: {
   firstName: string;
@@ -39,7 +39,7 @@ export function PersonalInfoCard() {
   const queryClient = useQueryClient();
   const session = useSession();
   const setSession = useSetSession();
-  const query = useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchProfile });
+  const query = useQuery({ queryKey: profileKeys.all, queryFn: fetchProfile });
   const [formAlert, setFormAlert] = useState<string>();
 
   const form = useForm<ProfileFormInput, unknown, ProfileInput>({
@@ -57,7 +57,7 @@ export function PersonalInfoCard() {
     mutationFn: (body: ProfileFormInput) => updateProfile(body),
     onSuccess: (updated) => {
       toast.success('Enregistré.');
-      queryClient.setQueryData(PROFILE_QUERY_KEY, updated);
+      queryClient.setQueryData(profileKeys.all, updated);
       if (session.data) {
         setSession({ ...session.data, firstName: updated.firstName, lastName: updated.lastName });
       }

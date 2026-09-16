@@ -48,6 +48,13 @@ class FakeXMLHttpRequest {
   send(body: FormData): void {
     this.body = body;
   }
+
+  // Un vrai `XMLHttpRequest.abort()` déclenche `onabort` de façon synchrone
+  // s'il n'est pas déjà terminé : suffisant pour simuler `xhr.abort()` appelé
+  // par `uploadCv` sur annulation du signal externe.
+  abort(): void {
+    this.onabort?.();
+  }
 }
 
 function stubXhr(): void {
@@ -73,6 +80,7 @@ describe('uploadCv', () => {
     expect(xhr.method).toBe('POST');
     expect(xhr.url.endsWith('/cv-imports')).toBe(true);
     expect(xhr.withCredentials).toBe(true);
+    expect(xhr.timeout).toBe(90_000);
     expect(xhr.headers['x-csrf-token']).toBe('jeton-csrf-de-test');
     expect(xhr.body).toBeInstanceOf(FormData);
     expect(xhr.body?.get('file')).toBe(file);
@@ -114,6 +122,70 @@ describe('uploadCv', () => {
       status: 400,
       code: 'INVALID_FILE',
       message: 'Type de fichier non pris en charge.',
+    });
+  });
+
+  it('remplace un corps d_erreur illisible (html) par un message francais generique', async () => {
+    stubXhr();
+    const file = new File(['contenu'], 'cv.pdf', { type: 'application/pdf' });
+
+    const promise = uploadCv(file);
+    const xhr = latestXhr();
+    xhr.status = 502;
+    xhr.responseText = '<html>Bad Gateway</html>';
+    xhr.onload?.();
+
+    await expect(promise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 502,
+      message: 'Une erreur est survenue. Veuillez réessayer.',
+    });
+  });
+
+  it('rejette avec une panne reseau au statut 0 quand la requete echoue', async () => {
+    stubXhr();
+    const file = new File(['contenu'], 'cv.pdf', { type: 'application/pdf' });
+
+    const promise = uploadCv(file);
+    const xhr = latestXhr();
+    xhr.onerror?.();
+
+    await expect(promise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 0,
+      message: 'Connexion au serveur impossible. Vérifiez votre connexion internet.',
+    });
+  });
+
+  it('rejette avec le code TIMEOUT quand la requete depasse le delai', async () => {
+    stubXhr();
+    const file = new File(['contenu'], 'cv.pdf', { type: 'application/pdf' });
+
+    const promise = uploadCv(file);
+    const xhr = latestXhr();
+    xhr.ontimeout?.();
+
+    await expect(promise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 0,
+      code: 'TIMEOUT',
+      message: "L'analyse du CV a pris trop de temps. Réessayez.",
+    });
+  });
+
+  it('rejette avec le code ABORTED quand le signal externe est annule', async () => {
+    stubXhr();
+    const file = new File(['contenu'], 'cv.pdf', { type: 'application/pdf' });
+    const controller = new AbortController();
+
+    const promise = uploadCv(file, { signal: controller.signal });
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 0,
+      code: 'ABORTED',
+      message: 'Import annulé.',
     });
   });
 

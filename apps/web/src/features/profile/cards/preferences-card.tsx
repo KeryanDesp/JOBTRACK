@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { FormFieldError } from '@/features/auth/components/form-field-error';
 import { ServerErrorAlert } from '@/features/auth/components/server-error-alert';
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
+import { profileKeys } from '@/features/profile/lib/query-keys';
 import { joinTags, splitTags, zodResolverWith } from '@/lib/forms';
 import {
   fetchPreferences,
@@ -23,8 +24,6 @@ import {
   type PreferencesDto,
   type RemoteMode,
 } from '@/services/api/profile';
-
-const PREFERENCES_QUERY_KEY = ['profile', 'preferences'] as const;
 
 /** Sentinelle d'affichage pour « aucun niveau choisi » : jamais stockée dans le formulaire. */
 const UNSET = 'UNSET' as const;
@@ -119,7 +118,7 @@ const DEFAULT_VALUES: PreferencesFormValues = {
 
 export function PreferencesCard() {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: PREFERENCES_QUERY_KEY, queryFn: fetchPreferences });
+  const query = useQuery({ queryKey: profileKeys.preferences, queryFn: fetchPreferences });
   const [formAlert, setFormAlert] = useState<string>();
 
   const form = useForm<PreferencesFormValues, unknown, JobPreferencesInput>({
@@ -137,7 +136,7 @@ export function PreferencesCard() {
     mutationFn: (body: JobPreferencesFormInput) => updatePreferences(body),
     onSuccess: (updated) => {
       toast.success('Enregistré.');
-      queryClient.setQueryData(PREFERENCES_QUERY_KEY, updated);
+      queryClient.setQueryData(profileKeys.preferences, updated);
       form.reset(toFormValues(updated));
     },
     onError: (error: unknown) => {

@@ -1,5 +1,8 @@
 import type { CvApplyFormInput, CvApplyResult, CvCapabilities, CvImportDto } from '@jobtrack/shared';
-import { apiRequest, BASE_URL, buildApiError, networkApiError, readCsrfCookie } from './client';
+import { ApiError, apiRequest, BASE_URL, buildApiError, networkApiError, readCsrfCookie } from './client';
+
+const ABORT_ERROR = () => new ApiError('Import annulé.', 0, 'ABORTED');
+const TIMEOUT_ERROR = () => new ApiError("L'analyse du CV a pris trop de temps. Réessayez.", 0, 'TIMEOUT');
 
 export const fetchCvCapabilities = () => apiRequest<CvCapabilities>('/cv-imports/capabilities');
 
@@ -34,35 +37,61 @@ export function uploadCv(file: File, options: UploadCvOptions = {}): Promise<CvI
     const csrf = readCsrfCookie();
     if (csrf) xhr.setRequestHeader('x-csrf-token', csrf);
 
+    const { signal } = options;
+
+    // Écouteur externe (`AbortController` de l'appelant) posé une seule fois
+    // et retiré dès que la promesse se règle, quelle que soit l'issue — sinon
+    // il resterait accroché au signal et appellerait `xhr.abort()` sur une
+    // requête déjà terminée si l'appelant annule après coup.
+    function onExternalAbort(): void {
+      xhr.abort();
+    }
+
+    function detachAbortListener(): void {
+      signal?.removeEventListener('abort', onExternalAbort);
+    }
+
     xhr.upload.onprogress = (event) => {
       if (options.onProgress && event.total > 0) options.onProgress(event.loaded / event.total);
     };
 
     xhr.onload = () => {
+      detachAbortListener();
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText) as CvImportDto);
         } catch {
-          reject(buildApiError(xhr.status, ''));
+          // Corps de succès illisible : jamais une ApiError qui prétendrait
+          // porter le statut 2xx d'origine, toujours 0 (panne côté client).
+          reject(buildApiError(0, xhr.responseText));
         }
         return;
       }
       reject(buildApiError(xhr.status, xhr.responseText));
     };
 
-    xhr.onerror = () => reject(networkApiError());
-    xhr.ontimeout = () => reject(networkApiError());
-    xhr.onabort = () => reject(networkApiError());
+    xhr.onerror = () => {
+      detachAbortListener();
+      reject(networkApiError());
+    };
+    xhr.ontimeout = () => {
+      detachAbortListener();
+      reject(TIMEOUT_ERROR());
+    };
+    xhr.onabort = () => {
+      detachAbortListener();
+      reject(ABORT_ERROR());
+    };
 
-    if (options.signal) {
+    if (signal) {
       // Déjà annulé avant l'envoi : pas d'écouteur à poser, `xhr.abort()` avant
       // `send()` ne déclenche de toute façon jamais `onabort` sur certains
       // moteurs — on rejette nous-mêmes plutôt que de dépendre de l'événement.
-      if (options.signal.aborted) {
-        reject(networkApiError());
+      if (signal.aborted) {
+        reject(ABORT_ERROR());
         return;
       }
-      options.signal.addEventListener('abort', () => xhr.abort());
+      signal.addEventListener('abort', onExternalAbort, { once: true });
     }
 
     const formData = new FormData();

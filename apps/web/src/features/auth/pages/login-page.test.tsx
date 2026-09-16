@@ -14,7 +14,7 @@ function RouteProbe() {
   return <p>Route actuelle : {location.pathname}</p>;
 }
 
-function renderPage(initialEntry = '/login') {
+function renderPage(initialEntry: string | { pathname: string; state?: unknown } = '/login') {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={[initialEntry]}>
@@ -22,6 +22,7 @@ function renderPage(initialEntry = '/login') {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding" element={<RouteProbe />} />
           <Route path="/profile" element={<RouteProbe />} />
+          <Route path="/settings" element={<RouteProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -71,7 +72,7 @@ describe('LoginPage', () => {
     });
   });
 
-  it('redirige vers l_accueil quand l_onboarding n_est pas termine et qu_il n_y a pas d_origine', async () => {
+  it('redirige vers l_onboarding quand il n_est pas termine et qu_il n_y a pas d_origine', async () => {
     const user = userEvent.setup();
     login.mockResolvedValue({
       id: '1',
@@ -87,6 +88,24 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: 'Se connecter' }));
 
     expect(await screen.findByText('Route actuelle : /onboarding')).toBeInTheDocument();
+  });
+
+  it('redirige vers l_origine memorisee meme si l_onboarding n_est pas termine', async () => {
+    const user = userEvent.setup();
+    login.mockResolvedValue({
+      id: '1',
+      email: 'ada@example.com',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      onboardingCompleted: false,
+    });
+    renderPage({ pathname: '/login', state: { from: '/settings' } });
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.type(screen.getByLabelText('Mot de passe'), 'un-mot-de-passe-valide');
+    await user.click(screen.getByRole('button', { name: 'Se connecter' }));
+
+    expect(await screen.findByText('Route actuelle : /settings')).toBeInTheDocument();
   });
 
   it('affiche le message d_erreur renvoye par le serveur', async () => {

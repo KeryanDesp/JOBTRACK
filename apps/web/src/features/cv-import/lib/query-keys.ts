@@ -1,2 +1,5 @@
-/** Clé de la requête `GET /cv-imports/capabilities` (`use-cv-import.ts`). */
-export const CV_CAPABILITIES_QUERY_KEY = ['cv-import', 'capabilities'] as const;
+/** Clés de requête TanStack Query de l'import de CV (`hooks/use-cv-import.ts`). */
+export const cvImportKeys = {
+  capabilities: ['cv-import', 'capabilities'] as const,
+  detail: (id: string) => ['cv-import', id] as const,
+};
