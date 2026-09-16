@@ -22,6 +22,7 @@ import { LOGIN_ROUTE } from './auth.routes';
 import { AuthService } from './auth.service';
 import { GoogleService } from './google.service';
 import { PasswordResetFlow } from './password-reset.flow';
+import { sessionHandle, SESSION_HANDLE_PATTERN } from './session-handle';
 import { SessionService } from './session.service';
 
 const GOOGLE_NOT_CONFIGURED = {
@@ -185,7 +186,9 @@ export class AuthController {
     const sessions = await this.sessions.list(request.user.id);
     return sessions
       .map((session) => ({
-        id: session.id,
+        // Jamais l'identifiant brut : c'est la valeur du cookie httpOnly `jt_session`,
+        // qu'une fuite XSS de cette liste ne doit pas rendre exploitable.
+        id: sessionHandle(session.id),
         current: session.id === request.session.id,
         userAgent: session.userAgent,
         ip: session.ip,
@@ -198,12 +201,19 @@ export class AuthController {
   @Delete('sessions/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async revokeSession(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<void> {
+    const notFound = new NotFoundException({
+      code: 'SESSION_NOT_FOUND',
+      message: 'Cette session est introuvable.',
+    });
+    // Forme attendue avant de lister puis boucler : une valeur mal formée ne peut de toute
+    // façon correspondre au handle d'aucune session.
+    if (!SESSION_HANDLE_PATTERN.test(id)) throw notFound;
+
     const owned = await this.sessions.list(request.user.id);
-    if (!owned.some((session) => session.id === id)) {
-      // 404 plutôt que 403 : ne pas révéler l'existence d'une session d'autrui.
-      throw new NotFoundException({ code: 'SESSION_NOT_FOUND', message: 'Cette session est introuvable.' });
-    }
-    await this.sessions.destroy(id, request.user.id);
+    const match = owned.find((session) => sessionHandle(session.id) === id);
+    // 404 plutôt que 403 : ne pas révéler l'existence d'une session d'autrui.
+    if (!match) throw notFound;
+    await this.sessions.destroy(match.id, request.user.id);
   }
 
   @Public()

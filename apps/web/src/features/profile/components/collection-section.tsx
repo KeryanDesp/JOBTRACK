@@ -274,6 +274,7 @@ export function CollectionSection<N extends CollectionName, TValues extends Fiel
         <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{dialogState?.mode === 'edit' ? 'Modifier' : addLabel}</DialogTitle>
+            <DialogDescription className="sr-only">Renseignez les champs puis enregistrez.</DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={(event) => void form.handleSubmit(onSubmit)(event)} noValidate>
             <ServerErrorAlert message={formAlert} />

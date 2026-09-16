@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { experienceSchema, jobPreferencesSchema, profileSchema, projectSchema, reorderSchema } from './profile';
+import {
+  certificationSchema,
+  educationSchema,
+  experienceSchema,
+  jobPreferencesSchema,
+  profileSchema,
+  projectSchema,
+  reorderSchema,
+} from './profile';
 
 describe('experienceSchema', () => {
   const base = { company: 'Acme', role: 'Dev', startDate: '2023-09-01' };
@@ -26,6 +34,32 @@ describe('experienceSchema', () => {
 
   it('efface la date de fin d_un poste actuel', () => {
     expect(experienceSchema.parse({ ...base, isCurrent: true, endDate: '2024-01-01' }).endDate).toBeNull();
+  });
+});
+
+describe('educationSchema', () => {
+  it('refuse une date de fin anterieure au debut', () => {
+    const result = educationSchema.safeParse({
+      school: 'Universite',
+      degree: 'Master',
+      startDate: '2024-01-01',
+      endDate: '2023-01-01',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['endDate']);
+  });
+});
+
+describe('certificationSchema', () => {
+  it('refuse une date d_expiration anterieure a l_obtention', () => {
+    const result = certificationSchema.safeParse({
+      name: 'Certification',
+      issuer: 'Editeur',
+      issuedAt: '2024-01-01',
+      expiresAt: '2023-01-01',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['expiresAt']);
   });
 });
 

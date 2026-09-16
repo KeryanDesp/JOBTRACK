@@ -80,6 +80,12 @@ describe('GoogleService', () => {
     await expect(service.exchangeCode('code-perime', 'verifieur')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it('refuse un google qui ne repond pas (timeout ou panne reseau)', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new DOMException('', 'TimeoutError')));
+
+    await expect(service.exchangeCode('code', 'verifieur')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
   it('refuse un email non verifie', async () => {
     vi.stubGlobal(
       'fetch',

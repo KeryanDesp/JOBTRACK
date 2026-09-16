@@ -143,14 +143,20 @@ export const experienceSchema = z
   // La base ne doit jamais contenir un poste actuel avec une date de fin.
   .transform((value) => (value.isCurrent ? { ...value, endDate: null } : value));
 
-export const educationSchema = z.object({
-  school: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
-  degree: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
-  field: optionalText(120),
-  startDate: isoDate,
-  endDate: isoDate.optional().nullable(),
-  description: optionalText(2000),
-});
+export const educationSchema = z
+  .object({
+    school: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
+    degree: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
+    field: optionalText(120),
+    startDate: isoDate,
+    endDate: isoDate.optional().nullable(),
+    description: optionalText(2000),
+  })
+  // Comparaison lexicale valide : les dates sont au format AAAA-MM-JJ.
+  .refine((value) => !value.endDate || value.startDate <= value.endDate, {
+    message: 'La date de fin doit être postérieure à la date de début.',
+    path: ['endDate'],
+  });
 
 export const skillSchema = z.object({
   name: z.string().trim().min(1, 'Ce champ est obligatoire.').max(60),
@@ -163,13 +169,19 @@ export const languageSchema = z.object({
   level: z.enum(['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'NATIVE']),
 });
 
-export const certificationSchema = z.object({
-  name: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
-  issuer: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
-  issuedAt: isoDate,
-  expiresAt: isoDate.optional().nullable(),
-  credentialUrl: optionalUrl,
-});
+export const certificationSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
+    issuer: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
+    issuedAt: isoDate,
+    expiresAt: isoDate.optional().nullable(),
+    credentialUrl: optionalUrl,
+  })
+  // Comparaison lexicale valide : les dates sont au format AAAA-MM-JJ.
+  .refine((value) => !value.expiresAt || value.issuedAt <= value.expiresAt, {
+    message: "La date d'expiration doit être postérieure à la date d'obtention.",
+    path: ['expiresAt'],
+  });
 
 export const projectSchema = z.object({
   name: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),

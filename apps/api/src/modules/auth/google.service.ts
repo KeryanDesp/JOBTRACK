@@ -48,18 +48,28 @@ export class GoogleService {
   }
 
   async exchangeCode(code: string, codeVerifier: string): Promise<GoogleProfile> {
-    const tokenResponse = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        redirect_uri: this.config.callbackUrl,
-        grant_type: 'authorization_code',
-        code_verifier: codeVerifier,
-      }),
-    });
+    let tokenResponse: Response;
+    try {
+      // Un Google qui ne répond jamais ne doit pas non plus bloquer la requête indéfiniment :
+      // au-delà de 5 s, le signal abandonne le fetch (AbortError/TimeoutError ci-dessous).
+      tokenResponse = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+          redirect_uri: this.config.callbackUrl,
+          grant_type: 'authorization_code',
+          code_verifier: codeVerifier,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // Panne réseau, timeout (TimeoutError) ou abandon (AbortError) : même échec pour
+      // l'appelant, qui n'a pas à distinguer un Google indisponible d'un Google qui traîne.
+      throw this.rejected();
+    }
     if (!tokenResponse.ok) throw this.rejected();
 
     const token: unknown = await tokenResponse.json();

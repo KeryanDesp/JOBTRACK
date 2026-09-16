@@ -309,6 +309,12 @@ describe('Authentification', () => {
     expect(current?.userAgent).toBe('second-appareil');
     const other = sessions.find((session) => !session.current);
 
+    // Le handle exposé n'est jamais l'identifiant brut de session (celui du cookie
+    // httpOnly `jt_session`) : une fuite XSS de cette liste ne doit livrer aucun jeton.
+    const sessionCookieValue = /jt_session=([^;]+)/.exec(findCookie(login.headers, 'jt_session'))?.[1] ?? '';
+    expect(current?.id).toHaveLength(43);
+    expect(current?.id).not.toBe(sessionCookieValue);
+
     const revoke = await app.inject({
       method: 'DELETE',
       url: `/api/v1/auth/sessions/${other?.id ?? ''}`,
