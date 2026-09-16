@@ -21,7 +21,9 @@ export interface UserRateLimitOptions {
   /**
    * Remplace la route dans la clé Redis quand elle est fournie : plusieurs routes portant
    * le même `bucket` partagent alors un seul budget par utilisateur (ex. upload + retry
-   * d'un CV, qui consomment tous deux un appel Anthropic).
+   * d'un CV, qui consomment tous deux un appel Anthropic). Ne doit jamais commencer par
+   * `/` : les clés de `RateLimitGuard` (limiteur par IP) sont toujours une route Fastify,
+   * donc toujours préfixées par `/` — un bucket sans `/` ne peut jamais entrer en collision.
    */
   bucket?: string;
 }

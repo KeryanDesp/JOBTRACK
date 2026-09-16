@@ -11,7 +11,13 @@ import {
 } from '@nestjs/common';
 import type { CvImport } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
-import { cvExtractionSchema, type CvCapabilities, type CvExtraction, type CvImportDto } from '@jobtrack/shared';
+import {
+  cvExtractionSchema,
+  type CvCapabilities,
+  type CvExtraction,
+  type CvImportDto,
+  type CvImportSummaryDto,
+} from '@jobtrack/shared';
 import { ANTHROPIC_CLIENT, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { FileNotFoundError } from '../../common/storage/disk-file-storage';
@@ -31,12 +37,17 @@ import {
 export type CvUploadInput = CvFileInput;
 
 /**
- * Au-delà de cette durée, un import `PENDING` n'est plus considéré « en cours » : l'extraction
- * est synchrone (quelques secondes à ~30s en pratique), un `PENDING` plus vieux ne peut venir
- * que d'une requête interrompue (crash, redémarrage) — jamais d'un traitement toujours actif.
- * Le laisser bloquer indéfiniment le prochain upload de l'utilisateur serait un verrou permanent.
+ * Au-delà de cette durée, un import `PENDING` n'est plus considéré « en cours » : un `PENDING`
+ * plus vieux ne peut venir que d'une requête interrompue (crash, redémarrage) — jamais d'un
+ * traitement toujours actif. Le laisser bloquer indéfiniment le prochain upload de
+ * l'utilisateur serait un verrou permanent.
+ *
+ * Dérivé du pire cas côté client Anthropic (`anthropic.provider.ts` : `maxRetries: 2`,
+ * `timeout: 90_000`), pas d'une estimation optimiste de durée d'extraction : deux appels
+ * (`countTokens` puis `parse`), chacun jusqu'à 1 + `maxRetries` tentatives de `timeout` au
+ * pire — 2 × 3 × 90 s = 540 s (9 min) — plus une marge pour rester tolérant.
  */
-const STALE_PENDING_MS = 5 * 60 * 1000;
+const STALE_PENDING_MS = 15 * 60 * 1000;
 
 /**
  * Orchestre le cycle de vie d'un import de CV : validation du fichier, stockage disque,
@@ -105,11 +116,28 @@ export class CvImportService {
     return this.toDto(row);
   }
 
-  /** Imports de l'utilisateur, du plus récent au plus ancien — lui permet de retrouver et
-   * supprimer lui-même un `PENDING` qu'il jugerait bloqué, sans dépendre du délai de péremption. */
-  async list(userId: string): Promise<CvImportDto[]> {
-    const rows = await this.prisma.cvImport.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
-    return rows.map((row) => this.toDto(row));
+  /**
+   * Résumé des imports de l'utilisateur, du plus récent au plus ancien, bornés à 50 : jamais
+   * `extracted` (le brouillon complet ne sert qu'à la revue d'un import précis) ni
+   * `storageKey`, via une projection explicite plutôt qu'un `toDto` sur la ligne entière.
+   * Lui permet aussi de retrouver et supprimer lui-même un `PENDING` qu'il jugerait bloqué,
+   * sans dépendre du délai de péremption.
+   */
+  async list(userId: string): Promise<CvImportSummaryDto[]> {
+    const rows = await this.prisma.cvImport.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, status: true, fileName: true, error: true, createdAt: true, appliedAt: true },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      fileName: row.fileName,
+      error: row.error,
+      createdAt: row.createdAt.toISOString(),
+      appliedAt: row.appliedAt ? row.appliedAt.toISOString() : null,
+    }));
   }
 
   /**
@@ -117,26 +145,25 @@ export class CvImportService {
    * synchrone en cours ne doit pas être doublée. Un `PENDING` plus vieux ne peut être qu'une
    * requête interrompue : il est basculé en `FAILED` (fichier conservé) plutôt que de bloquer
    * l'utilisateur indéfiniment.
+   *
+   * Le balayage et la vérification sont deux requêtes séparées, mais le balayage est un
+   * `updateMany` **conditionné sur `status: 'PENDING'` au moment de l'écriture** : si
+   * l'extraction en cours vient de se terminer entre notre lecture et cette écriture, la
+   * ligne n'est plus `PENDING` et n'est jamais touchée — jamais de `FAILED` posé sur un
+   * `EXTRACTED` (ou `APPLIED`) tout frais.
    */
   private async rejectIfInProgress(userId: string): Promise<void> {
-    const pending = await this.prisma.cvImport.findMany({
-      where: { userId, status: 'PENDING' },
-      select: { id: true, createdAt: true },
-    });
-    if (pending.length === 0) return;
-
     const cutoff = new Date(Date.now() - STALE_PENDING_MS);
-    const stillRunning = pending.filter((row) => row.createdAt >= cutoff);
-    const stale = pending.filter((row) => row.createdAt < cutoff);
+    await this.prisma.cvImport.updateMany({
+      where: { userId, status: 'PENDING', createdAt: { lt: cutoff } },
+      data: { status: 'FAILED', error: 'Analyse interrompue. Réessayez.' },
+    });
 
-    for (const row of stale) {
-      await this.prisma.cvImport.update({
-        where: { id: row.id },
-        data: { status: 'FAILED', error: 'Analyse interrompue. Réessayez.' },
-      });
-    }
-
-    if (stillRunning.length > 0) {
+    const stillRunning = await this.prisma.cvImport.findFirst({
+      where: { userId, status: 'PENDING' },
+      select: { id: true },
+    });
+    if (stillRunning) {
       throw new ConflictException({
         code: 'IMPORT_IN_PROGRESS',
         message: "Un import est déjà en cours. Attendez qu'il se termine avant d'en démarrer un autre.",
@@ -155,7 +182,20 @@ export class CvImportService {
     }
     if (!this.client) throw this.aiNotConfigured();
 
-    const buffer = await this.storage.get(row.storageKey);
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.get(row.storageKey);
+    } catch (error) {
+      if (error instanceof FileNotFoundError) {
+        // Le fichier d'origine a disparu (nettoyage manuel du disque, incident de stockage) :
+        // rien à relancer, jamais une 500 sur un `storage.get` qui échoue légitimement.
+        throw new ConflictException({
+          code: 'RETRY_NOT_ALLOWED',
+          message: "Le fichier d'origine n'est plus disponible. Importez-le à nouveau.",
+        });
+      }
+      throw error;
+    }
     // La colonne ne contient jamais que l'une des deux valeurs validées à l'upload (voir `create`) :
     // seul cast documenté du fichier, la surface Prisma (`string`) ne porte pas ce raffinement.
     const mimeType = row.mimeType as CvExtractionInput['mimeType'];
@@ -187,8 +227,9 @@ export class CvImportService {
    * Extrait puis persiste le résultat.
    * - `AiNotConfiguredError` (clé révoquée entre la garde initiale de `create`/`retry` et cet
    *   appel — rare, mais possible) et `AiUnavailableError` (panne transitoire côté Anthropic)
-   *   annulent tout : rollback (ligne + fichier) puis 503, pour ne jamais consommer le quota de
-   *   3 imports/heure sur un import qui n'a jamais pu tourner.
+   *   annulent tout : rollback (ligne + fichier) puis 503. Le budget de 3 imports/heure, lui,
+   *   est déjà consommé à ce stade — `UserRateLimitGuard` compte la requête à l'entrée de la
+   *   route, pas son issue — le rollback ne rend jamais ce budget, seulement la ligne et le fichier.
    * - `CvTooLongError`/`CvUnreadableError` (document illisible, refus du modèle) deviennent un
    *   brouillon `FAILED` : le fichier reste disponible pour un `retry`.
    * - Toute autre erreur (bug, panne non couverte) devient elle aussi un brouillon `FAILED` —

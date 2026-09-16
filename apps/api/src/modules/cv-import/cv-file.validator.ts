@@ -96,6 +96,11 @@ function stripControlChars(value: string): string {
  * à la recherche du nom exact. Toute incohérence de structure (EOCD absente, décalages hors
  * limites, entrée tronquée) fait renvoyer `false` plutôt que de lever — un DOCX corrompu est
  * simplement invalide, jamais une exception qui ferait planter la requête.
+ *
+ * ZIP64 (tailles/décalages étendus au-delà de 4 Go, valeurs 32 bits à `0xFFFFFFFF` complétées
+ * par un champ extra) n'est délibérément pas géré : sans objet sous la limite de 10 Mo
+ * (`MAX_SIZE_BYTES`, vérifiée avant d'atteindre cette fonction) — un DOCX qui en porterait
+ * quand même échoue simplement cette lecture (repli sur `false`), jamais une lecture erronée.
  */
 function hasDocxDocumentEntry(buffer: Buffer): boolean {
   if (buffer.length < EOCD_MIN_LENGTH) return false;

@@ -567,6 +567,21 @@ export interface CvImportDto {
   createdAt: string;
 }
 
+/**
+ * Version allégée de `CvImportDto` pour `GET /cv-imports` (liste) : ni `extracted` (le
+ * brouillon complet ne sert qu'à la revue d'un import précis, jamais à une liste), ni
+ * `storageKey` (jamais exposé, quelle que soit la route). `appliedAt` en plus, pour que
+ * la liste distingue un import déjà appliqué sans devoir rouvrir chaque détail.
+ */
+export interface CvImportSummaryDto {
+  id: string;
+  status: CvImportStatus;
+  fileName: string;
+  error: string | null;
+  createdAt: string;
+  appliedAt: string | null;
+}
+
 export interface CvCapabilities {
   ai: boolean;
   maxSizeBytes: number;

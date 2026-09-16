@@ -8,6 +8,7 @@ import {
   type CvApplyResult,
   type CvCapabilities,
   type CvImportDto,
+  type CvImportSummaryDto,
 } from '@jobtrack/shared';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 import { UserRateLimit, UserRateLimitGuard } from '../../common/user-rate-limit.guard';
@@ -43,7 +44,7 @@ export class CvImportController {
   }
 
   @Get()
-  list(@Req() request: AuthenticatedRequest): Promise<CvImportDto[]> {
+  list(@Req() request: AuthenticatedRequest): Promise<CvImportSummaryDto[]> {
     return this.imports.list(request.user.id);
   }
 

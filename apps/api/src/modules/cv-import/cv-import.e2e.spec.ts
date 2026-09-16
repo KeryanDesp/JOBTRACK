@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import type { CvApplyResult, CvImportDto } from '@jobtrack/shared';
+import type { CvApplyResult, CvImportDto, CvImportSummaryDto } from '@jobtrack/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppModule } from '../../app.module';
 import { configureApp, createAdapter } from '../../app.setup';
@@ -131,10 +131,10 @@ function defaultParse(): Promise<FakeParsedMessage> {
 
 const BOUNDARY = 'jobtrack-e2e-boundary';
 
-function filePart(fileName: string, mimeType: string, buffer: Buffer): Buffer {
+function filePart(fileName: string, mimeType: string, buffer: Buffer, fieldName = 'file'): Buffer {
   return Buffer.concat([
     Buffer.from(
-      `--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+      `--${BOUNDARY}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${fileName}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
     ),
     buffer,
     Buffer.from('\r\n'),
@@ -365,6 +365,46 @@ describe('Import de CV', () => {
     expect(response.json<{ code: string }>().code).toBe('INVALID_FILE');
   });
 
+  it('refuse un corps qui n_est pas multipart/form-data', async () => {
+    const session = await registerUser();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: BASE,
+      headers: authHeaders(session, { 'content-type': 'application/json' }),
+      payload: JSON.stringify({ hello: 'world' }),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('INVALID_FILE');
+  });
+
+  it('refuse un champ de fichier autre que "file"', async () => {
+    const session = await registerUser();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: BASE,
+      headers: authHeaders(session, { 'content-type': MULTIPART_CONTENT_TYPE }),
+      payload: multipartBody([filePart('cv-demo.pdf', 'application/pdf', PDF_FIXTURE, 'document')]),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('INVALID_FILE');
+  });
+
+  it('une erreur non prevue du client Anthropic devient un brouillon FAILED (jamais un 500)', async () => {
+    const session = await registerUser();
+    fakeMessages.parse.mockRejectedValueOnce(new TypeError('boom'));
+
+    const response = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+
+    expect(response.statusCode).toBe(201);
+    const dto = response.json<CvImportDto>();
+    expect(dto.status).toBe('FAILED');
+    expect(dto.error).toBe("L'analyse du document a échoué. Réessayez.");
+  });
+
   it('isole la lecture : le proprietaire voit son import, un autre utilisateur recoit 404', async () => {
     const owner = await registerUser();
     const stranger = await registerUser();
@@ -555,9 +595,9 @@ describe('Import de CV', () => {
     expect(dto.error).toBe('Le document ne contient pas de texte exploitable.');
   });
 
-  it('un PENDING perime (plus de 5 minutes) ne bloque plus un nouvel upload', async () => {
+  it('un PENDING perime (plus de 15 minutes) ne bloque plus un nouvel upload', async () => {
     const session = await registerUser();
-    const staleCreatedAt = new Date(Date.now() - 6 * 60 * 1000);
+    const staleCreatedAt = new Date(Date.now() - 16 * 60 * 1000);
     await prisma.cvImport.create({
       data: {
         userId: session.userId,
@@ -590,22 +630,39 @@ describe('Import de CV', () => {
     const response = await app.inject({ method: 'GET', url: BASE, headers: authHeaders(owner) });
 
     expect(response.statusCode).toBe(200);
-    const list = response.json<CvImportDto[]>();
+    const list = response.json<CvImportSummaryDto[]>();
     expect(list.map((row) => row.fileName)).toEqual(['second.pdf', 'premier.pdf']);
+    // Version allegee : ni le brouillon complet, ni la cle de stockage.
+    expect(list[0]).not.toHaveProperty('extracted');
+    expect(list[0]).not.toHaveProperty('storageKey');
+    expect(list[0]).toHaveProperty('appliedAt', null);
   });
 
-  it('bloque le 4e upload dans l_heure : upload et retry partagent un seul budget', async () => {
+  it('upload et retry partagent un seul budget (3/h) : le retry compte comme un nouvel appel', async () => {
     const session = await registerUser();
+    fakeMessages.parse.mockRejectedValueOnce(new Anthropic.AnthropicError('sortie brute non conforme'));
 
-    for (let index = 0; index < 3; index += 1) {
+    // 1er appel (echoue -> FAILED, compte tout de meme sur le budget).
+    const failedUpload = await uploadFixture(session, PDF_FIXTURE, 'cv-0.pdf', 'application/pdf');
+    expect(failedUpload.statusCode).toBe(201);
+    const failedDto = failedUpload.json<CvImportDto>();
+    expect(failedDto.status).toBe('FAILED');
+
+    // 2e et 3e appels : deux autres uploads, budget desormais epuise (3/3).
+    for (let index = 1; index < 3; index += 1) {
       const response = await uploadFixture(session, PDF_FIXTURE, `cv-${index}.pdf`, 'application/pdf');
       expect(response.statusCode).toBe(201);
     }
 
-    const fourth = await uploadFixture(session, PDF_FIXTURE, 'cv-4.pdf', 'application/pdf');
+    // 4e appel : un retry, pas un upload — bloque si (et seulement si) le budget est bien partage.
+    const retryResponse = await app.inject({
+      method: 'POST',
+      url: `${BASE}/${failedDto.id}/retry`,
+      headers: authHeaders(session),
+    });
 
-    expect(fourth.statusCode).toBe(429);
-    expect(fourth.json<{ code: string }>().code).toBe('RATE_LIMITED');
+    expect(retryResponse.statusCode).toBe(429);
+    expect(retryResponse.json<{ code: string }>().code).toBe('RATE_LIMITED');
   });
 
   it('deux applications concurrentes du meme import : une seule reussit, les collections ne sont creees qu_une fois', async () => {
