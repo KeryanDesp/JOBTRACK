@@ -31,6 +31,7 @@ import { SessionService } from './session.service';
     },
     {
       provide: GoogleService,
+      // Construite ici, jamais par le conteneur Nest : `GoogleService` n'a pas de décorateurs DI.
       inject: [GOOGLE_CONFIG],
       useFactory: (config: GoogleConfig | null): GoogleService | null => (config ? new GoogleService(config) : null),
     },

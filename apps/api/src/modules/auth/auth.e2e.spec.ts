@@ -18,8 +18,9 @@ let redis: RedisService;
 // Remplace le GoogleService (null en local/CI, GOOGLE_* absent) : les tests e2e ne doivent
 // jamais appeler les vrais points de terminaison Google.
 const fakeGoogle = {
-  buildAuthUrl: (state: string) => `https://accounts.google.com/o/oauth2/v2/auth?state=${state}`,
-  exchangeCode: vi.fn<(code: string) => Promise<GoogleProfile>>(),
+  buildAuthUrl: (state: string, codeChallenge: string) =>
+    `https://accounts.google.com/o/oauth2/v2/auth?state=${state}&code_challenge=${codeChallenge}`,
+  exchangeCode: vi.fn<(code: string, codeVerifier: string) => Promise<GoogleProfile>>(),
 };
 
 const USER = {
@@ -31,6 +32,11 @@ const USER = {
 
 async function clearRateLimits(): Promise<void> {
   const keys = await redis.client.keys('ratelimit:*');
+  if (keys.length > 0) await redis.client.del(...keys);
+}
+
+async function clearOAuthStateMarks(): Promise<void> {
+  const keys = await redis.client.keys('oauth_state_used:*');
   if (keys.length > 0) await redis.client.del(...keys);
 }
 
@@ -73,18 +79,24 @@ beforeAll(async () => {
 beforeEach(async () => {
   await clearUsers();
   await clearRateLimits(); // les inscriptions répétées des tests dépasseraient la limite par IP
+  await clearOAuthStateMarks(); // sinon un state e2e réutilisé d'un test à l'autre serait déjà "consommé"
   fakeGoogle.exchangeCode.mockReset();
 });
 
 afterAll(async () => {
   await clearUsers();
   await clearRateLimits();
+  await clearOAuthStateMarks();
   await app.close();
 });
 
 function rawCookies(headers: Record<string, unknown>): string[] {
   const raw = headers['set-cookie'];
-  return Array.isArray(raw) ? raw.map(String) : [String(raw)];
+  if (raw === undefined) return [];
+  if (Array.isArray(raw)) return raw.map(String);
+  // Fastify ne pose ce header qu'en string ou string[] ; tout autre cas (jamais rencontré
+  // en pratique) est traité comme absent plutôt que de stringifier une valeur ambiguë.
+  return typeof raw === 'string' ? [raw] : [];
 }
 
 function cookiesFrom(headers: Record<string, unknown>): string {
@@ -504,5 +516,119 @@ describe('Connexion Google', () => {
     expect(response.statusCode).toBe(302);
     expect(response.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
     expect(rawCookies(response.headers).some((cookie) => cookie.startsWith('jt_session='))).toBe(false);
+  });
+
+  it('refuse un callback sans cookie de state', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/google/callback?code=code-e2e&state=quelconque',
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
+    expect(fakeGoogle.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it('refuse de rejouer un callback', async () => {
+    const { cookieHeader, state } = await startFlow();
+    fakeGoogle.exchangeCode.mockResolvedValueOnce(GOOGLE_PROFILE);
+    const url = `/api/v1/auth/google/callback?code=code-e2e&state=${state}`;
+
+    const first = await app.inject({ method: 'GET', url, headers: { cookie: cookieHeader } });
+    expect(first.statusCode).toBe(302);
+    expect(first.headers.location).toBe(`${env.WEB_ORIGIN}/profile`);
+
+    // Rejeu : on renvoie volontairement le même cookie de state (déjà expiré côté navigateur
+    // par la réponse précédente) pour simuler un callback intercepté puis rejoué.
+    const replay = await app.inject({ method: 'GET', url, headers: { cookie: cookieHeader } });
+    expect(replay.statusCode).toBe(302);
+    expect(replay.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
+    expect(fakeGoogle.exchangeCode).toHaveBeenCalledTimes(1);
+  });
+
+  it('relie un compte google a un utilisateur verifie du meme email', async () => {
+    const email = `e2e-google-verifie-${process.pid}@jobtrack.local`;
+    await registerUser(email);
+    const registered = await prisma.user.findUniqueOrThrow({ where: { email } });
+    await prisma.user.update({ where: { id: registered.id }, data: { emailVerifiedAt: new Date() } });
+
+    const { cookieHeader, state } = await startFlow();
+    fakeGoogle.exchangeCode.mockResolvedValueOnce({
+      providerAccountId: `sub-verifie-${process.pid}`,
+      email,
+      firstName: 'Gé',
+      lastName: 'Oauth',
+    });
+
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/api/v1/auth/google/callback?code=code-e2e&state=${state}`,
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/profile`);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/me',
+      headers: { cookie: cookiesFrom(callback.headers) },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json<{ id: string }>().id).toBe(registered.id);
+  });
+
+  it('redirige vers google_link pour un compte a mot de passe non verifie', async () => {
+    const email = `e2e-google-nonverifie-${process.pid}@jobtrack.local`;
+    await registerUser(email); // email jamais vérifié par défaut
+
+    const { cookieHeader, state } = await startFlow();
+    fakeGoogle.exchangeCode.mockResolvedValueOnce({
+      providerAccountId: `sub-nonverifie-${process.pid}`,
+      email,
+      firstName: 'Gé',
+      lastName: 'Oauth',
+    });
+
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/api/v1/auth/google/callback?code=code-e2e&state=${state}`,
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google_link`);
+  });
+});
+
+describe('Google non configure', () => {
+  let unconfiguredApp: NestFastifyApplication;
+
+  beforeAll(async () => {
+    // Pas d'overrideProvider ici : GOOGLE_* est absent de l'environnement de test/CI,
+    // donc AuthModule fournit un GoogleService réellement `null`.
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    unconfiguredApp = moduleRef.createNestApplication<NestFastifyApplication>(createAdapter());
+    await configureApp(unconfiguredApp);
+    await unconfiguredApp.init();
+    await unconfiguredApp.getHttpAdapter().getInstance().ready();
+  });
+
+  afterAll(async () => {
+    await unconfiguredApp.close();
+  });
+
+  it('repond 503 sans configuration google', async () => {
+    const start = await unconfiguredApp.inject({ method: 'GET', url: '/api/v1/auth/google' });
+    expect(start.statusCode).toBe(503);
+    expect(start.json<{ code: string }>().code).toBe('GOOGLE_NOT_CONFIGURED');
+
+    // Une navigation de navigateur ne doit jamais recevoir de JSON, même sans configuration.
+    const callback = await unconfiguredApp.inject({
+      method: 'GET',
+      url: '/api/v1/auth/google/callback?code=x&state=y',
+    });
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google`);
   });
 });

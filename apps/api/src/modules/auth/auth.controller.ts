@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Inject, Logger, NotFoundException, Param,
   Post, Query, Req, Res,
@@ -27,6 +27,28 @@ const GOOGLE_NOT_CONFIGURED = {
   code: 'GOOGLE_NOT_CONFIGURED',
   message: "La connexion Google n'est pas disponible pour le moment.",
 };
+
+// Durée de vie du cookie de state ET de la marque anti-rejeu côté Redis : le flux complet
+// (redirection vers Google, consentement, retour) doit tenir dans cette fenêtre.
+const OAUTH_STATE_TTL_SECONDS = 600;
+
+interface PendingGoogleState {
+  state: string;
+  verifier: string;
+}
+
+/** `null` si le cookie est absent, expiré, mal signé, ou ne contient pas le JSON attendu. */
+function parsePendingState(raw: string): PendingGoogleState | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const { state, verifier } = parsed as Record<string, unknown>;
+  return typeof state === 'string' && typeof verifier === 'string' ? { state, verifier } : null;
+}
 
 @Controller('auth')
 export class AuthController {
@@ -169,43 +191,73 @@ export class AuthController {
 
   @Public()
   @Get('google')
+  @RateLimit({ limit: 20, windowSeconds: 900, by: 'ip' })
   startGoogle(@Res({ passthrough: true }) reply: FastifyReply): { url: string } {
     const google = this.requireGoogle();
     // Le state, dans un cookie signé, garantit que le callback répond à une demande
     // partie de ce navigateur (protection CSRF du flux OAuth).
     const state = randomBytes(24).toString('base64url');
-    reply.setCookie(OAUTH_STATE_COOKIE, state, { ...OAUTH_STATE_OPTIONS, signed: true, httpOnly: true, maxAge: 600 });
-    return { url: google.buildAuthUrl(state) };
+    // PKCE (RFC 9700 §2.1.1) : le vérifieur ne quitte jamais le serveur, seul son empreinte
+    // (le « challenge ») part vers Google ; le vérifieur voyage dans le cookie signé.
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    reply.setCookie(OAUTH_STATE_COOKIE, JSON.stringify({ state, verifier }), {
+      ...OAUTH_STATE_OPTIONS,
+      signed: true,
+      maxAge: OAUTH_STATE_TTL_SECONDS,
+    });
+    return { url: google.buildAuthUrl(state, challenge) };
   }
 
   @Public()
   @Get('google/callback')
+  @RateLimit({ limit: 30, windowSeconds: 900, by: 'ip' })
   async googleCallback(
-    @Query('code') code: string | undefined,
-    @Query('state') state: string | undefined,
+    // `unknown` et non `string | undefined` : Fastify renvoie un tableau si le paramètre
+    // est répété dans l'URL, jamais rejeté avant le pipe — on doit s'en méfier nous-mêmes.
+    @Query('code') code: unknown,
+    @Query('state') state: unknown,
+    @Query('error') oauthError: unknown,
     @Req() request: FastifyRequest,
     // Pas de `passthrough` : cette route ne renvoie jamais de corps, seulement une redirection ;
     // c'est nous qui envoyons la réponse, Nest ne doit pas tenter de la compléter derrière nous.
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    const google = this.requireGoogle();
     const stored = request.cookies?.[OAUTH_STATE_COOKIE];
     const unsigned = stored ? request.unsignCookie(stored) : null;
     reply.clearCookie(OAUTH_STATE_COOKIE, OAUTH_STATE_OPTIONS);
+    const pending = unsigned?.valid && unsigned.value ? parsePendingState(unsigned.value) : null;
 
-    if (!code || !state || !unsigned?.valid || unsigned.value !== state) {
+    // Le refus de consentement (« Annuler » sur l'écran Google) arrive sans `code` : un cas
+    // à part, avant même de contrôler le state, pour offrir un message dédié côté SPA.
+    if (oauthError === 'access_denied') {
+      this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google_cancelled`);
+      return;
+    }
+
+    if (typeof code !== 'string' || typeof state !== 'string' || !pending || pending.state !== state) {
       this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
       return;
     }
 
     try {
-      const profile = await google.exchangeCode(code);
+      // À l'intérieur du try : une configuration manquante ne doit jamais renvoyer du JSON
+      // à une navigation de navigateur, seulement une redirection lisible côté SPA.
+      const google = this.requireGoogle();
+
+      // State à usage unique côté serveur : un callback intercepté puis rejoué (le cookie
+      // client a beau être effacé côté navigateur) ne doit ni ré-échanger le code Google
+      // ni ouvrir une seconde session.
+      if (!(await this.claimState(state))) {
+        this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
+        return;
+      }
+
+      const profile = await google.exchangeCode(code, pending.verifier);
       const user = await this.auth.findOrCreateFromGoogle(profile);
       await this.openSession(user.id, request, reply);
     } catch (error) {
-      // Navigation de navigateur : une page d'erreur JSON n'aurait aucun sens.
-      this.logger.warn(`Connexion Google refusée : ${error instanceof Error ? error.message : 'erreur inconnue'}`);
-      this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
+      this.redirectForGoogleError(reply, error);
       return;
     }
     this.redirectTo(reply, `${env.WEB_ORIGIN}/profile`);
@@ -216,6 +268,38 @@ export class AuthController {
       throw new HttpException(GOOGLE_NOT_CONFIGURED, HttpStatus.SERVICE_UNAVAILABLE);
     }
     return this.google;
+  }
+
+  /** `true` la première fois pour un `state` donné ; `false` s'il a déjà été consommé. */
+  private async claimState(state: string): Promise<boolean> {
+    const key = `oauth_state_used:${createHash('sha256').update(state).digest('hex')}`;
+    const claimed = await this.redis.client.set(key, '1', 'EX', OAUTH_STATE_TTL_SECONDS, 'NX');
+    return claimed === 'OK';
+  }
+
+  /**
+   * Traduit un échec du flux Google en redirection, jamais en JSON : `GOOGLE_LINK_REQUIRES_LOGIN`
+   * a sa propre page (mot de passe requis) ; toute autre exception connue (échange refusé,
+   * configuration absente) atterrit sur la page d'erreur générique et n'est journalisée qu'en
+   * `warn` (attendue) ; une erreur non prévue est journalisée en `error`, avec sa pile.
+   */
+  private redirectForGoogleError(reply: FastifyReply, error: unknown): void {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      const code = typeof response === 'object' && response !== null ? (response as { code?: unknown }).code : undefined;
+      if (code === 'GOOGLE_LINK_REQUIRES_LOGIN') {
+        this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google_link`);
+        return;
+      }
+      this.logger.warn(`Connexion Google refusée : ${error.message}`);
+      this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
+      return;
+    }
+    this.logger.error(
+      `Connexion Google : erreur inattendue${error instanceof Error ? ` — ${error.message}` : ''}`,
+      error instanceof Error ? error.stack : undefined,
+    );
+    this.redirectTo(reply, `${env.WEB_ORIGIN}/login?error=google`);
   }
 
   /**

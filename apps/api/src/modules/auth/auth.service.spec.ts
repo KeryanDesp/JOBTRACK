@@ -170,6 +170,10 @@ describe('AuthService', () => {
       firstName: 'Existant',
       lastName: 'Utilisateur',
     });
+    // Rattachement automatique réservé aux boîtes mail déjà prouvées de notre côté
+    // (sinon C1 le refuse) : on simule ici un compte dont l'email a été vérifié.
+    await prisma.user.update({ where: { id: registered.id }, data: { emailVerifiedAt: new Date() } });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: registered.id } });
 
     const linked = await service.findOrCreateFromGoogle({
       providerAccountId: GOOGLE_OAUTH_SUB,
@@ -185,7 +189,39 @@ describe('AuthService', () => {
       include: { oauthAccounts: true },
     });
     expect(stored?.oauthAccounts).toHaveLength(1);
-    expect(stored?.passwordHash).not.toBeNull(); // le mot de passe existant n'est jamais touche
+    // Le mot de passe existant n'est jamais touché par le rattachement (valeur, pas juste non-null).
+    expect(stored?.passwordHash).toBe(before.passwordHash);
+  });
+
+  it('refuse de relier un compte a mot de passe dont l_email n_est pas verifie', async () => {
+    await service.register({
+      email: GOOGLE_OAUTH_EMAIL,
+      password: 'motdepasse-solide-2026',
+      firstName: 'Existant',
+      lastName: 'Utilisateur',
+    });
+    // Email jamais vérifié : un attaquant ayant inscrit l'adresse de la victime ne doit
+    // pas pouvoir prendre le contrôle du compte via un compte Google portant cette adresse.
+
+    const error: unknown = await service
+      .findOrCreateFromGoogle({
+        providerAccountId: GOOGLE_OAUTH_SUB,
+        email: GOOGLE_OAUTH_EMAIL,
+        firstName: 'Personne',
+        lastName: 'Exemple',
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(UnauthorizedException);
+    expect((error as UnauthorizedException).getResponse()).toMatchObject({
+      code: 'GOOGLE_LINK_REQUIRES_LOGIN',
+    });
+
+    const stored = await prisma.user.findUnique({
+      where: { email: GOOGLE_OAUTH_EMAIL },
+      include: { oauthAccounts: true },
+    });
+    expect(stored?.oauthAccounts).toHaveLength(0);
   });
 
   it('retrouve l_utilisateur par son compte google deja lie', async () => {

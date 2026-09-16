@@ -99,6 +99,16 @@ export class AuthService {
     });
 
     if (existing) {
+      // Rattachement automatique seulement si personne d'inconnu ne possède déjà ce compte :
+      // compte sans mot de passe, ou boîte mail déjà prouvée de notre côté. Sinon un attaquant
+      // qui aurait inscrit l'adresse de la victime récupérerait sa session Google.
+      if (existing.passwordHash !== null && existing.emailVerifiedAt === null) {
+        throw new UnauthorizedException({
+          code: 'GOOGLE_LINK_REQUIRES_LOGIN',
+          message: 'Un compte existe déjà avec cette adresse. Connectez-vous par mot de passe pour le relier à Google.',
+        });
+      }
+
       try {
         await this.prisma.oAuthAccount.create({
           data: {
@@ -107,12 +117,22 @@ export class AuthService {
             userId: existing.id,
           },
         });
+        // Après la passerelle ci-dessus seulement : jamais un moyen de la contourner.
+        // La boîte mail vient d'être prouvée par Google si elle ne l'était pas déjà.
+        if (existing.emailVerifiedAt === null) {
+          await this.prisma.user.update({
+            where: { id: existing.id },
+            data: { emailVerifiedAt: new Date() },
+          });
+        }
       } catch (error) {
         if (!isConcurrentGoogleLink(error)) throw error;
         const retried = await this.findByGoogleAccount(profile.providerAccountId);
         if (retried) return this.toSessionUser(retried);
         throw error;
       }
+      // `emailVerifiedAt` n'apparaît pas dans SessionUser : `existing` (non ré-interrogé)
+      // reste correct à renvoyer, seul le champ en base a changé ci-dessus.
       return this.toSessionUser(existing);
     }
 
