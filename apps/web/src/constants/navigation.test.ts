@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NAV_ITEMS } from './navigation';
 
 describe('NAV_ITEMS', () => {
-  it('déclare les neuf sections du cahier des charges', () => {
+  it('déclare les dix sections du cahier des charges', () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
       'Dashboard',
       'Offres',
@@ -12,6 +12,7 @@ describe('NAV_ITEMS', () => {
       'Statistiques',
       'Favoris',
       'Alertes',
+      'Mon profil',
       'Paramètres',
     ]);
   });
