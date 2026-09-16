@@ -4258,6 +4258,21 @@ git commit -m "feat(web): parametres compte, securite, apparence et sessions act
 
 ## Task 17: Parcours end-to-end et recette
 
+> **Amendement après exécution (code livré : `64d87e0`).** Pas de `docker compose` : les serveurs de dev (5173, 3001) sont réutilisés localement (`reuseExistingServer: !process.env.CI`) ; `playwright.config.ts` déclare **deux** `webServer` (web + API, sondée sur `/api/v1/health`) et un `globalTeardown` qui exécute `pnpm --filter @jobtrack/api e2e:cleanup` (`apps/api/scripts/cleanup-e2e-users.ts` : supprime les comptes `@playwright.local` après avoir détruit leurs sessions Redis, jamais d'autres comptes ; `lint` de l'API couvre `scripts`). Parcours : inscription → `/profile` → « Ville » enregistrée → compétence ajoutée par le dialogue → rechargement (données conservées) → déconnexion (`/settings`, onglet Compte) → `/profile` redirige vers `/login` → reconnexion → compétence toujours visible ; identifiants invalides → alerte lisible sans « 401 ». `getByLabel('Nom', { exact: true })` (sinon « Prénom » correspond aussi). 8 → **12 tests Playwright** (desktop + mobile). CI : les étapes `prisma migrate deploy` et e2e API existaient déjà (tâche 8) ; ajout de `playwright install --with-deps chromium` puis `pnpm --filter @jobtrack/web test:e2e` — Playwright entre donc en CI avec cette tranche.
+
+> **Recette des critères d'acceptation (2026-09-16, navigateur intégré contre les serveurs de dev, dépôt dans `~/dev/JOBTRACK`).**
+> - ☑ Landing mobile/desktop, clair/sombre — recette de la tranche 0, inchangée.
+> - ☑ Créer un compte, se déconnecter, se reconnecter — vérifié (tâches 14, 16 : inscription → `/profile`, déconnexion par le menu, reconnexion).
+> - ☑ Les neuf blocs de `/profile` s'enregistrent — vérifié un à un après correctif (`PATCH /profile` ×2, `PATCH /profile/preferences`, `POST` expérience/compétence, réordonnancement, suppression) ; survie au rechargement couverte par le parcours Playwright (Ville + compétence).
+> - ☑ Thème partout sans flash — script anti-flash de la tranche 0 ; carte Apparence vérifiée (bascule instantanée, clavier).
+> - ☑ `/profile` non connecté → `/login` → retour sur `/profile` après connexion — vérifié avec `/profile?onglet=test` (query conservée via `state.from`).
+> - ☑ Cookie `jt_csrf` supprimé puis enregistrement → « Requête refusée. Rechargez la page et réessayez. » — vérifié ; la garde réémet le cookie à la requête suivante (auto-réparation).
+> - ☑ Sessions actives listées et révocables ; révoquer depuis un autre appareil le déconnecte — vérifié (appareil B ouvert par l'API, révoqué depuis l'interface, `GET /auth/me` B → 401).
+> - ☑ Six connexions échouées → « Trop de tentatives. Réessayez dans quelques minutes. » — vérifié dans l'interface (message, pas de code HTTP).
+> - ☑ Isolation : `pnpm --filter @jobtrack/api test:e2e` — 15 tests `profile.e2e.spec.ts` dont l'`it.each` sur les six collections.
+> - ☑ `grep ": any\|<any>"` — aucun résultat ; lint / typecheck / build / test verts (shared 39, api 87 + 48 e2e, web 57).
+> Comptes de test supprimés après chaque vérification (0 utilisateur `recette-%`/`visuel-%`/`e2e-%`, sessions Redis nettoyées).
+
 **Files:**
 - Create: `apps/web/e2e/auth.spec.ts`
 - Modify: `.github/workflows/ci.yml`
