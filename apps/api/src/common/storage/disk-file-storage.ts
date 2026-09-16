@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { env } from '../../config/env';
+import { type FileStorage } from './file-storage';
 
 /**
  * Une clé ne respectant pas ce format n'atteint jamais `path.join` : c'est ce qui
@@ -12,7 +14,7 @@ import { env } from '../../config/env';
  */
 const KEY_PATTERN = /^[a-z0-9]+(?:\/[a-z0-9_-]+)*\.(pdf|docx)$/;
 
-/** Levée par `get`/`delete` quand la clé n'existe pas sur disque. */
+/** Levée par `get` quand la clé n'existe pas sur disque. */
 export class FileNotFoundError extends Error {
   constructor(key: string) {
     super(`Fichier introuvable : ${key}`);
@@ -27,17 +29,42 @@ function assertValidKey(key: string): void {
 }
 
 /**
+ * Remonte l'arborescence depuis `startDir` jusqu'au dossier contenant `pnpm-workspace.yaml`
+ * (racine du monorepo). Sans ce repère, `STORAGE_DIR` relatif serait résolu contre
+ * `process.cwd()` — qui vaut `apps/api` sous `nest --watch` lancé avec ce filtre, pas la
+ * racine du dépôt — et les fichiers atterriraient hors de tout `.gitignore` prévu pour eux.
+ */
+function findMonorepoRoot(startDir: string): string {
+  let dir = startDir;
+  while (!existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+    const parent = dirname(dir);
+    if (parent === dir) {
+      // Aucun pnpm-workspace.yaml trouvé en remontant : on retombe sur le point de
+      // départ plutôt que d'échouer silencieusement sur une racine arbitraire.
+      return startDir;
+    }
+    dir = parent;
+  }
+  return dir;
+}
+
+/** Un chemin absolu est renvoyé tel quel ; un chemin relatif est résolu depuis la racine du monorepo. */
+export function resolveStorageRoot(rootDir: string): string {
+  return isAbsolute(rootDir) ? rootDir : resolve(findMonorepoRoot(process.cwd()), rootDir);
+}
+
+/**
  * Implémentation disque de `FileStorage`, racine dans `STORAGE_DIR` (par défaut
  * `./storage`, résolue en chemin absolu et créée à la volée — jamais au démarrage,
  * pour ne pas exiger un dossier existant dans les environnements qui ne l'utilisent
  * pas encore).
  */
 @Injectable()
-export class DiskFileStorage {
+export class DiskFileStorage implements FileStorage {
   private readonly rootDir: string;
 
   constructor(rootDir: string = env.STORAGE_DIR) {
-    this.rootDir = isAbsolute(rootDir) ? rootDir : resolve(rootDir);
+    this.rootDir = resolveStorageRoot(rootDir);
   }
 
   async put(key: string, data: Buffer): Promise<void> {
@@ -49,7 +76,13 @@ export class DiskFileStorage {
     // lecture concurrente ne voie jamais un fichier partiellement écrit sous la vraie clé.
     const temporary = `${destination}.${randomUUID()}.tmp`;
     await writeFile(temporary, data);
-    await rename(temporary, destination);
+    try {
+      await rename(temporary, destination);
+    } finally {
+      // Best effort : si le renommage a échoué, ne pas laisser le temporaire traîner.
+      // S'il a réussi, le fichier n'existe plus à ce chemin — l'erreur ENOENT est ignorée.
+      await unlink(temporary).catch(() => undefined);
+    }
   }
 
   async get(key: string): Promise<Buffer> {
@@ -71,9 +104,9 @@ export class DiskFileStorage {
     try {
       await unlink(target);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new FileNotFoundError(key);
-      }
+      // Idempotent : supprimer une clé déjà absente (double appel, ou brouillon déjà
+      // nettoyé) n'est pas une erreur pour un appelant qui veut juste « qu'il n'y soit plus ».
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error;
     }
   }

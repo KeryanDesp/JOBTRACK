@@ -1,8 +1,9 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DiskFileStorage, FileNotFoundError } from './disk-file-storage';
+import { DiskFileStorage, FileNotFoundError, resolveStorageRoot } from './disk-file-storage';
 
 let rootDir: string;
 let storage: DiskFileStorage;
@@ -35,6 +36,10 @@ describe('DiskFileStorage', () => {
     await expect(storage.get(key)).rejects.toBeInstanceOf(FileNotFoundError);
   });
 
+  it('la suppression est idempotente : une cle deja absente ne leve pas', async () => {
+    await expect(storage.delete('cv/user1/jamais-ecrit.pdf')).resolves.toBeUndefined();
+  });
+
   it('leve FileNotFoundError pour une cle jamais ecrite', async () => {
     await expect(storage.get('cv/user1/inexistant.pdf')).rejects.toBeInstanceOf(FileNotFoundError);
   });
@@ -53,5 +58,22 @@ describe('DiskFileStorage', () => {
       await expect(storage.put(key, Buffer.from('x'))).rejects.toThrowError();
       await expect(storage.get(key)).rejects.toThrowError();
     }
+  });
+});
+
+describe('resolveStorageRoot', () => {
+  it('resout un chemin relatif depuis la racine du monorepo, pas depuis process.cwd()', () => {
+    const result = resolveStorageRoot('./storage');
+
+    expect(isAbsolute(result)).toBe(true);
+    // La racine trouvee contient pnpm-workspace.yaml juste au-dessus : c'est la racine
+    // du monorepo, pas apps/api (qui serait le cwd sous `nest --watch --filter`).
+    expect(existsSync(join(result, '..', 'pnpm-workspace.yaml'))).toBe(true);
+  });
+
+  it('laisse un chemin absolu inchange', () => {
+    const absolute = join(tmpdir(), 'jobtrack-storage-absolute');
+
+    expect(resolveStorageRoot(absolute)).toBe(absolute);
   });
 });

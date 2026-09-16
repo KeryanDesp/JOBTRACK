@@ -1,4 +1,4 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthenticatedRequest } from '../modules/auth/auth.guard';
@@ -11,10 +11,12 @@ const limiter = new RateLimiterService(redis);
 // Préfixe par processus : deux workers vitest ne doivent pas partager les compteurs.
 const ROUTE = `/test-${process.pid}/cv-imports`;
 
-function contextFor(userId: string) {
+function contextFor(userId: string | undefined) {
   const request = {
     routeOptions: { url: ROUTE },
-    user: { id: userId, email: '', firstName: '', lastName: '', onboardingCompleted: true },
+    user: userId
+      ? { id: userId, email: '', firstName: '', lastName: '', onboardingCompleted: true }
+      : undefined,
   } as unknown as AuthenticatedRequest;
 
   return {
@@ -77,5 +79,23 @@ describe('UserRateLimitGuard', () => {
     expect(await guard.canActivate(contextFor('user-3'))).toBe(true);
     expect(await guard.canActivate(contextFor('user-4'))).toBe(true);
     await expect(guard.canActivate(contextFor('user-3'))).rejects.toThrowError(HttpException);
+  });
+
+  it('renvoie NOT_AUTHENTICATED plutot qu_une TypeError quand request.user est absent', async () => {
+    const guard = guardWith({ limit: 3, windowSeconds: 3600 });
+
+    await expect(guard.canActivate(contextFor(undefined))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+
+    let caught: unknown;
+    try {
+      await guard.canActivate(contextFor(undefined));
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as UnauthorizedException).getResponse()).toMatchObject({
+      code: 'NOT_AUTHENTICATED',
+    });
   });
 });

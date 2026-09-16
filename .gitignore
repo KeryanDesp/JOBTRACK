@@ -28,6 +28,8 @@ test-results/
 # Ancre a la racine : sans le `/` initial, ce motif masquerait aussi
 # apps/api/src/common/storage/ (code source, pas des fichiers uploades).
 /storage/
+# Idem quand l API est lancee depuis apps/api (nest --watch : cwd = apps/api)
+/apps/api/storage/
 
 # Configuration locale de l outil (launch.json)
 .claude/

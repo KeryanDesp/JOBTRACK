@@ -6,9 +6,11 @@ import {
   Injectable,
   Logger,
   SetMetadata,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AuthenticatedRequest } from '../modules/auth/auth.guard';
+import { rateLimitKey } from './rate-limit.guard';
 import { RateLimiterService } from './rate-limiter.service';
 
 export const USER_RATE_LIMIT_KEY = 'userRateLimit';
@@ -20,8 +22,10 @@ export interface UserRateLimitOptions {
 
 /**
  * Limite une route par utilisateur authentifié : `@UserRateLimit({ limit: 3, windowSeconds: 3600 })`.
- * Garde **locale** (posée avec `@UseGuards(UserRateLimitGuard)` sur la route) : elle s'exécute
- * après la garde globale d'authentification, donc `request.user` est déjà renseigné.
+ * Garde **locale** (posée avec `@UseGuards(UserRateLimitGuard)` sur la route) : pensée pour
+ * s'exécuter après la garde globale d'authentification, donc `request.user` est normalement
+ * déjà renseigné — mais une route mal câblée ne doit pas planter en `TypeError`, d'où la
+ * vérification explicite plus bas.
  */
 export const UserRateLimit = (options: UserRateLimitOptions) =>
   SetMetadata(USER_RATE_LIMIT_KEY, options);
@@ -44,8 +48,17 @@ export class UserRateLimitGuard implements CanActivate {
     if (!options) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    if (!request.user) {
+      // Garde locale posee sur une route mal cablee (@Public(), ou executee avant
+      // AuthGuard) : meme reponse que AuthGuard, jamais une TypeError sur `user.id`.
+      throw new UnauthorizedException({
+        code: 'NOT_AUTHENTICATED',
+        message: 'Votre session a expiré. Veuillez vous reconnecter.',
+      });
+    }
+
     const route = request.routeOptions.url ?? 'inconnue';
-    const key = `ratelimit:${route}:user:${request.user.id}`;
+    const key = rateLimitKey(route, `user:${request.user.id}`);
 
     const { allowed } = await this.limiter.hit(key, options.limit, options.windowSeconds);
     if (!allowed) {
