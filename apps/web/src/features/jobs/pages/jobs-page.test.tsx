@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as JobsApi from '@/services/api/jobs';
 import type * as ProfileApi from '@/services/api/profile';
 import type { PreferencesDto } from '@/services/api/profile';
@@ -11,6 +11,7 @@ import { JobsPage } from './jobs-page';
 
 const searchJobs = vi.hoisted(() => vi.fn());
 const searchCommunes = vi.hoisted(() => vi.fn());
+const fetchJobsCapabilities = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/jobs', async () => {
   const actual = await vi.importActual<typeof JobsApi>('@/services/api/jobs');
@@ -18,10 +19,10 @@ vi.mock('@/services/api/jobs', async () => {
     ...actual,
     searchJobs,
     searchCommunes,
+    fetchJobsCapabilities,
     saveJob: vi.fn(),
     unsaveJob: vi.fn(),
     fetchJob: vi.fn(),
-    fetchJobsCapabilities: vi.fn(),
     fetchSavedJobs: vi.fn(),
   };
 });
@@ -39,10 +40,18 @@ beforeAll(() => {
   window.scrollTo = vi.fn();
 });
 
+// Résolu par défaut à `true` : la plupart des tests ne portent pas sur le bandeau
+// « connecteur non configuré » et ne doivent pas avoir à s'en soucier ; ceux qui le
+// testent explicitement (`franceTravail: false`) l'écrasent avant `renderPage`.
+beforeEach(() => {
+  fetchJobsCapabilities.mockResolvedValue({ sources: { franceTravail: true } });
+});
+
 afterEach(() => {
   searchJobs.mockReset();
   searchCommunes.mockReset();
   fetchPreferences.mockReset();
+  fetchJobsCapabilities.mockReset();
 });
 
 const EMPTY_PREFS: PreferencesDto = {
@@ -206,5 +215,35 @@ describe('JobsPage', () => {
     await user.click(screen.getByRole('link', { name: '2' }));
 
     await waitFor(() => expect(searchJobs).toHaveBeenCalledWith(expect.objectContaining({ page: 2 })));
+  });
+
+  it('ramene un rayon de preference hors bornes a l_option de rayon la plus proche', async () => {
+    fetchPreferences.mockResolvedValue({ ...EMPTY_PREFS, desiredRoles: ['Développeuse'], searchRadiusKm: 200 });
+    searchJobs.mockResolvedValue(makeList());
+
+    renderPage('/jobs');
+
+    await waitFor(() => expect(searchJobs).toHaveBeenCalledWith(expect.objectContaining({ distance: 100 })));
+  });
+
+  it('affiche immediatement le bandeau non configure grace aux capacites, avant toute reponse de recherche', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    fetchJobsCapabilities.mockResolvedValue({ sources: { franceTravail: false } });
+    // Jamais résolue : la recherche elle-même n'a donc pas encore de `sync.status`
+    // à afficher — seul `useJobsCapabilities` peut annoncer le bandeau ici.
+    searchJobs.mockReturnValue(new Promise<JobListResponseDto>(() => {}));
+
+    renderPage('/jobs');
+
+    expect(await screen.findByText(/n'est pas configuré/)).toBeInTheDocument();
+  });
+
+  it('affiche un repli lisible pour une commune de l_URL non encore resolue', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList());
+
+    renderPage('/jobs?lieu=57463');
+
+    expect(await screen.findByText('Code INSEE 57463')).toBeInTheDocument();
   });
 });

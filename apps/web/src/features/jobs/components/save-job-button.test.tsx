@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/services/api/client';
 import { jobKeys } from '../lib/query-keys';
 import { SaveJobButton } from './save-job-button';
 
@@ -17,7 +19,14 @@ vi.mock('@/services/api/jobs', () => ({
   searchJobs: vi.fn(),
 }));
 
-afterEach(() => saveJob.mockReset());
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+afterEach(() => {
+  saveJob.mockReset();
+  vi.mocked(toast.error).mockReset();
+});
 
 /**
  * `SaveJobButton` reçoit `saved` en prop, contrôlé par l'appelant réel
@@ -72,5 +81,15 @@ describe('SaveJobButton', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: "Sauvegarder l'offre" })).toHaveAttribute('aria-pressed', 'false');
     });
+  });
+
+  it('affiche un message dedie sans indication de reessai quand l_offre n_existe plus', async () => {
+    saveJob.mockRejectedValue(new ApiError("L'offre n'existe plus.", 404, 'JOB_NOT_FOUND'));
+    const user = userEvent.setup();
+    renderButton(false);
+
+    await user.click(screen.getByRole('button', { name: "Sauvegarder l'offre" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Cette offre n'existe plus."));
   });
 });

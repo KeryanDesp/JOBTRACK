@@ -12,9 +12,6 @@ interface JobTabsProps {
  * Deux onglets utilisables aujourd'hui (« Toutes »/« Nouvelles », spec §2) et
  * deux onglets à venir, visibles mais désactivés (score, tranche 4) : aucune
  * donnée simulée derrière eux, seulement l'info-bulle qui explique pourquoi.
- * `TabsTrigger` désactivé perd les événements pointeur (`disabled:pointer-events-none`
- * du composant `Tabs`) : le déclencheur de l'info-bulle est donc le `<span>`
- * englobant, qui reste seul à recevoir le survol.
  */
 const DISABLED_TABS = [
   { value: 'for-you', label: 'Pour vous' },
@@ -23,6 +20,27 @@ const DISABLED_TABS = [
 
 const DISABLED_HINT = 'Disponible avec le score (tranche 4)';
 
+/**
+ * Neutralise un événement qui activerait normalement l'onglet Radix : le
+ * changement d'onglet est déclenché en interne dès `onMouseDown`/`onKeyDown`
+ * (Entrée/Espace) et même `onFocus` (mode d'activation automatique — une
+ * simple navigation au clavier vers cet onglet le sélectionnerait sinon).
+ * `TabsTrigger` compose son propre gestionnaire après celui-ci
+ * (`composeEventHandlers`) et l'ignore dès que `preventDefault()` est appelé
+ * ici, quel que soit le type d'événement.
+ */
+function preventActivation(event: { preventDefault: () => void }): void {
+  event.preventDefault();
+}
+
+/**
+ * `TabsTrigger` reste focusable (pas de prop `disabled`, qui le retirerait de
+ * l'ordre de tabulation et empêcherait l'info-bulle de recevoir le focus) :
+ * `aria-disabled` porte l'état, et les gestionnaires ci-dessus neutralisent
+ * toute activation (clic, clavier, focus automatique). Le déclencheur de
+ * l'info-bulle est directement cet élément — plus de `<span>` englobant, qui
+ * aurait rendu un rôle interactif (`button`) imbriqué dans un autre (`tab`).
+ */
 export function JobTabs({ value, onChange }: JobTabsProps) {
   return (
     <Tabs value={value} onValueChange={(next) => onChange(next as JobTab)}>
@@ -35,18 +53,18 @@ export function JobTabs({ value, onChange }: JobTabsProps) {
         {DISABLED_TABS.map((tab) => (
           <Tooltip key={tab.value}>
             <TooltipTrigger asChild>
-              {/*
-                `role="button" aria-disabled` plutôt qu'un onglet réellement désactivé :
-                un lecteur d'écran doit entendre pourquoi l'action est indisponible
-                (`aria-label` porte l'info-bulle elle-même), pas seulement son libellé.
-                `TabsTrigger disabled` reste seulement pour le rendu visuel (grisé,
-                `pointer-events-none`) — le `<span>` englobant reçoit seul le survol/focus.
-              */}
-              <span role="button" aria-disabled="true" aria-label={DISABLED_HINT} tabIndex={0} className="inline-flex cursor-not-allowed">
-                <TabsTrigger value={tab.value} disabled>
-                  {tab.label}
-                </TabsTrigger>
-              </span>
+              <TabsTrigger
+                value={tab.value}
+                aria-disabled="true"
+                aria-label={`${tab.label} : ${DISABLED_HINT}`}
+                className="cursor-not-allowed opacity-50"
+                onMouseDown={preventActivation}
+                onClick={preventActivation}
+                onKeyDown={preventActivation}
+                onFocus={preventActivation}
+              >
+                {tab.label}
+              </TabsTrigger>
             </TooltipTrigger>
             <TooltipContent>{DISABLED_HINT}</TooltipContent>
           </Tooltip>

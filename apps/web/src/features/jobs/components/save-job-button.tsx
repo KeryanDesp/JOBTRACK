@@ -1,6 +1,7 @@
 import { Bookmark, BookmarkCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { ApiError } from '@/services/api/client';
 import { useSaveJob } from '../hooks/use-jobs';
 
 interface SaveJobButtonProps {
@@ -24,7 +25,13 @@ export function SaveJobButton({ jobId, saved, className }: SaveJobButtonProps) {
     saveJob.mutate(
       { id: jobId, saved: nextSaved },
       {
-        onError: () => {
+        onError: (error) => {
+          // Offre supprimée entre-temps (ex. expirée puis purgée) : jamais de
+          // « Réessayez », qui suggérerait à tort qu'un nouvel essai pourrait aboutir.
+          if (error instanceof ApiError && error.code === 'JOB_NOT_FOUND') {
+            toast.error("Cette offre n'existe plus.");
+            return;
+          }
           toast.error(
             nextSaved ? "Impossible de sauvegarder l'offre. Réessayez." : "Impossible de retirer l'offre des favoris. Réessayez.",
           );

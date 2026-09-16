@@ -10,6 +10,12 @@ import { useCommuneSearch } from '../hooks/use-jobs';
 interface CommunePickerProps {
   value: CommuneDto[];
   onChange: (next: CommuneDto[]) => void;
+  /**
+   * `id` du champ de saisie, à lier depuis l'appelant via `<Label htmlFor>`
+   * (spec §7 : « Lieux »). Un identifiant interne (`useId`) sert de repli pour
+   * un usage autonome (ex. tests) sans libellé externe.
+   */
+  id?: string;
 }
 
 const MAX_COMMUNES = 3;
@@ -21,12 +27,14 @@ const MAX_COMMUNES = 3;
  * focusable (juste sans effet, `aria-describedby` explique pourquoi) plutôt
  * que désactivée, ce qui la retirerait de l'ordre de tabulation.
  */
-export function CommunePicker({ value, onChange }: CommunePickerProps) {
+export function CommunePicker({ value, onChange, id }: CommunePickerProps) {
   const [inputValue, setInputValue] = useState('');
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const listboxId = useId();
   const maxHintId = useId();
+  const internalInputId = useId();
+  const inputId = id ?? internalInputId;
   const inputRef = useRef<HTMLInputElement>(null);
 
   const atMax = value.length >= MAX_COMMUNES;
@@ -86,6 +94,7 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
       <Popover open={open} onOpenChange={(next) => setFocused(next)}>
         <PopoverAnchor asChild>
           <Input
+            id={inputId}
             ref={inputRef}
             role="combobox"
             aria-expanded={open}

@@ -1,12 +1,15 @@
 import type { CommuneDto } from '@jobtrack/shared';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CommunePicker } from './commune-picker';
 
-const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
+// Exportée : `jobs-page.tsx` (`clampSearchRadius`) ramène le rayon d'une
+// préférence de profil à l'option la plus proche — une seule liste plutôt que
+// deux copies qui pourraient diverger.
+export const RADIUS_OPTIONS = [5, 10, 25, 50, 100];
 
 export interface JobSearchSubmit {
   q: string;
@@ -34,6 +37,7 @@ export function JobSearchBar({ q, distance, communes, onCommunesResolved, onSear
   const [localDistance, setLocalDistance] = useState(distance);
   const [localCommunes, setLocalCommunes] = useState<CommuneDto[]>(communes);
   const communesKey = communes.map((commune) => commune.code).join(',');
+  const communesInputId = useId();
 
   // Resynchronise sur tout changement externe (navigation, réinitialisation des filtres) ;
   // `communesKey` plutôt que `communes` : ce tableau change de référence à chaque rendu
@@ -79,8 +83,8 @@ export function JobSearchBar({ q, distance, communes, onCommunesResolved, onSear
       </div>
 
       <div className="min-w-56 flex-1 space-y-2">
-        <Label>Lieux</Label>
-        <CommunePicker value={localCommunes} onChange={handleCommunesChange} />
+        <Label htmlFor={communesInputId}>Lieux</Label>
+        <CommunePicker id={communesInputId} value={localCommunes} onChange={handleCommunesChange} />
       </div>
 
       <div className="space-y-2">

@@ -1,4 +1,4 @@
-import type { CommuneDto, JobSearchQuery } from '@jobtrack/shared';
+import type { CommuneDto, JobSearchQuery, JobSyncInfoDto } from '@jobtrack/shared';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
@@ -8,18 +8,42 @@ import { fetchPreferences, type PreferencesDto } from '@/services/api/profile';
 import { searchCommunes } from '@/services/api/jobs';
 import { hasActiveJobFilters, JobFilters } from '../components/job-filters';
 import { JobList } from '../components/job-list';
-import { JobSearchBar, type JobSearchSubmit } from '../components/job-search-bar';
+import { JobSearchBar, RADIUS_OPTIONS, type JobSearchSubmit } from '../components/job-search-bar';
 import { JobSortSelect } from '../components/job-sort-select';
 import { JobTabs } from '../components/job-tabs';
 import { SyncBanner } from '../components/sync-banner';
-import { useJobSearch } from '../hooks/use-jobs';
+import { useJobSearch, useJobsCapabilities } from '../hooks/use-jobs';
 import { isDefaultQuery, readJobSearchQuery, useJobSearchParams } from '../lib/search-params';
 
 type CommuneMap = Record<string, CommuneDto>;
 
+/**
+ * Code département depuis un code commune INSEE : mêmes règles que l'API
+ * (`apps/api/.../france-travail.mapper.ts`) — deux premiers caractères en
+ * général (déjà `2A`/`2B` pour la Corse, le code commune les portant tels
+ * quels), trois pour les DOM/TOM (`97x`/`98x`).
+ */
+function departmentCodeFromCommuneCode(code: string): string {
+  const upper = code.toUpperCase();
+  if (upper.startsWith('97') || upper.startsWith('98')) return upper.slice(0, 3);
+  return upper.slice(0, 2);
+}
+
 /** Libellé de repli quand une commune de l'URL n'a pas encore été résolue (spec §7 : pas de lookup par code côté API). */
 function fallbackCommune(code: string): CommuneDto {
-  return { code, name: `Commune ${code}`, postalCode: null, departmentCode: code.slice(0, 2) };
+  return { code, name: `Code INSEE ${code}`, postalCode: null, departmentCode: departmentCodeFromCommuneCode(code) };
+}
+
+/**
+ * Rayon d'une préférence ramené aux bornes du contrat de recherche (0–100,
+ * spec `packages/shared/src/jobs.ts`) puis à l'option de rayon la plus proche
+ * (`RADIUS_OPTIONS`, `job-search-bar.tsx`) : un profil enregistré avant que
+ * l'un ou l'autre soit resserré (ex. 200 km) ne doit jamais produire une URL
+ * que `jobSearchQuerySchema` rejetterait, ni une valeur absente du sélecteur.
+ */
+function clampSearchRadius(km: number): number {
+  const bounded = Math.min(Math.max(km, 0), 100);
+  return RADIUS_OPTIONS.reduce((closest, option) => (Math.abs(option - bounded) < Math.abs(closest - bounded) ? option : closest));
 }
 
 /**
@@ -43,7 +67,7 @@ async function preferencesToQuery(
     Boolean(preferences.experienceLevel);
   if (!hasSignal) return undefined;
 
-  const patch: Partial<JobSearchQuery> = { distance: preferences.searchRadiusKm };
+  const patch: Partial<JobSearchQuery> = { distance: clampSearchRadius(preferences.searchRadiusKm) };
 
   const firstRole = preferences.desiredRoles[0];
   if (firstRole) patch.q = firstRole;
@@ -62,6 +86,12 @@ async function preferencesToQuery(
 
   return { patch, communes: resolvedCommunes };
 }
+
+// Bandeau « connecteur non configuré » (spec §2/§7) synthétisé côté web, avant
+// même la première réponse de `GET /jobs` (voir `showCapabilitiesNotConfigured`
+// dans `JobsPage`) : mêmes champs qu'un `sync` serveur pour que `SyncBanner`
+// n'ait pas à distinguer les deux origines.
+const NOT_CONFIGURED_SYNC: JobSyncInfoDto = { status: 'not_configured', syncedAt: null, message: null };
 
 function subtitleFor(isPending: boolean, total: number | undefined): string {
   if (isPending) return 'Recherche en cours…';
@@ -111,6 +141,14 @@ export function JobsPage() {
   }, [preferencesQuery.isPending, preferencesQuery.data, query, setQuery]);
 
   const searchResult = useJobSearch(query, { refreshRef });
+  const capabilitiesQuery = useJobsCapabilities();
+  // Avant la toute première réponse de `GET /jobs` (spec §2/§7), le bandeau
+  // « connecteur non configuré » n'a normalement rien à afficher : il n'y a pas
+  // encore de `sync.status` serveur à lire. `useJobsCapabilities` (résolu
+  // indépendamment, avec son propre cache) permet de l'annoncer immédiatement
+  // quand le serveur sait déjà que France Travail n'est pas configuré, plutôt
+  // que d'attendre une recherche qui de toute façon renverra ce même statut.
+  const showCapabilitiesNotConfigured = !searchResult.data && capabilitiesQuery.data?.sources.franceTravail === false;
 
   function handleRefresh() {
     refreshRef.current = true;
@@ -180,13 +218,21 @@ export function JobsPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <JobTabs value={query.tab} onChange={(tab) => setQuery({ tab })} />
-            {searchResult.data && <SyncBanner sync={searchResult.data.sync} onRefresh={handleRefresh} refreshing={refreshing} />}
+            {searchResult.data ? (
+              <SyncBanner sync={searchResult.data.sync} onRefresh={handleRefresh} refreshing={refreshing} />
+            ) : (
+              showCapabilitiesNotConfigured && (
+                <SyncBanner sync={NOT_CONFIGURED_SYNC} onRefresh={handleRefresh} refreshing={refreshing} />
+              )
+            )}
           </div>
 
           <JobList
             data={searchResult.data}
+            query={query}
             isPending={searchResult.isPending}
             isError={searchResult.isError}
+            error={searchResult.error}
             isPlaceholderData={searchResult.isPlaceholderData}
             onRetry={() => void searchResult.refetch()}
             onPageChange={handlePageChange}

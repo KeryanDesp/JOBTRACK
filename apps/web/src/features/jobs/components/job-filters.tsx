@@ -72,7 +72,13 @@ function MultiSelectPopover<T extends string>({ label, options, selected, onTogg
   }
 
   return (
-    <Popover>
+    // `modal` (spec §7) : sans lui, ce popover (rendu par portail, hors de l'arbre
+    // DOM du `Sheet` mobile) est traité comme un clic « à l'extérieur » par le
+    // `Sheet` — qui se referme dès qu'on coche une case, avant même que le choix
+    // soit visible. Un popover modal s'enregistre correctement dans la pile de
+    // calques de Radix, ce qui fait taire la détection « extérieur » du `Sheet`
+    // tant qu'il reste ouvert. Sans effet notable hors du `Sheet` (rangée desktop).
+    <Popover modal>
       <PopoverTrigger asChild>
         <Button type="button" variant="outline" size="sm">
           {label}
@@ -120,9 +126,21 @@ function SalaryMinField({ value, onFieldChange }: SalaryMinFieldProps) {
   }, [value]);
 
   useEffect(() => {
-    const parsed = debounced === '' ? undefined : Number(debounced);
-    if (parsed === value) return;
-    onFieldChange({ salaryMin: parsed }, { replace: true });
+    if (debounced === '') {
+      if (value === undefined) return;
+      onFieldChange({ salaryMin: undefined }, { replace: true });
+      return;
+    }
+    const parsed = Number(debounced);
+    // Une saisie qui ne produit pas un nombre exploitable (texte collé, `1e400`,
+    // signe seul…) n'écrit jamais dans l'URL — le champ reste affiché tel quel,
+    // sans valeur invalide propagée à `jobSearchQuerySchema` (bornes 0–1 000 000,
+    // entier). Le plafond haut protège aussi d'un `OFFSET`/tri applicatif inutile
+    // avec une valeur qu'aucune offre ne peut de toute façon dépasser.
+    if (!Number.isFinite(parsed)) return;
+    const clamped = Math.min(Math.max(Math.trunc(parsed), 0), 1_000_000);
+    if (clamped === value) return;
+    onFieldChange({ salaryMin: clamped }, { replace: true });
   }, [debounced]);
 
   return (
@@ -247,7 +265,10 @@ export function JobFilters({ value, onChange }: JobFiltersProps) {
               Filtres{activeCount > 0 ? ` (${activeCount})` : ''}
             </Button>
           </SheetTrigger>
-          <SheetContent side="bottom">
+          {/* `max-h-[85svh] overflow-y-auto` (spec §7) : un `Sheet` bas sans hauteur bornée
+              grandit avec son contenu jusqu'à dépasser l'écran, rendant « Appliquer »
+              inatteignable sur un petit mobile avec beaucoup de filtres actifs. */}
+          <SheetContent side="bottom" className="max-h-[85svh] overflow-y-auto">
             <SheetHeader>
               <SheetTitle>Filtres</SheetTitle>
             </SheetHeader>
