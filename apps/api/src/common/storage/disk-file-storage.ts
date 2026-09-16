@@ -9,10 +9,10 @@ import { type FileStorage } from './file-storage';
 /**
  * Une clé ne respectant pas ce format n'atteint jamais `path.join` : c'est ce qui
  * interdit toute traversée (`..`, chemin absolu, espaces, majuscules) plutôt que de
- * la neutraliser après coup. Un premier segment sans caractères spéciaux (`userId`
- * ou racine de type), puis d'éventuels sous-segments `[a-z0-9_-]`, puis l'extension.
+ * la neutraliser après coup. Chaque segment est en `[a-z0-9_-]` (un `userId` Prisma
+ * `cuid()` aujourd'hui, un `uuid()` demain sans changer ce motif), puis l'extension.
  */
-const KEY_PATTERN = /^[a-z0-9]+(?:\/[a-z0-9_-]+)*\.(pdf|docx)$/;
+const KEY_PATTERN = /^[a-z0-9_-]+(?:\/[a-z0-9_-]+)*\.(pdf|docx)$/;
 
 /** Levée par `get` quand la clé n'existe pas sur disque. */
 export class FileNotFoundError extends Error {

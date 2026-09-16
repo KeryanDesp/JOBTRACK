@@ -150,7 +150,7 @@ export class CvExtractionService {
     if (error instanceof Anthropic.PermissionDeniedError) {
       // Pas de detail : `error` peut porter le corps de la reponse API, jamais du contenu de CV,
       // mais on reste minimal par prudence — seul le type d'erreur compte pour diagnostiquer.
-      this.logger.error(error);
+      this.logger.error('Accès Anthropic refusé (permissions insuffisantes).');
       throw new AiNotConfiguredError();
     }
     if (error instanceof Anthropic.NotFoundError) {

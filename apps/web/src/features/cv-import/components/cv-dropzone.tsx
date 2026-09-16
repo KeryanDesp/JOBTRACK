@@ -22,7 +22,7 @@ function hasAcceptedFormat(file: File): boolean {
 
 function validateFile(file: File, maxSizeBytes: number): string | null {
   if (!hasAcceptedFormat(file)) return 'Format non pris en charge : PDF ou DOCX uniquement.';
-  if (file.size > maxSizeBytes) return 'Fichier trop volumineux (10 Mo maximum).';
+  if (file.size > maxSizeBytes) return `Fichier trop volumineux (${formatMaxSize(maxSizeBytes)} maximum).`;
   return null;
 }
 
@@ -31,6 +31,12 @@ const ONE_MEBIBYTE = 1024 * 1024;
 function formatFileSize(bytes: number): string {
   if (bytes < ONE_MEBIBYTE) return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
   return `${(bytes / ONE_MEBIBYTE).toFixed(1)} Mo`;
+}
+
+/** Plafond lisible (« 10 Mo »), dérivé de `capabilities.maxSizeBytes` plutôt que codé en dur. */
+function formatMaxSize(bytes: number): string {
+  const mebibytes = bytes / ONE_MEBIBYTE;
+  return `${Number.isInteger(mebibytes) ? mebibytes : mebibytes.toFixed(1)} Mo`;
 }
 
 const ERROR_ID = 'cv-dropzone-error';
@@ -128,7 +134,7 @@ export function CvDropzone({
       >
         <UploadCloud className="text-muted-foreground size-8" aria-hidden />
         <p className="text-sm font-medium">Glissez votre CV ici, ou cliquez pour le choisir</p>
-        <p className="text-muted-foreground text-xs">PDF ou DOCX, 10 Mo maximum.</p>
+        <p className="text-muted-foreground text-xs">PDF ou DOCX, {formatMaxSize(maxSizeBytes)} maximum.</p>
         <input
           ref={inputRef}
           type="file"
