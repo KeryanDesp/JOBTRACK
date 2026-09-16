@@ -37,3 +37,5 @@ export const fetchSessions = () => apiRequest<ActiveSession[]>('/auth/sessions')
 export const revokeSession = (id: string) => apiRequest<void>(`/auth/sessions/${id}`, { method: 'DELETE' });
 
 export const startGoogleLogin = () => apiRequest<{ url: string }>('/auth/google');
+
+export const completeOnboarding = () => apiRequest<void>('/onboarding/complete', { method: 'POST' });

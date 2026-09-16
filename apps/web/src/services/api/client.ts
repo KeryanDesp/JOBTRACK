@@ -2,7 +2,9 @@
 // L'API doit partager le site (domaine enregistrable) du SPA : le cookie `jt_csrf`
 // lisible ici est posé par l'API — sur un autre domaine, l'en-tête CSRF ne serait
 // jamais envoyé.
-const BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace(/\/+$/, '');
+// Exportée : `services/api/cv-import.ts` construit sa propre URL pour l'upload
+// en `XMLHttpRequest` (progression), qui ne passe pas par `apiRequest`.
+export const BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace(/\/+$/, '');
 
 const GENERIC_MESSAGE = 'Une erreur est survenue. Veuillez réessayer.';
 const NETWORK_MESSAGE = 'Connexion au serveur impossible. Vérifiez votre connexion internet.';
@@ -25,12 +27,20 @@ interface ErrorBody {
   details?: unknown;
 }
 
-async function readErrorBody(response: Response): Promise<ErrorBody> {
+function parseErrorBody(rawBody: string): ErrorBody {
   try {
-    return (await response.json()) as ErrorBody;
+    return JSON.parse(rawBody) as ErrorBody;
   } catch {
-    // Réponse non-JSON (proxy, passerelle) : on ne montre jamais le HTML brut.
+    // Corps vide ou non-JSON (proxy, passerelle) : on ne montre jamais le HTML brut.
     return {};
+  }
+}
+
+async function readResponseText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return '';
   }
 }
 
@@ -42,6 +52,26 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     Object.keys(value).length > 0 &&
     Object.values(value).every((entry) => typeof entry === 'string')
   );
+}
+
+/**
+ * Construit une `ApiError` à partir d'un statut HTTP et du corps brut de la
+ * réponse (texte, pas encore parsé) : message français lisible si le serveur
+ * en fournit un, message générique sinon. Partagée par `apiRequest` (réponse
+ * `fetch`) et `uploadCv` (`services/api/cv-import.ts`, réponse `XMLHttpRequest`
+ * — pas de `Response` disponible là-bas, seulement `status`/`responseText`).
+ */
+export function buildApiError(status: number, rawBody: string): ApiError {
+  const body = parseErrorBody(rawBody);
+  const message = typeof body.message === 'string' ? body.message : GENERIC_MESSAGE;
+  const code = typeof body.code === 'string' ? body.code : undefined;
+  const details = isStringRecord(body.details) ? body.details : undefined;
+  return new ApiError(message, status, code, details);
+}
+
+/** Panne de connexion (réseau, délai, annulation) : même message que `fetch`, statut 0. */
+export function networkApiError(): ApiError {
+  return new ApiError(NETWORK_MESSAGE, 0);
 }
 
 const MUTATING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
@@ -77,15 +107,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       headers,
     });
   } catch {
-    throw new ApiError(NETWORK_MESSAGE, 0);
+    throw networkApiError();
   }
 
   if (!response.ok) {
-    const body = await readErrorBody(response);
-    const message = typeof body.message === 'string' ? body.message : GENERIC_MESSAGE;
-    const code = typeof body.code === 'string' ? body.code : undefined;
-    const details = isStringRecord(body.details) ? body.details : undefined;
-    throw new ApiError(message, response.status, code, details);
+    throw buildApiError(response.status, await readResponseText(response));
   }
 
   if (response.status === 204) return undefined as T;

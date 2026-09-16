@@ -52,7 +52,10 @@ export function LoginPage() {
     mutationFn: login,
     onSuccess: (user) => {
       setSession(user);
-      navigate(from ?? '/profile', { replace: true });
+      // Un compte existant n'est jamais forcé vers l'accueil : seul un compte
+      // qui n'a pas encore terminé sa configuration y est envoyé, et
+      // uniquement s'il n'y avait pas de page précise à reprendre.
+      navigate(from ?? (user.onboardingCompleted ? '/profile' : '/onboarding'), { replace: true });
     },
     onError: (error: unknown) => {
       setFieldErrorsApplied(applyFieldErrors<LoginFormInput>(error, setError, ['email', 'password']));
