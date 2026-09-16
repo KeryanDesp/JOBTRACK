@@ -16,6 +16,7 @@ import { RedisService } from '../../common/redis.service';
 import { DiskFileStorage } from '../../common/storage/disk-file-storage';
 import { FILE_STORAGE } from '../../common/storage/file-storage';
 import { SessionService } from '../auth/session.service';
+import { buildDocx } from './zip-test-fixtures';
 
 // `process.cwd()` vaut `apps/api` sous `vitest run` (invoqué depuis ce paquet, comme
 // `nest --watch` — cf. `resolveStorageRoot`) : pas de dépendance à `import.meta.url`,
@@ -26,6 +27,17 @@ const DOCX_FIXTURE = readFileSync(join(FIXTURES_DIR, 'cv-demo.docx'));
 const TXT_FIXTURE = readFileSync(join(FIXTURES_DIR, 'not-a-cv.txt'));
 
 const BASE = '/api/v1/cv-imports';
+
+const EMPTY_APPLY_BODY = {
+  identity: {},
+  experiences: [],
+  educations: [],
+  skills: [],
+  languages: [],
+  certifications: [],
+  projects: [],
+  preferences: {},
+};
 
 // Personnage fictif « Camille Démo » (même contenu que les fixtures) : 2 expériences,
 // 1 formation, 4 compétences, 2 langues — cf. `apps/api/scripts/make-cv-fixtures.py`.
@@ -300,6 +312,7 @@ describe('Import de CV', () => {
     expect(dto.extracted?.educations).toHaveLength(1);
     expect(dto.extracted?.skills).toHaveLength(4);
     expect(dto.extracted?.languages).toHaveLength(2);
+    expect(dto).not.toHaveProperty('storageKey');
   });
 
   it('un docx fixture produit egalement un brouillon EXTRACTED', async () => {
@@ -440,22 +453,12 @@ describe('Import de CV', () => {
     const session = await registerUser();
     const upload = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
     const dto = upload.json<CvImportDto>();
-    const emptyBody = {
-      identity: {},
-      experiences: [],
-      educations: [],
-      skills: [],
-      languages: [],
-      certifications: [],
-      projects: [],
-      preferences: {},
-    };
 
     const first = await app.inject({
       method: 'POST',
       url: `${BASE}/${dto.id}/apply`,
       headers: authHeaders(session),
-      payload: emptyBody,
+      payload: EMPTY_APPLY_BODY,
     });
     expect(first.statusCode).toBe(201);
 
@@ -463,7 +466,7 @@ describe('Import de CV', () => {
       method: 'POST',
       url: `${BASE}/${dto.id}/apply`,
       headers: authHeaders(session),
-      payload: emptyBody,
+      payload: EMPTY_APPLY_BODY,
     });
     expect(second.statusCode).toBe(409);
     expect(second.json<{ code: string }>().code).toBe('ALREADY_APPLIED');
@@ -479,20 +482,159 @@ describe('Import de CV', () => {
       method: 'POST',
       url: `${BASE}/${dto.id}/apply`,
       headers: authHeaders(stranger),
-      payload: {
-        identity: {},
-        experiences: [],
-        educations: [],
-        skills: [],
-        languages: [],
-        certifications: [],
-        projects: [],
-        preferences: {},
-      },
+      payload: EMPTY_APPLY_BODY,
     });
 
     expect(response.statusCode).toBe(404);
     expect(response.json<{ code: string }>().code).toBe('IMPORT_NOT_FOUND');
+  });
+
+  it('refuse d_appliquer un import qui n_est pas EXTRACTED (IMPORT_NOT_READY)', async () => {
+    const session = await registerUser();
+    fakeMessages.parse.mockRejectedValueOnce(new Anthropic.AnthropicError('sortie brute non conforme'));
+    const upload = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+    const dto = upload.json<CvImportDto>();
+    expect(dto.status).toBe('FAILED');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `${BASE}/${dto.id}/apply`,
+      headers: authHeaders(session),
+      payload: EMPTY_APPLY_BODY,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ code: string }>().code).toBe('IMPORT_NOT_READY');
+  });
+
+  it('refuse de relancer un import qui n_est pas en echec (RETRY_NOT_ALLOWED)', async () => {
+    const session = await registerUser();
+    const upload = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+    const dto = upload.json<CvImportDto>();
+    expect(dto.status).toBe('EXTRACTED');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `${BASE}/${dto.id}/retry`,
+      headers: authHeaders(session),
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ code: string }>().code).toBe('RETRY_NOT_ALLOWED');
+  });
+
+  it('un incident Anthropic transitoire annule tout (503 AI_UNAVAILABLE, aucune ligne ni fichier)', async () => {
+    const session = await registerUser();
+    fakeMessages.parse.mockRejectedValueOnce(new Anthropic.APIConnectionError({ message: 'panne reseau' }));
+
+    const response = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json<{ code: string }>().code).toBe('AI_UNAVAILABLE');
+
+    const rows = await prisma.cvImport.count({ where: { userId: session.userId } });
+    expect(rows).toBe(0);
+    const userFiles = await readdir(join(storageDir, session.userId)).catch(() => []);
+    expect(userFiles).toHaveLength(0);
+  });
+
+  it('un docx sans texte exploitable devient FAILED avec le message dedie', async () => {
+    const session = await registerUser();
+    const emptyDocx = buildDocx([]);
+
+    const response = await uploadFixture(
+      session,
+      emptyDocx,
+      'vide.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+
+    expect(response.statusCode).toBe(201);
+    const dto = response.json<CvImportDto>();
+    expect(dto.status).toBe('FAILED');
+    expect(dto.error).toBe('Le document ne contient pas de texte exploitable.');
+  });
+
+  it('un PENDING perime (plus de 5 minutes) ne bloque plus un nouvel upload', async () => {
+    const session = await registerUser();
+    const staleCreatedAt = new Date(Date.now() - 6 * 60 * 1000);
+    await prisma.cvImport.create({
+      data: {
+        userId: session.userId,
+        fileName: 'perime.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 10,
+        storageKey: `${session.userId}/${randomUUID()}.pdf`,
+        status: 'PENDING',
+        createdAt: staleCreatedAt,
+      },
+    });
+
+    const response = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+
+    expect(response.statusCode).toBe(201);
+    const stale = await prisma.cvImport.findFirstOrThrow({
+      where: { userId: session.userId, fileName: 'perime.pdf' },
+    });
+    expect(stale.status).toBe('FAILED');
+    expect(stale.error).toBe('Analyse interrompue. Réessayez.');
+  });
+
+  it('liste les imports du proprietaire, du plus recent au plus ancien, jamais ceux d_un autre', async () => {
+    const owner = await registerUser();
+    const stranger = await registerUser();
+    await uploadFixture(owner, PDF_FIXTURE, 'premier.pdf', 'application/pdf');
+    await uploadFixture(owner, PDF_FIXTURE, 'second.pdf', 'application/pdf');
+    await uploadFixture(stranger, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+
+    const response = await app.inject({ method: 'GET', url: BASE, headers: authHeaders(owner) });
+
+    expect(response.statusCode).toBe(200);
+    const list = response.json<CvImportDto[]>();
+    expect(list.map((row) => row.fileName)).toEqual(['second.pdf', 'premier.pdf']);
+  });
+
+  it('bloque le 4e upload dans l_heure : upload et retry partagent un seul budget', async () => {
+    const session = await registerUser();
+
+    for (let index = 0; index < 3; index += 1) {
+      const response = await uploadFixture(session, PDF_FIXTURE, `cv-${index}.pdf`, 'application/pdf');
+      expect(response.statusCode).toBe(201);
+    }
+
+    const fourth = await uploadFixture(session, PDF_FIXTURE, 'cv-4.pdf', 'application/pdf');
+
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json<{ code: string }>().code).toBe('RATE_LIMITED');
+  });
+
+  it('deux applications concurrentes du meme import : une seule reussit, les collections ne sont creees qu_une fois', async () => {
+    const session = await registerUser();
+    const upload = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+    const dto = upload.json<CvImportDto>();
+    const extracted = dto.extracted;
+    if (!extracted) throw new Error('extraction absente — le test precedent aurait deja echoue');
+
+    const applyBody = {
+      ...EMPTY_APPLY_BODY,
+      experiences: extracted.experiences.map((item) => ({ selected: true, item })),
+    };
+
+    const [first, second] = await Promise.all([
+      app.inject({ method: 'POST', url: `${BASE}/${dto.id}/apply`, headers: authHeaders(session), payload: applyBody }),
+      app.inject({ method: 'POST', url: `${BASE}/${dto.id}/apply`, headers: authHeaders(session), payload: applyBody }),
+    ]);
+
+    const statuses = [first.statusCode, second.statusCode].sort((a, b) => a - b);
+    expect(statuses).toEqual([201, 409]);
+
+    const winner = first.statusCode === 201 ? first : second;
+    const loser = first.statusCode === 201 ? second : first;
+    expect(loser.json<{ code: string }>().code).toBe('ALREADY_APPLIED');
+    expect(winner.json<CvApplyResult>().created.experiences).toBe(2);
+
+    const experienceCount = await prisma.experience.count({ where: { profile: { userId: session.userId } } });
+    expect(experienceCount).toBe(2); // pas 4 : la creation n_a eu lieu qu_une seule fois
   });
 
   it('relance avec succes un import en echec (retry)', async () => {
@@ -527,6 +669,24 @@ describe('Import de CV', () => {
 
     const after = await app.inject({ method: 'GET', url: `${BASE}/${dto.id}`, headers: authHeaders(session) });
     expect(after.statusCode).toBe(404);
+  });
+
+  it('refuse d_appliquer un import deja supprime (404)', async () => {
+    const session = await registerUser();
+    const upload = await uploadFixture(session, PDF_FIXTURE, 'cv-demo.pdf', 'application/pdf');
+    const dto = upload.json<CvImportDto>();
+    const remove = await app.inject({ method: 'DELETE', url: `${BASE}/${dto.id}`, headers: authHeaders(session) });
+    expect(remove.statusCode).toBe(204);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `${BASE}/${dto.id}/apply`,
+      headers: authHeaders(session),
+      payload: EMPTY_APPLY_BODY,
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ code: string }>().code).toBe('IMPORT_NOT_FOUND');
   });
 
   it('refuse un second import tant que le precedent est en cours (IMPORT_IN_PROGRESS)', async () => {

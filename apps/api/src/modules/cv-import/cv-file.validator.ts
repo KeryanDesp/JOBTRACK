@@ -38,10 +38,15 @@ const MAX_NAME_LENGTH = 200;
 
 // `%PDF-` : signature de tout fichier PDF, quelle que soit sa version.
 const PDF_MAGIC = Buffer.from('%PDF-', 'ascii');
-// Signature ZIP locale : un DOCX est un ZIP OOXML. On ne va pas plus loin (pas de lecture
-// de la table centrale) — la cohérence mime/extension déclarée fait le reste du tri, et
-// `mammoth` échouera bruyamment plus tard sur un ZIP qui ne serait pas un vrai DOCX.
+// Signature ZIP locale : un DOCX est un ZIP OOXML.
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+// Fin de répertoire central (« End Of Central Directory ») et en-tête d'entrée du répertoire
+// central : signatures fixes du format ZIP, indépendantes du contenu des entrées.
+const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+const CENTRAL_DIRECTORY_SIGNATURE = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+const EOCD_MIN_LENGTH = 22;
+const CENTRAL_HEADER_MIN_LENGTH = 46;
+const REQUIRED_DOCX_ENTRY = 'word/document.xml';
 
 const PDF_MIME: CvMimeType = 'application/pdf';
 const DOCX_MIME: CvMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -59,17 +64,62 @@ function extensionOf(fileName: string): string | null {
 }
 
 /**
- * Retire les caractères de contrôle (0x00-0x1F, 0x7F) d'une chaîne. Écrit caractère par
- * caractère plutôt qu'avec une classe de caractères de contrôle en regex (bannie par
- * `no-control-regex`, et de toute façon moins lisible qu'une comparaison de code point).
+ * Contrôles de direction de texte (« bidi override », U+202A-U+202E et U+2066-U+2069) :
+ * détournés pour déguiser une extension (ex. faire lire « exe.gpj » comme « cv.jpg » à
+ * l'écran). Un nom de fichier affiché tel quel ne doit jamais en contenir.
+ */
+function isBidiOverride(code: number): boolean {
+  return (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+}
+
+/**
+ * Retire les caractères de contrôle (0x00-0x1F, 0x7F) et les contrôles bidi d'une chaîne.
+ * Écrit caractère par caractère plutôt qu'avec une classe de caractères de contrôle en
+ * regex (bannie par `no-control-regex`, et de toute façon moins lisible qu'une comparaison
+ * de code point).
  */
 function stripControlChars(value: string): string {
   let result = '';
   for (const char of value) {
     const code = char.codePointAt(0) ?? 0;
-    if (code >= 0x20 && code !== 0x7f) result += char;
+    const isAsciiControl = code < 0x20 || code === 0x7f;
+    if (!isAsciiControl && !isBidiOverride(code)) result += char;
   }
   return result;
+}
+
+/**
+ * Confirme la présence de `word/document.xml` dans le **répertoire central** du ZIP (pas
+ * seulement la signature locale déjà vérifiée par `ZIP_MAGIC`) : un DOCX authentique la
+ * porte toujours, un ZIP quelconque renommé en `.docx` ne l'a en général pas. Lit la fin de
+ * répertoire central (EOCD) pour localiser le répertoire central, puis parcourt ses entrées
+ * à la recherche du nom exact. Toute incohérence de structure (EOCD absente, décalages hors
+ * limites, entrée tronquée) fait renvoyer `false` plutôt que de lever — un DOCX corrompu est
+ * simplement invalide, jamais une exception qui ferait planter la requête.
+ */
+function hasDocxDocumentEntry(buffer: Buffer): boolean {
+  if (buffer.length < EOCD_MIN_LENGTH) return false;
+  const eocdOffset = buffer.lastIndexOf(EOCD_SIGNATURE, buffer.length - EOCD_MIN_LENGTH);
+  if (eocdOffset === -1) return false;
+
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + 16);
+  if (centralDirectoryOffset + centralDirectorySize > buffer.length) return false;
+
+  let cursor = centralDirectoryOffset;
+  const end = centralDirectoryOffset + centralDirectorySize;
+  while (cursor + CENTRAL_HEADER_MIN_LENGTH <= end) {
+    if (!buffer.subarray(cursor, cursor + 4).equals(CENTRAL_DIRECTORY_SIGNATURE)) return false;
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const nameStart = cursor + CENTRAL_HEADER_MIN_LENGTH;
+    const nameEnd = nameStart + nameLength;
+    if (nameEnd > buffer.length) return false;
+    if (buffer.toString('utf8', nameStart, nameEnd) === REQUIRED_DOCX_ENTRY) return true;
+    cursor = nameEnd + extraLength + commentLength;
+  }
+  return false;
 }
 
 /**
@@ -116,6 +166,9 @@ export function validateCvFile(input: CvFileInput): ValidatedCvFile {
     }
     if (!input.buffer.subarray(0, ZIP_MAGIC.length).equals(ZIP_MAGIC)) {
       invalid("Ce fichier n'est pas un document Word (.docx) valide.");
+    }
+    if (!hasDocxDocumentEntry(input.buffer)) {
+      invalid('Ce fichier DOCX est invalide.');
     }
     return { mimeType: DOCX_MIME, extension: 'docx', safeName: sanitizeName(input.fileName, 'docx') };
   }

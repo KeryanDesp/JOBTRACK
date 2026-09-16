@@ -24,10 +24,19 @@ import {
   MAX_SIZE_BYTES,
   validateCvFile,
   type CvFileInput,
+  type ValidatedCvFile,
 } from './cv-file.validator';
 
 /** Entree brute du controleur : fichier tel que reçu du multipart, avant toute validation. */
 export type CvUploadInput = CvFileInput;
+
+/**
+ * Au-delà de cette durée, un import `PENDING` n'est plus considéré « en cours » : l'extraction
+ * est synchrone (quelques secondes à ~30s en pratique), un `PENDING` plus vieux ne peut venir
+ * que d'une requête interrompue (crash, redémarrage) — jamais d'un traitement toujours actif.
+ * Le laisser bloquer indéfiniment le prochain upload de l'utilisateur serait un verrou permanent.
+ */
+const STALE_PENDING_MS = 5 * 60 * 1000;
 
 /**
  * Orchestre le cycle de vie d'un import de CV : validation du fichier, stockage disque,
@@ -61,17 +70,7 @@ export class CvImportService {
     if (!this.client) throw this.aiNotConfigured();
 
     const validated = this.validate(input);
-
-    const pending = await this.prisma.cvImport.findFirst({
-      where: { userId, status: 'PENDING' },
-      select: { id: true },
-    });
-    if (pending) {
-      throw new ConflictException({
-        code: 'IMPORT_IN_PROGRESS',
-        message: "Un import est déjà en cours. Attendez qu'il se termine avant d'en démarrer un autre.",
-      });
-    }
+    await this.rejectIfInProgress(userId);
 
     // `randomUUID` (minuscules, chiffres, tirets) respecte le format de clé de `DiskFileStorage`
     // (`KEY_PATTERN`) sans dépendance supplémentaire — un identifiant unique suffit ici, la clé
@@ -79,16 +78,24 @@ export class CvImportService {
     const storageKey = `${userId}/${randomUUID()}.${validated.extension}`;
     await this.storage.put(storageKey, input.buffer);
 
-    const row = await this.prisma.cvImport.create({
-      data: {
-        userId,
-        fileName: validated.safeName,
-        mimeType: validated.mimeType,
-        sizeBytes: input.buffer.length,
-        storageKey,
-        status: 'PENDING',
-      },
-    });
+    let row: CvImport;
+    try {
+      row = await this.prisma.cvImport.create({
+        data: {
+          userId,
+          fileName: validated.safeName,
+          mimeType: validated.mimeType,
+          sizeBytes: input.buffer.length,
+          storageKey,
+          status: 'PENDING',
+        },
+      });
+    } catch (error) {
+      // Le fichier ne doit jamais survivre sans ligne qui le référence — la ligne n'existe
+      // pas encore, il n'y a donc rien d'autre à défaire.
+      await this.storage.delete(storageKey).catch(() => undefined);
+      throw error;
+    }
 
     return this.runExtraction(row, input.buffer, validated.mimeType);
   }
@@ -96,6 +103,45 @@ export class CvImportService {
   async get(userId: string, importId: string): Promise<CvImportDto> {
     const row = await this.findOwned(userId, importId);
     return this.toDto(row);
+  }
+
+  /** Imports de l'utilisateur, du plus récent au plus ancien — lui permet de retrouver et
+   * supprimer lui-même un `PENDING` qu'il jugerait bloqué, sans dépendre du délai de péremption. */
+  async list(userId: string): Promise<CvImportDto[]> {
+    const rows = await this.prisma.cvImport.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    return rows.map((row) => this.toDto(row));
+  }
+
+  /**
+   * Un `PENDING` de moins de `STALE_PENDING_MS` bloque un nouvel upload (409) : l'extraction
+   * synchrone en cours ne doit pas être doublée. Un `PENDING` plus vieux ne peut être qu'une
+   * requête interrompue : il est basculé en `FAILED` (fichier conservé) plutôt que de bloquer
+   * l'utilisateur indéfiniment.
+   */
+  private async rejectIfInProgress(userId: string): Promise<void> {
+    const pending = await this.prisma.cvImport.findMany({
+      where: { userId, status: 'PENDING' },
+      select: { id: true, createdAt: true },
+    });
+    if (pending.length === 0) return;
+
+    const cutoff = new Date(Date.now() - STALE_PENDING_MS);
+    const stillRunning = pending.filter((row) => row.createdAt >= cutoff);
+    const stale = pending.filter((row) => row.createdAt < cutoff);
+
+    for (const row of stale) {
+      await this.prisma.cvImport.update({
+        where: { id: row.id },
+        data: { status: 'FAILED', error: 'Analyse interrompue. Réessayez.' },
+      });
+    }
+
+    if (stillRunning.length > 0) {
+      throw new ConflictException({
+        code: 'IMPORT_IN_PROGRESS',
+        message: "Un import est déjà en cours. Attendez qu'il se termine avant d'en démarrer un autre.",
+      });
+    }
   }
 
   /** Relance l'extraction d'un import en échec, à partir du fichier déjà stocké. */
@@ -126,20 +172,28 @@ export class CvImportService {
     await this.prisma.cvImport.delete({ where: { id: row.id } });
   }
 
-  private validate(input: CvUploadInput) {
+  private validate(input: CvUploadInput): ValidatedCvFile {
     try {
       return validateCvFile(input);
     } catch (error) {
-      const message = error instanceof InvalidCvFileError ? error.message : 'Fichier invalide.';
-      throw new BadRequestException({ code: 'INVALID_FILE', message });
+      // Seule `InvalidCvFileError` porte un message français destiné au client ; toute autre
+      // erreur (bug dans le validateur) doit remonter telle quelle, jamais être maquillée en 400.
+      if (!(error instanceof InvalidCvFileError)) throw error;
+      throw new BadRequestException({ code: 'INVALID_FILE', message: error.message });
     }
   }
 
   /**
-   * Extrait puis persiste le résultat. `AiNotConfiguredError` (clé révoquée entre la garde
-   * initiale de `create`/`retry` et cet appel — rare, mais possible) annule tout : jamais de
-   * brouillon fantôme sans fichier ni de fichier sans brouillon. Les autres erreurs métier
-   * couvertes deviennent un brouillon `FAILED` ; toute autre erreur remonte telle quelle (500).
+   * Extrait puis persiste le résultat.
+   * - `AiNotConfiguredError` (clé révoquée entre la garde initiale de `create`/`retry` et cet
+   *   appel — rare, mais possible) et `AiUnavailableError` (panne transitoire côté Anthropic)
+   *   annulent tout : rollback (ligne + fichier) puis 503, pour ne jamais consommer le quota de
+   *   3 imports/heure sur un import qui n'a jamais pu tourner.
+   * - `CvTooLongError`/`CvUnreadableError` (document illisible, refus du modèle) deviennent un
+   *   brouillon `FAILED` : le fichier reste disponible pour un `retry`.
+   * - Toute autre erreur (bug, panne non couverte) devient elle aussi un brouillon `FAILED` —
+   *   jamais un 500 qui laisserait la ligne bloquée en `PENDING` — mais est journalisée en
+   *   `error` (jamais le contenu du CV) pour rester diagnosticable.
    */
   private async runExtraction(
     row: CvImport,
@@ -166,15 +220,26 @@ export class CvImportService {
         await this.rollback(row);
         throw this.aiNotConfigured();
       }
-      if (error instanceof CvTooLongError || error instanceof CvUnreadableError || error instanceof AiUnavailableError) {
-        const updated = await this.prisma.cvImport.update({
-          where: { id: row.id },
-          data: { status: 'FAILED', error: error.message },
-        });
-        return this.toDto(updated);
+      if (error instanceof AiUnavailableError) {
+        await this.rollback(row);
+        throw this.aiUnavailable(error.message);
       }
-      throw error;
+      if (error instanceof CvTooLongError || error instanceof CvUnreadableError) {
+        return this.markFailed(row, error.message);
+      }
+
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Extraction CV en échec inattendu pour l'import ${row.id}.`, stack);
+      return this.markFailed(row, "L'analyse du document a échoué. Réessayez.");
     }
+  }
+
+  private async markFailed(row: CvImport, message: string): Promise<CvImportDto> {
+    const updated = await this.prisma.cvImport.update({
+      where: { id: row.id },
+      data: { status: 'FAILED', error: message },
+    });
+    return this.toDto(updated);
   }
 
   /** Efface la trace (fichier + ligne) d'un import qui n'a jamais pu être extrait — best effort. */
@@ -226,5 +291,9 @@ export class CvImportService {
       { code: 'AI_NOT_CONFIGURED', message: "Le service d'analyse de CV n'est pas configuré." },
       HttpStatus.SERVICE_UNAVAILABLE,
     );
+  }
+
+  private aiUnavailable(message: string): HttpException {
+    return new HttpException({ code: 'AI_UNAVAILABLE', message }, HttpStatus.SERVICE_UNAVAILABLE);
   }
 }

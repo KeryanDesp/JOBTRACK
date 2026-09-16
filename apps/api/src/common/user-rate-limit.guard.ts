@@ -18,6 +18,12 @@ export const USER_RATE_LIMIT_KEY = 'userRateLimit';
 export interface UserRateLimitOptions {
   limit: number;
   windowSeconds: number;
+  /**
+   * Remplace la route dans la clé Redis quand elle est fournie : plusieurs routes portant
+   * le même `bucket` partagent alors un seul budget par utilisateur (ex. upload + retry
+   * d'un CV, qui consomment tous deux un appel Anthropic).
+   */
+  bucket?: string;
 }
 
 /**
@@ -58,11 +64,12 @@ export class UserRateLimitGuard implements CanActivate {
     }
 
     const route = request.routeOptions.url ?? 'inconnue';
-    const key = rateLimitKey(route, `user:${request.user.id}`);
+    const bucket = options.bucket ?? route;
+    const key = rateLimitKey(bucket, `user:${request.user.id}`);
 
     const { allowed } = await this.limiter.hit(key, options.limit, options.windowSeconds);
     if (!allowed) {
-      this.logger.warn(`Débit dépassé : ${route} user:${request.user.id}`);
+      this.logger.warn(`Débit dépassé : ${route} (bucket ${bucket}) user:${request.user.id}`);
       throw new HttpException(
         { code: 'RATE_LIMITED', message: 'Trop de tentatives. Réessayez dans quelques minutes.' },
         HttpStatus.TOO_MANY_REQUESTS,

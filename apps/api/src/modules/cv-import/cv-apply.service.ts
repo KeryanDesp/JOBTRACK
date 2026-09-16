@@ -48,15 +48,16 @@ export class CvApplyService {
 
   async apply(userId: string, importId: string, input: CvApplyInput): Promise<CvApplyResult> {
     return this.prisma.$transaction(async (tx) => {
-      const cvImport = await tx.cvImport.findUnique({
-        where: { id: importId },
-        select: { id: true, userId: true, status: true },
+      // Première écriture de la transaction, et conditionnée à `status: 'EXTRACTED'` : sous
+      // Postgres, deux applications concurrentes du même import se sérialisent sur le verrou
+      // de cette ligne — la première à commiter gagne (`count === 1`), la seconde retombe sur
+      // `count === 0` (le `WHERE` ne correspond plus, le statut a déjà changé) et se rabat sur
+      // une erreur, sans jamais créer les collections deux fois.
+      const claim = await tx.cvImport.updateMany({
+        where: { id: importId, userId, status: 'EXTRACTED' },
+        data: { status: 'APPLIED', appliedAt: new Date() },
       });
-      if (!cvImport || cvImport.userId !== userId) throw this.notFound();
-      if (cvImport.status === 'APPLIED') throw this.conflict('ALREADY_APPLIED', 'Ce CV a déjà été appliqué au profil.');
-      if (cvImport.status !== 'EXTRACTED') {
-        throw this.conflict('IMPORT_NOT_READY', "Ce CV n'est pas encore prêt à être appliqué.");
-      }
+      if (claim.count === 0) throw await this.rejectClaim(tx, importId, userId);
 
       const profile = await tx.profile.findUnique({ where: { userId }, select: { id: true } });
       // En pratique toujours présent (créé à l'inscription) : jamais qu'une garde défensive.
@@ -82,10 +83,20 @@ export class CvApplyService {
 
       await this.mergePreferences(tx, profileId, input.preferences);
 
-      await tx.cvImport.update({ where: { id: importId }, data: { status: 'APPLIED', appliedAt: new Date() } });
-
       return { created };
     });
+  }
+
+  /** Le `claim` n'a rien pris : relit la ligne pour choisir la bonne erreur (404 / conflit). */
+  private async rejectClaim(
+    tx: Prisma.TransactionClient,
+    importId: string,
+    userId: string,
+  ): Promise<NotFoundException | ConflictException> {
+    const existing = await tx.cvImport.findUnique({ where: { id: importId }, select: { userId: true, status: true } });
+    if (!existing || existing.userId !== userId) return this.notFound();
+    if (existing.status === 'APPLIED') return this.conflict('ALREADY_APPLIED', 'Ce CV a déjà été appliqué au profil.');
+    return this.conflict('IMPORT_NOT_READY', "Ce CV n'est pas encore prêt à être appliqué.");
   }
 
   /**

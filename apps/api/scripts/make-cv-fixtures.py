@@ -152,11 +152,23 @@ def build_document_xml(lines: list[str]) -> str:
 def build_docx(lines: list[str]) -> bytes:
     import io
 
+    # Horodatage fixe (1980-01-01, le plus ancien permis par le format ZIP) et compression
+    # explicite : sans cela, `zipfile.writestr` timestampe chaque entree a l'heure de
+    # generation, rendant le fichier different a chaque execution du script pour un
+    # contenu pourtant identique.
+    fixed_date_time = (1980, 1, 1, 0, 0, 0)
+    entries = {
+        "[Content_Types].xml": CONTENT_TYPES_XML,
+        "_rels/.rels": RELS_XML,
+        "word/document.xml": build_document_xml(lines),
+    }
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
-        archive.writestr("_rels/.rels", RELS_XML)
-        archive.writestr("word/document.xml", build_document_xml(lines))
+        for name, content in entries.items():
+            info = zipfile.ZipInfo(name, date_time=fixed_date_time)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, content)
     return buffer.getvalue()
 
 

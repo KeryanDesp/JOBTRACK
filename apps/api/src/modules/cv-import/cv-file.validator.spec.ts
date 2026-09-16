@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { InvalidCvFileError, validateCvFile } from './cv-file.validator';
+import { buildDocx, buildZip } from './zip-test-fixtures';
 
 const PDF_MIME = 'application/pdf';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -8,8 +9,14 @@ function pdfBuffer(size = 32): Buffer {
   return Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(Math.max(0, size - 9), 0x20)]);
 }
 
+/** DOCX minimal mais structurellement valide (répertoire central + `word/document.xml`). */
 function docxBuffer(): Buffer {
-  return Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('contenu-zip-factice')]);
+  return buildDocx(['Contenu de test']);
+}
+
+/** ZIP dont la signature locale passe, mais dont le répertoire central ne contient pas `word/document.xml`. */
+function zipWithoutDocumentEntry(): Buffer {
+  return buildZip([{ name: 'autre.xml', content: Buffer.from('<x/>', 'utf8') }]);
 }
 
 describe('validateCvFile', () => {
@@ -56,6 +63,12 @@ describe('validateCvFile', () => {
     );
   });
 
+  it('rejette un docx dont le repertoire central ne contient pas word/document.xml', () => {
+    expect(() =>
+      validateCvFile({ buffer: zipWithoutDocumentEntry(), mimeType: DOCX_MIME, fileName: 'cv.docx' }),
+    ).toThrow(InvalidCvFileError);
+  });
+
   it('rejette un type de fichier non pris en charge', () => {
     expect(() =>
       validateCvFile({ buffer: Buffer.from('bonjour'), mimeType: 'text/plain', fileName: 'notes.txt' }),
@@ -84,5 +97,13 @@ describe('validateCvFile', () => {
     const result = validateCvFile({ buffer: pdfBuffer(), mimeType: PDF_MIME, fileName: '.pdf' });
 
     expect(result.safeName).toBe('.pdf');
+  });
+
+  it('retire les controles bidi utilises pour deguiser une extension', () => {
+    // U+202E (RTL override) suivi de « fdp.exe » donne l_impression d_un « .pdf » a l_ecran.
+    const disguised = `cv\u202Efdp.exe`;
+    const result = validateCvFile({ buffer: pdfBuffer(), mimeType: PDF_MIME, fileName: `${disguised}.pdf` });
+
+    expect(result.safeName).not.toContain('\u202E');
   });
 });

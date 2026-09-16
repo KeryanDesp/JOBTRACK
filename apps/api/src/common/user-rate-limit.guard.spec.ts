@@ -10,10 +10,12 @@ const redis = new RedisService();
 const limiter = new RateLimiterService(redis);
 // Préfixe par processus : deux workers vitest ne doivent pas partager les compteurs.
 const ROUTE = `/test-${process.pid}/cv-imports`;
+const OTHER_ROUTE = `/test-${process.pid}/cv-imports/retry`;
+const BUCKET = `cv-extraction-${process.pid}`;
 
-function contextFor(userId: string | undefined) {
+function contextFor(userId: string | undefined, route: string = ROUTE) {
   const request = {
-    routeOptions: { url: ROUTE },
+    routeOptions: { url: route },
     user: userId
       ? { id: userId, email: '', firstName: '', lastName: '', onboardingCompleted: true }
       : undefined,
@@ -33,7 +35,11 @@ function guardWith(options: UserRateLimitOptions | undefined): UserRateLimitGuar
 }
 
 async function clearCounters(): Promise<void> {
-  const keys = await redis.client.keys(`ratelimit:${ROUTE}:*`);
+  const keys = [
+    ...(await redis.client.keys(`ratelimit:${ROUTE}:*`)),
+    ...(await redis.client.keys(`ratelimit:${OTHER_ROUTE}:*`)),
+    ...(await redis.client.keys(`ratelimit:${BUCKET}:*`)),
+  ];
   if (keys.length > 0) await redis.client.del(...keys);
 }
 
@@ -97,5 +103,21 @@ describe('UserRateLimitGuard', () => {
     expect((caught as UnauthorizedException).getResponse()).toMatchObject({
       code: 'NOT_AUTHENTICATED',
     });
+  });
+
+  it('partage un seul budget entre deux routes portant le meme bucket', async () => {
+    const guard = guardWith({ limit: 1, windowSeconds: 3600, bucket: BUCKET });
+
+    // Deux routes distinctes, mais le meme bucket : la seconde route est deja bloquee par
+    // le premier appel sur la premiere route (ex. upload puis retry d'un CV).
+    expect(await guard.canActivate(contextFor('user-5', ROUTE))).toBe(true);
+    await expect(guard.canActivate(contextFor('user-5', OTHER_ROUTE))).rejects.toThrowError(HttpException);
+  });
+
+  it('sans bucket, deux routes different comptent separement (comportement par defaut inchange)', async () => {
+    const guard = guardWith({ limit: 1, windowSeconds: 3600 });
+
+    expect(await guard.canActivate(contextFor('user-6', ROUTE))).toBe(true);
+    expect(await guard.canActivate(contextFor('user-6', OTHER_ROUTE))).toBe(true);
   });
 });

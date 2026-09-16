@@ -15,6 +15,20 @@ import type { AuthenticatedRequest } from '../auth/auth.guard';
 import { CvApplyService } from './cv-apply.service';
 import { CvImportService } from './cv-import.service';
 
+// Un upload et un retry consomment tous deux un appel Anthropic : même budget (3/h),
+// partagé via ce bucket plutôt que compté séparément par route (voir `UserRateLimitGuard`).
+const EXTRACTION_RATE_LIMIT = { limit: 3, windowSeconds: 3600, bucket: 'cv-extraction' } as const;
+
+/** Code Fastify renvoyé par `request.file()` quand le corps n'est pas `multipart/form-data`. */
+const INVALID_MULTIPART_CONTENT_TYPE_CODE = 'FST_INVALID_MULTIPART_CONTENT_TYPE';
+
+/** Seul cast du fichier : `Error` ne déclare pas `code`, mais les erreurs Fastify (`createError`) le portent. */
+function fastifyErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const withCode = error as Error & { code?: unknown };
+  return typeof withCode.code === 'string' ? withCode.code : undefined;
+}
+
 // Authentifiée et protégée par CSRF par défaut (aucun @Public()/@NoCsrf()).
 @Controller('cv-imports')
 export class CvImportController {
@@ -28,13 +42,21 @@ export class CvImportController {
     return this.imports.capabilities();
   }
 
+  @Get()
+  list(@Req() request: AuthenticatedRequest): Promise<CvImportDto[]> {
+    return this.imports.list(request.user.id);
+  }
+
   @Post()
   @UseGuards(UserRateLimitGuard)
-  @UserRateLimit({ limit: 3, windowSeconds: 3600 })
+  @UserRateLimit(EXTRACTION_RATE_LIMIT)
   async upload(@Req() request: AuthenticatedRequest): Promise<CvImportDto> {
-    const file = await request.file();
+    const file = await this.receiveFile(request);
     if (!file) {
       throw new BadRequestException({ code: 'INVALID_FILE', message: 'Aucun fichier reçu.' });
+    }
+    if (file.fieldname !== 'file') {
+      throw new BadRequestException({ code: 'INVALID_FILE', message: 'Champ de fichier attendu : file.' });
     }
     // Le corps peut dépasser la limite (`fileSize`, voir `app.setup.ts`) : `toBuffer()` lève
     // alors `RequestFileTooLargeError` (413), propagée telle quelle jusqu'au filtre global.
@@ -57,6 +79,8 @@ export class CvImportController {
   }
 
   @Post(':id/retry')
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit(EXTRACTION_RATE_LIMIT)
   retry(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<CvImportDto> {
     return this.imports.retry(request.user.id, id);
   }
@@ -65,5 +89,19 @@ export class CvImportController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<void> {
     return this.imports.remove(request.user.id, id);
+  }
+
+  /** Un corps qui n'est pas `multipart/form-data` lève `FST_INVALID_MULTIPART_CONTENT_TYPE`
+   * (406) avant même qu'on puisse chercher un fichier : mappé ici en 400 `INVALID_FILE`
+   * (comme toute autre incohérence du fichier reçu), jamais un 406 générique. */
+  private async receiveFile(request: AuthenticatedRequest) {
+    try {
+      return await request.file();
+    } catch (error) {
+      if (fastifyErrorCode(error) === INVALID_MULTIPART_CONTENT_TYPE_CODE) {
+        throw new BadRequestException({ code: 'INVALID_FILE', message: 'Contenu multipart attendu.' });
+      }
+      throw error;
+    }
   }
 }
