@@ -16,6 +16,7 @@ import { JobsService } from './jobs.service';
 import { SavedJobsService } from './saved-jobs.service';
 
 const MIN_COMMUNE_QUERY_LENGTH = 2;
+const MAX_COMMUNE_QUERY_LENGTH = 120;
 
 /** Clé courte d'URL (`lieu`, `rayon`…) → clé canonique du contrat, table inverse de `JOB_SEARCH_PARAM_KEYS`. */
 const CANONICAL_BY_SHORT_KEY: Record<string, string> = Object.fromEntries(
@@ -26,8 +27,11 @@ const CANONICAL_BY_SHORT_KEY: Record<string, string> = Object.fromEntries(
 function toCanonicalQuery(raw: Record<string, unknown>): Record<string, unknown> {
   const canonical: Record<string, unknown> = {};
   for (const [shortKey, value] of Object.entries(raw)) {
-    const canonicalKey = CANONICAL_BY_SHORT_KEY[shortKey];
-    if (canonicalKey !== undefined) canonical[canonicalKey] = value;
+    // `Object.hasOwn` plutôt qu'un test `!== undefined` sur l'indexation : une clé de
+    // requête nommée `constructor`/`toString`… résoudrait sinon une propriété héritée du
+    // prototype de `CANONICAL_BY_SHORT_KEY` (jamais `undefined`), pas l'absence attendue.
+    if (!Object.hasOwn(CANONICAL_BY_SHORT_KEY, shortKey)) continue;
+    canonical[CANONICAL_BY_SHORT_KEY[shortKey] as string] = value;
   }
   return canonical;
 }
@@ -68,7 +72,7 @@ export class JobsController {
   async searchCommunes(@Query('q') rawQ?: string | string[]): Promise<CommuneDto[]> {
     this.triggerCommunesEnsureLoaded();
 
-    const q = Array.isArray(rawQ) ? rawQ[0] ?? '' : rawQ ?? '';
+    const q = (Array.isArray(rawQ) ? rawQ[0] ?? '' : rawQ ?? '').slice(0, MAX_COMMUNE_QUERY_LENGTH);
     if (q.trim().length < MIN_COMMUNE_QUERY_LENGTH) return [];
     return this.communes.search(q);
   }

@@ -314,6 +314,7 @@ model Job {
   @@index([lastSeenAt])
   @@index([contractType, publishedAt])
   @@index([departmentCode, publishedAt])
+  @@index([salaryMaxAnnual, publishedAt])
 }
 
 model JobSource {

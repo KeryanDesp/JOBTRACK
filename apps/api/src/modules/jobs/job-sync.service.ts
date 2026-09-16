@@ -97,7 +97,10 @@ export class JobSyncService {
     return computeQueryHash(this.toQueryHashInput(query));
   }
 
-  async ensureFresh(query: JobSearchQuery, options: { force?: boolean } = {}): Promise<JobSyncInfoDto> {
+  async ensureFresh(
+    query: JobSearchQuery,
+    options: { force?: boolean; allowSync?: () => Promise<boolean> } = {},
+  ): Promise<JobSyncInfoDto> {
     const connector = this.connectors.find((candidate) => candidate.kind === 'FRANCE_TRAVAIL');
     const hash = this.computeQueryHash(query);
 
@@ -118,6 +121,24 @@ export class JobSyncService {
     } else {
       const cached = await this.safeRedisGet(cacheKey);
       if (cached) return { status: 'cached', syncedAt: cached, message: null };
+    }
+
+    // Budget de synchronisation implicite (revue sécurité) : sans lui, une suite de
+    // recherches distinctes (une valeur de `q` différente à chaque appel) déclenche une
+    // vraie synchronisation à chaque fois, sans jamais passer par le budget explicite de
+    // `refresh` — un moyen de contourner ce dernier. Vérifié après le cache (une recherche
+    // déjà en cache ne consomme jamais ce budget) et avant le verrou (jamais de verrou pris
+    // pour une synchronisation qui n'aura pas lieu).
+    if (options.allowSync) {
+      const allowed = await options.allowSync();
+      if (!allowed) {
+        const existing = await this.prisma.jobSearchSync.findUnique({ where: { queryHash: hash } });
+        return {
+          status: 'cached',
+          syncedAt: existing?.lastSyncedAt.toISOString() ?? null,
+          message: 'Trop de recherches distinctes : résultats en cache.',
+        };
+      }
     }
 
     const lock = await this.acquireLock(lockKey);

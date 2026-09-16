@@ -171,12 +171,17 @@ const tabSchema = rawField
   })
   .pipe(jobTabSchema);
 
+// Plafond défensif (spec, revue sécurité) : sans lui, une page arbitrairement grande
+// (`?page=1000000000`) traduit un `OFFSET` tout aussi arbitraire dans la requête Prisma —
+// jamais un vrai besoin fonctionnel (20 par page, quelques centaines d'offres au plus).
+const MAX_PAGE = 500;
+
 const pageSchema = rawNumericField
   .transform((value) => {
     const single = firstValue(value);
     return single === undefined || single === '' ? 1 : single;
   })
-  .pipe(z.coerce.number().int().min(1));
+  .pipe(z.coerce.number().int().min(1).max(MAX_PAGE));
 
 const pageSizeSchema = rawNumericField
   .transform((value) => {
@@ -268,8 +273,12 @@ export function parseJobSearchParams(params: URLSearchParams): JobSearchQuery {
   // bibliothèque de lib résolue à la génération des déclarations (`tsup`),
   // alors que `.forEach()` est déclaré de façon identique partout.
   params.forEach((_value, shortKey) => {
-    const canonical = CANONICAL_PARAM_KEYS[shortKey];
-    if (canonical === undefined || canonical in grouped) return;
+    // `Object.hasOwn` plutôt qu'un test `=== undefined` sur l'indexation : une clé d'URL
+    // nommée `constructor`/`toString`… résoudrait sinon une propriété héritée du prototype
+    // de `CANONICAL_PARAM_KEYS` (jamais `undefined`), pas l'absence attendue.
+    if (!Object.hasOwn(CANONICAL_PARAM_KEYS, shortKey)) return;
+    const canonical = CANONICAL_PARAM_KEYS[shortKey] as string;
+    if (canonical in grouped) return;
     const values = params.getAll(shortKey);
     // `values` contient toujours au moins un élément ici (la clé vient de
     // `params` lui-même) ; le repli sur `''` ne sert qu'à satisfaire

@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import type { CommuneDto, JobDetailDto, JobListResponseDto, JobSummaryDto } from '@jobtrack/shared';
+import {
+  parseJobSearchParams,
+  type CommuneDto,
+  type JobDetailDto,
+  type JobListResponseDto,
+  type JobSummaryDto,
+} from '@jobtrack/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
 import { configureApp, createAdapter } from '../../app.setup';
@@ -9,14 +15,25 @@ import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
 import { SessionService } from '../auth/session.service';
 import { CommuneService } from './commune.service';
+import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, type JobSourceConnector } from './sources/job-source.connector';
 import { SourceUnavailableError } from './sources/source.errors';
 import { FakeConnector } from './testing/fake-connector';
 
 const BASE = '/api/v1/jobs';
 
+// Préfixe d'identifiant externe réservé à cette suite (revue sécurité) : le connecteur
+// factice de `pnpm jobs:seed` (dev) n'en porte aucun, ses offres `FT-…` ne sont donc jamais
+// candidates au nettoyage e2e ci-dessous, ni inversement.
+const E2E_EXTERNAL_ID_PREFIX = 'E2E-';
+
 // Codes du référentiel de test (`fixtures/france-travail/communes-sample.json`), à
-// l'exclusion des deux lignes invalides (code ou libellé vide, jamais insérées).
+// l'exclusion des deux lignes invalides (code ou libellé vide, jamais insérées) : la seule
+// donnée que `ensureLoaded()` insère pour cette suite, nettoyée une fois à la toute fin
+// (jamais entre deux tests, `ensureLoaded` n'étant appelé qu'une fois en `beforeAll`) —
+// laissée en place plus longtemps, elle collisionne par préfixe de nom avec les communes
+// factices d'autres suites (`commune.service.spec.ts`, dont les codes hors plage INSEE
+// réelle ne protègent que contre les collisions de CODE, pas de nom).
 const SAMPLE_COMMUNE_CODES = [
   '57463',
   '54395',
@@ -36,7 +53,14 @@ let app: NestFastifyApplication;
 let unconfiguredApp: NestFastifyApplication;
 let prisma: PrismaService;
 let redis: RedisService;
+let jobSync: JobSyncService;
 let fake: FakeConnector;
+
+// Hors DB : identifiants utilisateurs et empreintes de recherche créés par cette suite,
+// pour ne nettoyer que ce qui lui appartient (jamais un compteur de débit ou une mémoire de
+// synchronisation d'un autre usage du même Redis/Postgres partagé en développement).
+const createdUserIds = new Set<string>();
+const createdSyncHashes = new Set<string>();
 
 async function buildApp(connectors: JobSourceConnector[]): Promise<NestFastifyApplication> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -50,27 +74,49 @@ async function buildApp(connectors: JobSourceConnector[]): Promise<NestFastifyAp
   return built;
 }
 
+/** Supprime les sources `E2E-…` puis les offres devenues orphelines (mêmes pattern que `scripts/unseed-jobs-fixtures.ts`, jamais les offres `FT-…` semées pour le développement). */
 async function clearJobs(): Promise<void> {
-  // Cascade Prisma (`onDelete: Cascade`) : supprime `JobSource`/`JobSkill`/`JobRequirement`/
-  // `SavedJob` avec le `Job` — jamais besoin de les vider séparément. Le préfixe `FT-` est
-  // porté par toutes les offres de fixtures ET l'offre synthétique du connecteur factice,
-  // jamais par une donnée d'une autre suite.
-  await prisma.job.deleteMany({ where: { sources: { some: { externalId: { startsWith: 'FT-' } } } } });
+  await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: E2E_EXTERNAL_ID_PREFIX } } });
+  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
 }
 
-async function clearSyncMemory(): Promise<void> {
-  await prisma.jobSearchSync.deleteMany({});
+/** Ne supprime que les empreintes de recherche que cette suite a effectivement créées. */
+async function clearTrackedSyncMemory(): Promise<void> {
+  if (createdSyncHashes.size === 0) return;
+  await prisma.jobSearchSync.deleteMany({ where: { queryHash: { in: [...createdSyncHashes] } } });
+  createdSyncHashes.clear();
 }
 
+/**
+ * Nettoyage Redis scopé (revue sécurité) : les clés génériques de synchronisation/
+ * vérification (`jobs:sync:*`, `jobs:sync:lock:*`, `jobs:detail-check:*`) sont éphémères et
+ * propres à ce module — un nettoyage large ne risque jamais de perturber un autre usage.
+ * `ratelimit:*auth/register*` est la seule exception nommément scopée à une route : cette
+ * suite enregistre plusieurs dizaines d'utilisateurs (limite de la route : 20/h par IP,
+ * `auth.controller.ts`) et atteindrait sinon cette limite après une vingtaine de tests,
+ * cassant silencieusement tous les suivants (inscription refusée → session vide → 401 en
+ * cascade) — jamais un `ratelimit:*` en bloc pour autant, qui toucherait aussi les
+ * compteurs de connexion d'un développeur en train de tester à côté. Les compteurs de débit
+ * propres au module (`refresh`, budget implicite) sont eux limités aux utilisateurs de cette
+ * suite (`ratelimit:*:user:<id>`). `jobs:ft:token` et `jobs:communes:loadedAt` ne sont jamais
+ * touchés.
+ */
+async function clearScopedRedisKeys(): Promise<void> {
+  const genericPatterns = ['jobs:sync:*', 'jobs:sync:lock:*', 'jobs:detail-check:*', 'ratelimit:*auth/register*'];
+  const genericKeys = (await Promise.all(genericPatterns.map((pattern) => redis.client.keys(pattern)))).flat();
+
+  const rateLimitKeys: string[] = [];
+  for (const userId of createdUserIds) {
+    rateLimitKeys.push(...(await redis.client.keys(`ratelimit:*:user:${userId}`)));
+  }
+
+  const all = [...genericKeys, ...rateLimitKeys];
+  if (all.length > 0) await redis.client.del(...all);
+}
+
+/** Uniquement les communes de test insérées par cette suite (jamais un vrai référentiel chargé ailleurs). */
 async function clearCommunes(): Promise<void> {
   await prisma.commune.deleteMany({ where: { code: { in: SAMPLE_COMMUNE_CODES } } });
-}
-
-async function clearRedisKeys(): Promise<void> {
-  const jobsKeys = await redis.client.keys('jobs:*');
-  const rateKeys = await redis.client.keys('ratelimit:*');
-  const all = [...jobsKeys, ...rateKeys];
-  if (all.length > 0) await redis.client.del(...all);
 }
 
 async function clearUsers(): Promise<void> {
@@ -80,6 +126,16 @@ async function clearUsers(): Promise<void> {
     await sessions.destroyAllForUser(user.id);
   }
   await prisma.user.deleteMany({ where: { email: { startsWith: 'e2e-jobs-' } } });
+}
+
+/** Nettoyage complet, exécuté avant chaque test et une dernière fois à la fin de la suite. */
+async function clearAll(): Promise<void> {
+  await clearUsers();
+  await clearJobs();
+  await clearTrackedSyncMemory();
+  await clearScopedRedisKeys();
+  createdUserIds.clear();
+  fake.reset();
 }
 
 function rawCookies(headers: Record<string, unknown>): string[] {
@@ -114,6 +170,7 @@ async function registerUser(target: NestFastifyApplication = app): Promise<Sessi
   });
   const cookieHeader = cookiesFrom(response.headers);
   const userId = response.json<{ id: string }>().id;
+  createdUserIds.add(userId);
   return { userId, cookieHeader, csrf: csrfFrom(cookieHeader) };
 }
 
@@ -130,12 +187,21 @@ async function getJson<T>(
   return { statusCode: response.statusCode, body: response.json<T>() };
 }
 
+/** Enregistre l'empreinte de synchronisation qu'une requête `/jobs` va produire, pour la nettoyer ensuite. */
+function trackSyncHash(query: string): void {
+  const parsed = parseJobSearchParams(new URLSearchParams(query));
+  createdSyncHashes.add(jobSync.computeQueryHash(parsed));
+}
+
 /** Synchronise puis renvoie la liste (query par défaut sauf indication contraire). */
 async function search(
   session: Session,
   query = '',
   target: NestFastifyApplication = app,
 ): Promise<{ statusCode: number; body: JobListResponseDto }> {
+  // Seul `app` (connecteur configuré) écrit réellement une mémoire de synchronisation ;
+  // `unconfiguredApp` se contente de la lire (jamais de nouvelle empreinte à nettoyer).
+  if (target === app) trackSyncHash(query);
   return getJson<JobListResponseDto>(session, query ? `?${query}` : '', target);
 }
 
@@ -146,33 +212,28 @@ function findByCompany(items: JobSummaryDto[], company: string): JobSummaryDto {
 }
 
 beforeAll(async () => {
-  fake = new FakeConnector();
+  fake = new FakeConnector({ externalIdPrefix: E2E_EXTERNAL_ID_PREFIX });
   app = await buildApp([fake]);
   unconfiguredApp = await buildApp([]);
 
   prisma = app.get(PrismaService);
   redis = app.get(RedisService);
-});
+  jobSync = app.get(JobSyncService);
 
-beforeEach(async () => {
-  await clearUsers();
-  await clearJobs();
-  await clearSyncMemory();
-  await clearCommunes();
-  await clearRedisKeys();
-  fake.calls = 0;
-  // Reconstitue le référentiel des communes (vidé ci-dessus) pour les tests qui en ont besoin ;
-  // le verrou Redis (`jobs:communes:loadedAt`) vient d'être effacé, `ensureLoaded` recharge donc
-  // à nouveau depuis le connecteur factice plutôt que de considérer le référentiel à jour.
+  // Chargé une seule fois pour toute la suite (jamais dans `beforeEach`) : le référentiel
+  // des communes est une donnée de développement légitime et durable (revue sécurité), pas
+  // un artefact de test à revider — `jobs:communes:loadedAt` et les lignes `Commune`
+  // insérées ne sont donc jamais nettoyés par cette suite.
   await app.get(CommuneService).ensureLoaded();
 });
 
+beforeEach(async () => {
+  await clearAll();
+});
+
 afterAll(async () => {
-  await clearUsers();
-  await clearJobs();
-  await clearSyncMemory();
+  await clearAll();
   await clearCommunes();
-  await clearRedisKeys();
   await app.close();
   await unconfiguredApp.close();
 });
@@ -249,6 +310,23 @@ describe('GET /jobs — synchronisation et cache', () => {
     expect(seventh.statusCode).toBe(429);
     expect(seventh.body.code).toBe('RATE_LIMITED');
     expect(seventh.body.message).toBe("Trop d'actualisations. Réessayez dans quelques minutes.");
+  });
+
+  it('le budget implicite de synchronisation limite les recherches distinctes (429 evite, 31e servie en cache)', async () => {
+    const session = await registerUser();
+
+    for (let index = 0; index < 30; index += 1) {
+      const response = await search(session, `q=budget-implicite-${index}`);
+      expect(response.statusCode).toBe(200);
+      expect(response.body.sync.status).toBe('ok');
+    }
+    const callsAfterThirty = fake.calls;
+
+    const thirtyFirst = await search(session, 'q=budget-implicite-30');
+    expect(thirtyFirst.statusCode).toBe(200);
+    expect(thirtyFirst.body.sync.status).toBe('cached');
+    expect(thirtyFirst.body.sync.message).toBe('Trop de recherches distinctes : résultats en cache.');
+    expect(fake.calls).toBe(callsAfterThirty);
   });
 
   it('une source en panne degrade la synchronisation sans jamais rendre la liste indisponible', async () => {
@@ -347,6 +425,16 @@ describe('GET /jobs — filtres et tri', () => {
     expect(response.body.items.some((item) => item.company === 'Solaris Ingénierie')).toBe(true);
   });
 
+  it('des parametres lieu repetes sont combines en plusieurs communes', async () => {
+    const session = await registerUser();
+    const response = await search(session, 'lieu=57463&lieu=54395');
+
+    expect(response.body.items.length).toBeGreaterThan(0);
+    expect(response.body.items.some((item) => item.company === 'Solaris Ingénierie')).toBe(true);
+    expect(response.body.items.some((item) => item.company === 'Nova Systèmes')).toBe(true);
+    for (const item of response.body.items) expect(['57', '54']).toContain(item.departmentCode);
+  });
+
   it('q=react trouve l_offre dont le titre mentionne React', async () => {
     const session = await registerUser();
     const response = await search(session, 'q=react');
@@ -354,6 +442,25 @@ describe('GET /jobs — filtres et tri', () => {
     expect(response.body.items.length).toBeGreaterThan(0);
     for (const item of response.body.items) expect(item.title.toLowerCase()).toContain('react');
     expect(response.body.items.some((item) => item.company === 'Piloto Software')).toBe(true);
+  });
+
+  it('q=% echappe les metacaracteres LIKE au lieu de tout renvoyer', async () => {
+    const session = await registerUser();
+    const baseline = await search(session);
+    expect(baseline.body.items.length).toBeGreaterThan(0);
+
+    const filtered = await search(session, `q=${encodeURIComponent('%')}`);
+    expect(filtered.statusCode).toBe(200);
+    expect(filtered.body.items).toEqual([]);
+  });
+
+  it('une cle de requete inconnue est ignoree sans erreur', async () => {
+    const session = await registerUser();
+    const response = await search(session, 'bogus=1&contrat=CDI');
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.items.length).toBeGreaterThan(0);
+    for (const item of response.body.items) expect(item.contractType).toBe('CDI');
   });
 
   it('tri=salary trie par salaire maximal descendant, valeurs inconnues en dernier', async () => {
@@ -389,10 +496,17 @@ describe('GET /jobs — filtres et tri', () => {
     expect(response.statusCode).toBe(400);
     expect(response.body.code).toBe('VALIDATION_ERROR');
   });
+
+  it('page=501 est refusee (400 VALIDATION_ERROR)', async () => {
+    const session = await registerUser();
+    const response = await getJson<{ code: string }>(session, '?page=501');
+    expect(response.statusCode).toBe(400);
+    expect(response.body.code).toBe('VALIDATION_ERROR');
+  });
 });
 
 describe('GET /jobs/:id — detail', () => {
-  it('renvoie le detail complet (sources, competences, exigences, saved)', async () => {
+  it('renvoie le detail complet (sources, competences, exigences, saved), sans champ interne', async () => {
     const session = await registerUser();
     const list = await search(session);
     const summary = findByCompany(list.body.items, 'Solaris Ingénierie');
@@ -401,12 +515,18 @@ describe('GET /jobs/:id — detail', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.body.saved).toBe(false);
-    expect(response.body.sources).toEqual([
-      expect.objectContaining({ kind: 'FRANCE_TRAVAIL', externalId: 'FT-0001' }),
-    ]);
+    // `toContainEqual`, jamais `toEqual` sur le tableau entier : la même offre peut aussi
+    // porter une source `FT-0001` sans préfixe si `pnpm jobs:seed` (dev) l'a déjà ingérée
+    // dans la même base (fingerprint identique) — la dédoublonner avec la source de cette
+    // suite est le comportement voulu, pas une régression à figer par un tableau exact.
+    expect(response.body.sources).toContainEqual(
+      expect.objectContaining({ kind: 'FRANCE_TRAVAIL', externalId: 'E2E-FT-0001' }),
+    );
     expect(response.body.skills.length).toBeGreaterThan(0);
     expect(response.body.requirements.length).toBeGreaterThan(0);
     expect(response.body.description.length).toBeGreaterThan(0);
+    expect(response.body).not.toHaveProperty('fingerprint');
+    expect(response.body).not.toHaveProperty('raw');
   });
 
   it('une offre inconnue renvoie 404 JOB_NOT_FOUND', async () => {
@@ -432,6 +552,27 @@ describe('GET /jobs/:id — detail', () => {
 
     const afterExpiry = await search(session);
     expect(afterExpiry.body.items.some((item) => item.id === nova.id)).toBe(false);
+  });
+
+  it('au plus un appel source par offre et par heure, quel que soit le resultat (erreur incluse)', async () => {
+    const session = await registerUser();
+    const list = await search(session);
+    const nova = findByCompany(list.body.items, 'Nova Systèmes');
+
+    await prisma.job.update({
+      where: { id: nova.id },
+      data: { lastSeenAt: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+    });
+    fake.failNext(new SourceUnavailableError('FRANCE_TRAVAIL'));
+
+    const first = await getJson<JobDetailDto>(session, `/${nova.id}`);
+    expect(first.statusCode).toBe(200);
+    expect(first.body.expiredAt).toBeNull(); // l'erreur source est ignorée, jamais interprétée comme une expiration
+    const callsAfterFirst = fake.calls;
+
+    const second = await getJson<JobDetailDto>(session, `/${nova.id}`);
+    expect(second.statusCode).toBe(200);
+    expect(fake.calls).toBe(callsAfterFirst); // marqueur Redis posé au premier appel : le second ne rappelle jamais la source
   });
 });
 

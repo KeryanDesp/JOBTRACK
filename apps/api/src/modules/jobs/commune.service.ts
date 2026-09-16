@@ -82,10 +82,24 @@ export class CommuneService {
     const trimmed = q.trim();
     if (!trimmed) return [];
 
+    if (POSTAL_CODE_PATTERN.test(trimmed)) {
+      const rows = await this.prisma.commune.findMany({
+        where: { postalCode: { startsWith: trimmed } },
+        orderBy: { name: 'asc' },
+        take: limit,
+      });
+      return rows.map(toCommuneDto);
+    }
+
+    const key = normalizeForKey(trimmed);
+    // `trimmed` non vide peut malgré tout se normaliser en chaîne vide (ponctuation,
+    // émoji…) : un `startsWith: ''` matcherait alors n'importe quelle commune plutôt que
+    // de renvoyer une liste vide, jamais le comportement attendu d'une saisie non numérique
+    // sans lettre exploitable.
+    if (!key) return [];
+
     const rows = await this.prisma.commune.findMany({
-      where: POSTAL_CODE_PATTERN.test(trimmed)
-        ? { postalCode: { startsWith: trimmed } }
-        : { nameNormalized: { startsWith: normalizeForKey(trimmed) } },
+      where: { nameNormalized: { startsWith: key } },
       orderBy: { name: 'asc' },
       take: limit,
     });

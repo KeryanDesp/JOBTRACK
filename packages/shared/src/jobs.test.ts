@@ -146,6 +146,11 @@ describe('jobSearchQuerySchema — validation', () => {
     expect(jobSearchQuerySchema.safeParse({ page: '0' }).success).toBe(false);
   });
 
+  it('rejette une page superieure a 500', () => {
+    expect(jobSearchQuerySchema.safeParse({ page: '501' }).success).toBe(false);
+    expect(jobSearchQuerySchema.safeParse({ page: '500' }).success).toBe(true);
+  });
+
   it('rejette une pageSize differente de 20', () => {
     expect(jobSearchQuerySchema.safeParse({ pageSize: '50' }).success).toBe(false);
   });
@@ -208,6 +213,13 @@ describe('jobSearchQuerySchema — cles inconnues', () => {
     const params = new URLSearchParams({ inconnue: 'valeur', q: 'dev' });
     const result = parseJobSearchParams(params);
     expect(result.q).toBe('dev');
+  });
+
+  it('ignore une cle courte homonyme d une propriete heritee du prototype', () => {
+    const params = new URLSearchParams({ constructor: 'valeur', toString: 'valeur', q: 'dev' });
+    const result = parseJobSearchParams(params);
+    expect(result.q).toBe('dev');
+    expect(result).not.toHaveProperty('constructor', 'valeur');
   });
 });
 

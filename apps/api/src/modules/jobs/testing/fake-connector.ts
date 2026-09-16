@@ -74,8 +74,14 @@ const HOURS_AGO_BY_ID: Record<string, number> = {
   'FT-9001': 1,
 };
 
-function withFreshDate(offer: FranceTravailOffer, now: Date): FranceTravailOffer {
-  const hoursAgo = offer.id ? HOURS_AGO_BY_ID[offer.id] : undefined;
+/** Offre dont l'identifiant fixture est garanti présent et non vide (jamais `raw.id as string`). */
+function hasId(offer: FranceTravailOffer): offer is FranceTravailOffer & { id: string } {
+  return typeof offer.id === 'string' && offer.id.length > 0;
+}
+
+/** Décale `dateCreation`/`dateActualisation` — l'identifiant reste celui de la fixture (non préfixé). */
+function withFreshDate<T extends FranceTravailOffer & { id: string }>(offer: T, now: Date): T {
+  const hoursAgo = HOURS_AGO_BY_ID[offer.id];
   if (hoursAgo === undefined) return offer;
   const shifted = new Date(now.getTime() - hoursAgo * 60 * 60 * 1000).toISOString();
   return { ...offer, dateCreation: shifted, dateActualisation: shifted };
@@ -85,6 +91,18 @@ function loadCatalog(): FranceTravailOffer[] {
   const page1 = loadJson<{ resultats: FranceTravailOffer[] }>('search-page-1.json').resultats;
   const page2 = loadJson<{ resultats: FranceTravailOffer[] }>('search-page-2.json').resultats;
   return [...page1, ...page2, ...SYNTHETIC_OFFERS];
+}
+
+export interface FakeConnectorOptions {
+  /**
+   * Préfixe appliqué à chaque identifiant externe renvoyé (ex. `E2E-`), pour isoler les
+   * offres d'une exécution des offres semées pour le développement par `pnpm jobs:seed`
+   * (`apps/api/scripts/seed-jobs-fixtures.ts`), qui instancie ce même connecteur sans
+   * préfixe — un nettoyage e2e scopé sur `E2E-` ne touche donc jamais ces dernières.
+   * `markRemoved` continue de prendre l'identifiant de fixture non préfixé (`FT-0002`,
+   * jamais `E2E-FT-0002`) : le préfixe n'est qu'un détail de présentation externe.
+   */
+  externalIdPrefix?: string;
 }
 
 /**
@@ -101,10 +119,12 @@ export class FakeConnector implements JobSourceConnector {
 
   private readonly catalog: FranceTravailOffer[];
   private readonly removedIds = new Set<string>();
+  private readonly externalIdPrefix: string;
   private pendingError: JobSourceError | null = null;
 
-  constructor() {
+  constructor(options: FakeConnectorOptions = {}) {
     this.catalog = loadCatalog();
+    this.externalIdPrefix = options.externalIdPrefix ?? '';
   }
 
   failNext(error: JobSourceError): void {
@@ -115,6 +135,13 @@ export class FakeConnector implements JobSourceConnector {
     this.removedIds.add(externalId);
   }
 
+  /** Remet le connecteur à son état initial (compteur, offres retirées, erreur en attente) — entre deux tests d'une même suite, qui partagent une seule instance. */
+  reset(): void {
+    this.calls = 0;
+    this.removedIds.clear();
+    this.pendingError = null;
+  }
+
   // Ni `search`, ni `getOffer`, ni `listCommunes` n'attendent réellement quelque chose (tout
   // vient de fixtures déjà en mémoire) : pas de `async`/`await` inutile, seulement l'enveloppe
   // `Promise` exigée par `JobSourceConnector`, comme le ferait un vrai connecteur réseau.
@@ -123,7 +150,7 @@ export class FakeConnector implements JobSourceConnector {
     this.consumePendingError();
 
     const now = new Date();
-    let offers = this.catalog.filter((offer) => !!offer.id && !this.removedIds.has(offer.id));
+    let offers = this.catalog.filter(hasId).filter((offer) => !this.removedIds.has(offer.id));
 
     if (query.communeCode) {
       offers = offers.filter((offer) => offer.lieuTravail?.commune === query.communeCode);
@@ -133,23 +160,18 @@ export class FakeConnector implements JobSourceConnector {
       offers = offers.filter((offer) => (offer.intitule ?? '').toLowerCase().includes(keyword));
     }
 
-    return Promise.resolve(
-      offers.map((offer) => {
-        const raw = withFreshDate(offer, now);
-        // `offer.id` est garanti non nul par le filtre ci-dessus.
-        return { kind: this.kind, externalId: raw.id as string, raw };
-      }),
-    );
+    return Promise.resolve(offers.map((offer) => this.present(offer, now)));
   }
 
   getOffer(externalId: string): Promise<SourceOffer | null> {
     this.calls += 1;
     this.consumePendingError();
 
-    if (this.removedIds.has(externalId)) return Promise.resolve(null);
-    const offer = this.catalog.find((candidate) => candidate.id === externalId);
+    const rawId = this.stripPrefix(externalId);
+    if (this.removedIds.has(rawId)) return Promise.resolve(null);
+    const offer = this.catalog.filter(hasId).find((candidate) => candidate.id === rawId);
     if (!offer) return Promise.resolve(null);
-    return Promise.resolve({ kind: this.kind, externalId, raw: withFreshDate(offer, new Date()) });
+    return Promise.resolve(this.present(offer, new Date()));
   }
 
   listCommunes(): Promise<SourceCommune[]> {
@@ -164,6 +186,19 @@ export class FakeConnector implements JobSourceConnector {
           departmentCode: commune.codeDepartement,
         })),
     );
+  }
+
+  /** Applique la fraîcheur puis le préfixe (`id` et `externalId` restent cohérents entre eux). */
+  private present(offer: FranceTravailOffer & { id: string }, now: Date): SourceOffer {
+    const fresh = withFreshDate(offer, now);
+    const externalId = `${this.externalIdPrefix}${fresh.id}`;
+    return { kind: this.kind, externalId, raw: { ...fresh, id: externalId } };
+  }
+
+  private stripPrefix(externalId: string): string {
+    return this.externalIdPrefix && externalId.startsWith(this.externalIdPrefix)
+      ? externalId.slice(this.externalIdPrefix.length)
+      : externalId;
   }
 
   private consumePendingError(): void {

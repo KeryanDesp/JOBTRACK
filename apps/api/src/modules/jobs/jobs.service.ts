@@ -10,16 +10,31 @@ import type {
 } from '@jobtrack/shared';
 import { PrismaService } from '../../common/prisma.service';
 import { RateLimiterService } from '../../common/rate-limiter.service';
+import { rateLimitKey } from '../../common/rate-limit.guard';
+import { RedisService } from '../../common/redis.service';
 import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, isConfigured, type JobSourceConnector } from './sources/job-source.connector';
 
 const PAGE_SIZE = 20;
+// Budget explicite (bouton « Actualiser », spec §2 et §5) : peu de requêtes, mais chacune
+// force une vraie synchronisation (`force: true`, cache ignoré).
+const REFRESH_BUCKET = 'jobs-sync';
 const REFRESH_RATE_LIMIT = { limit: 6, windowSeconds: 600 };
-const REFRESH_RATE_LIMIT_KEY_PREFIX = 'ratelimit:jobs-sync:user:';
+// Budget implicite (revue sécurité) : couvre les synchronisations déclenchées sans
+// `refresh`, par exemple une suite de recherches distinctes — sans lui, ce chemin échappait
+// entièrement à toute limite de débit malgré chaque appel pouvant déclencher un appel réel
+// à la source.
+const IMPLICIT_SYNC_BUCKET = 'jobs-sync-implicit';
+const IMPLICIT_SYNC_RATE_LIMIT = { limit: 30, windowSeconds: 600 };
 // Une offre non revue depuis plus de 24 h est re-vérifiée auprès de sa source
 // au moment du détail (spec §5) — jamais sur la liste, pour ne pas multiplier
 // les appels externes à chaque recherche.
 const DETAIL_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+// Marqueur Redis (revue sécurité) : au plus un appel source par offre et par heure, quel
+// que soit son résultat (succès, `null`, erreur) — sans lui, une source en panne pour une
+// offre donnée serait rappelée à chaque détail consulté dans l'heure.
+const DETAIL_CHECK_MARKER_PREFIX = 'jobs:detail-check:';
+const DETAIL_CHECK_MARKER_TTL_SECONDS = 60 * 60;
 
 /**
  * Champs de `Job` communs à la liste et aux favoris (spec §8 : jamais la
@@ -192,6 +207,16 @@ function daysAgo(days: number, from: Date = new Date()): Date {
 }
 
 /**
+ * Neutralise les métacaractères LIKE/ILIKE (`%`, `_`, et `\` lui-même, l'échappement de
+ * Postgres) avant un `contains` Prisma (revue sécurité) : sans cet échappement, `q=%`
+ * redevient le joker « tout » plutôt qu'une recherche littérale du caractère `%`, et
+ * renverrait silencieusement l'intégralité de la base au lieu de zéro résultat.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
  * Service `/jobs` (spec §6 et §8) : synchronisation implicite bornée par le
  * limiteur utilisateur (`refresh`), puis liste locale filtrée/triée depuis la
  * base, détail avec re-vérification d'expiration, et capacités.
@@ -202,6 +227,7 @@ export class JobsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
     private readonly rateLimiter: RateLimiterService,
     private readonly syncService: JobSyncService,
     @Inject(JOB_SOURCE_CONNECTORS) private readonly connectors: JobSourceConnector[],
@@ -209,12 +235,15 @@ export class JobsService {
 
   async search(userId: string, query: JobSearchQuery): Promise<JobListResponseDto> {
     if (query.refresh) {
-      const key = `${REFRESH_RATE_LIMIT_KEY_PREFIX}${userId}`;
+      const key = rateLimitKey(REFRESH_BUCKET, `user:${userId}`);
       const { allowed } = await this.rateLimiter.hit(key, REFRESH_RATE_LIMIT.limit, REFRESH_RATE_LIMIT.windowSeconds);
       if (!allowed) throw this.refreshRateLimited();
     }
 
-    const sync = await this.syncService.ensureFresh(query, { force: query.refresh });
+    const sync = await this.syncService.ensureFresh(query, {
+      force: query.refresh,
+      allowSync: () => this.allowImplicitSync(userId),
+    });
 
     const where = this.buildWhere(query);
     const orderBy = this.buildOrderBy(query.sort);
@@ -251,8 +280,12 @@ export class JobsService {
 
     const q = query.q.trim();
     if (q !== '') {
+      const escaped = escapeLikePattern(q);
       and.push({
-        OR: [{ title: { contains: q, mode: 'insensitive' } }, { company: { contains: q, mode: 'insensitive' } }],
+        OR: [
+          { title: { contains: escaped, mode: 'insensitive' } },
+          { company: { contains: escaped, mode: 'insensitive' } },
+        ],
       });
     }
 
@@ -293,17 +326,25 @@ export class JobsService {
 
   private buildOrderBy(sort: JobSort): Prisma.JobOrderByWithRelationInput[] {
     if (sort === 'salary') {
-      return [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }];
+      // Dernier critère `id` : sans lui, deux offres de même salaire et même date de
+      // publication n'ont aucun ordre stable entre deux pages successives.
+      return [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { id: 'asc' }];
     }
     return [{ publishedAt: 'desc' }, { id: 'asc' }];
   }
 
   /**
    * Re-vérifie une offre non revue depuis plus de 24 h auprès de sa source, si un
-   * connecteur configuré la couvre (spec §5). Toute erreur de la source est
-   * journalisée et ignorée : le détail reste servi avec les données déjà connues.
+   * connecteur configuré la couvre (spec §5) — et au plus une fois par heure et par offre
+   * (marqueur Redis), quel que soit le résultat de ce dernier appel : une offre dont la
+   * source échoue ou renvoie une erreur ne doit jamais être rappelée à chaque détail
+   * consulté dans l'heure qui suit. Toute erreur de la source est journalisée et ignorée :
+   * le détail reste servi avec les données déjà connues.
    */
   private async refreshIfStale(job: JobDetailRow): Promise<JobDetailRow> {
+    // Une offre déjà marquée expirée reste expirée (pas de politique de purge/retour en
+    // arrière) : jamais un nouvel appel source pour une offre déjà connue comme dépubliée.
+    if (job.expiredAt) return job;
     if (job.lastSeenAt.getTime() >= Date.now() - DETAIL_STALE_AFTER_MS) return job;
 
     const source = job.sources.find((candidate) =>
@@ -313,11 +354,13 @@ export class JobsService {
     const connector = this.connectors.find((candidate) => candidate.kind === source.source);
     if (!connector) return job;
 
+    const marker = await this.acquireDetailCheckMarker(job.id);
+    if (!marker) return job;
+
     try {
       const offer = await connector.getOffer(source.externalId);
       const now = new Date();
       if (offer === null) {
-        if (job.expiredAt) return job;
         await this.prisma.job.update({ where: { id: job.id }, data: { expiredAt: now } });
         return { ...job, expiredAt: now };
       }
@@ -327,6 +370,31 @@ export class JobsService {
       this.logger.debug(`Vérification de fraîcheur ignorée pour ${job.id} : ${(error as Error).message}`);
       return job;
     }
+  }
+
+  /** `SET NX EX` : premier appelant dans l'heure seul autorisé à interroger la source. */
+  private async acquireDetailCheckMarker(jobId: string): Promise<boolean> {
+    const key = `${DETAIL_CHECK_MARKER_PREFIX}${jobId}`;
+    try {
+      const result = await this.redis.client.set(key, '1', 'EX', DETAIL_CHECK_MARKER_TTL_SECONDS, 'NX');
+      return result === 'OK';
+    } catch (error) {
+      // Redis indisponible : on ne bloque jamais la vérification pour autant, mais alors
+      // sans aucune garantie de « au plus une fois par heure » (dégradé, jamais bloquant).
+      this.logger.warn(`Marqueur de vérification indisponible (Redis) pour ${jobId} : ${(error as Error).message}`);
+      return true;
+    }
+  }
+
+  /** Budget implicite (30 recherches distinctes / 10 min / utilisateur) — voir `job-sync.service.ts`. */
+  private async allowImplicitSync(userId: string): Promise<boolean> {
+    const key = rateLimitKey(IMPLICIT_SYNC_BUCKET, `user:${userId}`);
+    const { allowed } = await this.rateLimiter.hit(
+      key,
+      IMPLICIT_SYNC_RATE_LIMIT.limit,
+      IMPLICIT_SYNC_RATE_LIMIT.windowSeconds,
+    );
+    return allowed;
   }
 
   private notFound(): NotFoundException {
