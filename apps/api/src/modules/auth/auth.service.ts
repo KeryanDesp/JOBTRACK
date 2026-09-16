@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import type { RegisterInput, SessionUser } from '@jobtrack/shared';
 import { OAuthProvider, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
@@ -7,6 +7,14 @@ import { PasswordService } from './password.service';
 
 const EMAIL_TAKEN = { code: 'EMAIL_TAKEN', message: 'Un compte existe déjà avec cette adresse email.' };
 const INVALID_CREDENTIALS = { code: 'INVALID_CREDENTIALS', message: 'Identifiants invalides.' };
+const NO_PASSWORD_SET = {
+  code: 'NO_PASSWORD_SET',
+  message: 'Ce compte n’a pas de mot de passe. Utilisez « Mot de passe oublié » pour en définir un.',
+};
+const INVALID_CURRENT_PASSWORD = {
+  code: 'INVALID_CURRENT_PASSWORD',
+  message: 'Le mot de passe actuel est incorrect.',
+};
 
 type UserWithProfile = Prisma.UserGetPayload<{ include: { profile: true } }>;
 
@@ -17,6 +25,8 @@ function isConcurrentGoogleLink(error: unknown): boolean {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
@@ -81,6 +91,31 @@ export class AuthService {
   async findSessionUser(userId: string): Promise<SessionUser | null> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, include: { profile: true } });
     return user ? this.toSessionUser(user) : null;
+  }
+
+  /**
+   * Change le mot de passe après vérification de l'actuel. `AuthGuard` garantit déjà
+   * l'existence de l'utilisateur pour cette requête ; `findUniqueOrThrow` reste défensif
+   * face à une suppression de compte survenue entre-temps.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+    if (!user.passwordHash) {
+      // Compte Google sans mot de passe local : rien à comparer.
+      throw new BadRequestException(NO_PASSWORD_SET);
+    }
+
+    const valid = await this.passwords.verify(user.passwordHash, currentPassword);
+    if (!valid) {
+      // 400, pas 401 : la session en cours reste valide, seul le mot de passe fourni est faux.
+      throw new BadRequestException(INVALID_CURRENT_PASSWORD);
+    }
+
+    const passwordHash = await this.passwords.hash(newPassword);
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    // Trace d'audit (warn : survit à un niveau de journal réduit). Identifiant seulement.
+    this.logger.warn(`Mot de passe modifié pour l'utilisateur ${userId}`);
   }
 
   /**

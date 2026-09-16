@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Inject, Logger, NotFoundException, Param,
-  Post, Query, Req, Res,
+  Patch, Post, Query, Req, Res,
 } from '@nestjs/common';
 import {
-  forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, type ActiveSession,
-  type ForgotPasswordInput, type LoginInput, type RegisterInput, type ResetPasswordInput, type SessionUser,
+  changePasswordSchema, forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema,
+  type ActiveSession, type ChangePasswordInput, type ForgotPasswordInput, type LoginInput, type RegisterInput,
+  type ResetPasswordInput, type SessionUser,
 } from '@jobtrack/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -161,6 +162,19 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: SessionUser): SessionUser {
     return user;
+  }
+
+  @Patch('password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RateLimit({ limit: 10, windowSeconds: 3600, by: 'ip' })
+  async changePassword(
+    @Body(new ZodValidationPipe(changePasswordSchema)) body: ChangePasswordInput,
+    @CurrentUser() user: SessionUser,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    await this.auth.changePassword(user.id, body.currentPassword, body.newPassword);
+    // La session en cours reste ouverte : seuls les autres appareils doivent être déconnectés.
+    await this.sessions.destroyAllForUser(user.id, request.session.id);
   }
 
   @Get('sessions')

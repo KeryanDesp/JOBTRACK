@@ -433,6 +433,82 @@ describe('Réinitialisation du mot de passe', () => {
   });
 });
 
+describe('Changement de mot de passe', () => {
+  it('refuse un mot de passe actuel incorrect', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: 'mauvais-mot-de-passe', newPassword: 'nouveau-mot-de-passe-2026' },
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('INVALID_CURRENT_PASSWORD');
+  });
+
+  it('exige le jeton csrf', async () => {
+    const { cookieHeader } = await registerUser();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: USER.password, newPassword: 'nouveau-mot-de-passe-2026' },
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('CSRF_MISMATCH');
+  });
+
+  it('change le mot de passe et deconnecte les autres appareils', async () => {
+    // Appareil A : session ouverte à l'inscription.
+    const deviceA = await registerUser();
+
+    // Appareil B : deuxième connexion, même compte.
+    const loginB = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: USER.password },
+      headers: { 'user-agent': 'appareil-b' },
+    });
+    expect(loginB.statusCode).toBe(200);
+    const deviceBCookies = cookiesFrom(loginB.headers);
+
+    const change = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: USER.password, newPassword: 'nouveau-mot-de-passe-2026' },
+      headers: { cookie: deviceA.cookieHeader, 'x-csrf-token': deviceA.csrf },
+    });
+    expect(change.statusCode).toBe(204);
+
+    // Appareil A (celui qui a fait le changement) reste connecté.
+    const meA = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: deviceA.cookieHeader } });
+    expect(meA.statusCode).toBe(200);
+
+    // Appareil B a été déconnecté.
+    const meB = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: deviceBCookies } });
+    expect(meB.statusCode).toBe(401);
+
+    // Le nouveau mot de passe fonctionne, l'ancien est refusé.
+    const newLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: 'nouveau-mot-de-passe-2026' },
+    });
+    expect(newLogin.statusCode).toBe(200);
+
+    const oldLogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: USER.password },
+    });
+    expect(oldLogin.statusCode).toBe(401);
+  });
+});
+
 describe('Connexion Google', () => {
   const GOOGLE_PROFILE: GoogleProfile = {
     providerAccountId: 'sub-e2e',

@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import argon2 from 'argon2';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../../common/prisma.service';
@@ -248,5 +248,31 @@ describe('AuthService', () => {
       include: { oauthAccounts: true },
     });
     expect(stored?.oauthAccounts).toHaveLength(1);
+  });
+
+  it('refuse un changement de mot de passe avec un mot de passe actuel incorrect', async () => {
+    const registered = await service.register(INPUT);
+
+    const error: unknown = await service
+      .changePassword(registered.id, 'mauvais-mot-de-passe-actuel', 'nouveau-mot-de-passe-2026')
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toMatchObject({
+      code: 'INVALID_CURRENT_PASSWORD',
+    });
+  });
+
+  it('change le mot de passe : le nouveau valide, l_ancien est refuse', async () => {
+    const registered = await service.register(INPUT);
+
+    await service.changePassword(registered.id, INPUT.password, 'nouveau-mot-de-passe-2026');
+
+    await expect(
+      service.validateCredentials(INPUT.email, 'nouveau-mot-de-passe-2026'),
+    ).resolves.toMatchObject({ email: INPUT.email });
+    await expect(
+      service.validateCredentials(INPUT.email, INPUT.password),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
