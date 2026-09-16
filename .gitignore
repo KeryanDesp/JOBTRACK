@@ -24,5 +24,10 @@ test-results/
 # Cache de dépendances Vite
 .vite/
 
+# Fichiers stockes sur disque (CV importes) — jamais versionnes
+# Ancre a la racine : sans le `/` initial, ce motif masquerait aussi
+# apps/api/src/common/storage/ (code source, pas des fichiers uploades).
+/storage/
+
 # Configuration locale de l outil (launch.json)
 .claude/

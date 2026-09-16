@@ -1,5 +1,6 @@
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { HttpExceptionFilter } from './common/http-exception.filter';
 import { env } from './config/env';
@@ -12,6 +13,9 @@ import { env } from './config/env';
 export async function configureApp(app: NestFastifyApplication): Promise<void> {
   await app.register(helmet);
   await app.register(cookie, { secret: env.SESSION_SECRET });
+  // Limite tranche 2 (import de CV) : un seul fichier de 10 Mo par requête, peu de champs.
+  // Empêche un client d'épuiser la mémoire du serveur avec un flux multipart abusif.
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 5 } });
 
   // CORS strictement limité à l'origine du frontend, cookies autorisés.
   app.enableCors({

@@ -41,6 +41,15 @@ export const serverEnvSchema = z.object({
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
   GOOGLE_CALLBACK_URL: optionalUrl,
+
+  // Optionnelle : sans clé, le service IA est desactive (capabilities.ai = false).
+  ANTHROPIC_API_KEY: optionalString,
+  // Le defaut effectif (`claude-opus-5`) est applique par le code consommateur,
+  // pas ici, pour rester une simple chaine optionnelle sans logique metier.
+  ANTHROPIC_MODEL: optionalString,
+
+  // Racine du stockage disque des fichiers (CV importes). Jamais versionnee.
+  STORAGE_DIR: z.string().trim().min(1).default('./storage'),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

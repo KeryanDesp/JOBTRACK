@@ -9,3 +9,5 @@ allowBuilds:
   argon2: true
   esbuild: true
   prisma: true
+minimumReleaseAgeExclude:
+  - '@anthropic-ai/sdk@0.126.0'

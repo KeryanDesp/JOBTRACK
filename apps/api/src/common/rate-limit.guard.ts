@@ -9,8 +9,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
-import { RedisService } from './redis.service';
-import { serviceUnavailable } from './service-unavailable';
+import { RateLimiterService } from './rate-limiter.service';
 
 export const RATE_LIMIT_KEY = 'rateLimit';
 
@@ -44,22 +43,13 @@ export function ipEmailIdentity(ip: string, email: string): string {
   return `${ip}:${email.trim().toLowerCase().slice(0, EMAIL_MAX_LENGTH)}`;
 }
 
-// INCR et EXPIRE dans un même script : pas de compteur éternel si le processus
-// meurt entre les deux, pas de fenêtre prolongée par deux premiers appels concurrents
-// (contrairement à un INCR puis un EXPIRE conditionnel séparés, non atomiques).
-const INCREMENT_SCRIPT = `
-local count = redis.call('INCR', KEYS[1])
-if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
-return count
-`;
-
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private readonly logger = new Logger(RateLimitGuard.name);
 
   constructor(
     private readonly reflector: Reflector,
-    private readonly redis: RedisService,
+    private readonly limiter: RateLimiterService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -86,22 +76,8 @@ export class RateLimitGuard implements CanActivate {
     const identity = this.identity(request, options);
     const key = rateLimitKey(route, identity);
 
-    let count: unknown;
-    try {
-      count = await this.redis.client.eval(INCREMENT_SCRIPT, 1, key, options.windowSeconds);
-    } catch (error) {
-      this.logger.error(
-        `Compteur de débit indisponible pour ${route} ${identity} : ${(error as Error).message}`,
-      );
-      throw serviceUnavailable();
-    }
-    if (typeof count !== 'number') {
-      // Réponse Redis inattendue : on ne sait pas si la limite est respectée.
-      this.logger.error(`Réponse Redis inattendue pour ${route} ${identity} : ${String(count)}`);
-      throw serviceUnavailable();
-    }
-
-    if (count > options.limit) {
+    const { allowed } = await this.limiter.hit(key, options.limit, options.windowSeconds);
+    if (!allowed) {
       // Choix délibéré : le limiteur est le rempart anti-bourrage d'identifiants,
       // toute action bloquée mérite une trace exploitable.
       this.logger.warn(`Débit dépassé : ${route} ${identity}`);

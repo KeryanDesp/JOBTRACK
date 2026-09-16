@@ -66,4 +66,11 @@ describe('serverEnvSchema', () => {
     const parsed = serverEnvSchema.parse({ ...valid, WEB_ORIGIN: 'http://localhost:5173///' });
     expect(parsed.WEB_ORIGIN).toBe('http://localhost:5173');
   });
+
+  it('applique les defauts IA et stockage quand ils sont absents', () => {
+    const parsed = serverEnvSchema.parse(valid);
+    expect(parsed.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parsed.ANTHROPIC_MODEL).toBeUndefined();
+    expect(parsed.STORAGE_DIR).toBe('./storage');
+  });
 });

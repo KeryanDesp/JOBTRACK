@@ -1,10 +1,12 @@
 import { HttpException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RateLimiterService } from './rate-limiter.service';
 import { RedisService } from './redis.service';
 import { ipEmailIdentity, RateLimit, RateLimitGuard, rateLimitKey, type RateLimitOptions } from './rate-limit.guard';
 
 const redis = new RedisService();
+const limiter = new RateLimiterService(redis);
 // Préfixe par processus : deux workers vitest ne doivent pas partager les compteurs.
 const ROUTE = `/test-${process.pid}/auth/login`;
 
@@ -19,7 +21,7 @@ function contextFor(ip: string, body: unknown) {
 function guardWith(options: RateLimitOptions | RateLimitOptions[] | undefined): RateLimitGuard {
   const reflector = new Reflector();
   vi.spyOn(reflector, 'getAllAndOverride').mockReturnValue(options);
-  return new RateLimitGuard(reflector, redis);
+  return new RateLimitGuard(reflector, limiter);
 }
 
 async function clearCounters(): Promise<void> {
@@ -135,7 +137,7 @@ describe('RateLimitGuard', () => {
 
   it('le decorateur est lu par un vrai Reflector', async () => {
     const reflector = new Reflector();
-    const guard = new RateLimitGuard(reflector, redis);
+    const guard = new RateLimitGuard(reflector, limiter);
     const context = {
       switchToHttp: () => ({ getRequest: () => ({ ip: '9.9.9.9', body: {}, routeOptions: { url: ROUTE } }) }),
       getHandler: () => Dummy.prototype.handler,
