@@ -13,9 +13,18 @@ const ingestion = new JobIngestionService(prisma);
 
 // Préfixe distinctif par processus : deux workers vitest ne partagent jamais la même entreprise.
 const COMPANY_PREFIX = `Sync Test ${process.pid}`;
+const EXTERNAL_ID_PREFIX = 'FT-SYNC-';
 
+/**
+ * Nettoyage par source (spec ingénierie), jamais par entreprise seule : une offre
+ * sans `entreprise` (fixture minimale) ne serait sinon jamais retrouvée et le `Job`
+ * fuiterait en base entre deux exécutions. On retire d'abord les `JobSource` de ce
+ * lot, puis tout `Job` devenu orphelin (plus aucune source) — jamais un `Job` qui
+ * porterait encore une source d'un autre test.
+ */
 async function cleanup(): Promise<void> {
-  await prisma.job.deleteMany({ where: { company: { startsWith: COMPANY_PREFIX } } });
+  await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: EXTERNAL_ID_PREFIX } } });
+  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
   await prisma.jobSearchSync.deleteMany({ where: { queryJson: { path: ['q'], string_contains: 'sync-test' } } });
 }
 
@@ -25,7 +34,11 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-/** Redis en mémoire : `get`/`set` (avec `NX`)/`del`, seules commandes utilisées par `JobSyncService`. */
+/**
+ * Redis en mémoire : `get`/`set` (avec `NX`)/`del`/`eval` (verrou par jeton, script
+ * de comparaison-puis-suppression ou comparaison-puis-`PEXPIRE`), seules commandes
+ * utilisées par `JobSyncService`.
+ */
 class FakeRedis {
   private readonly store = new Map<string, string>();
 
@@ -48,8 +61,24 @@ class FakeRedis {
     return Promise.resolve(this.store.delete(key) ? 1 : 0);
   }
 
+  /** Interprète nos deux scripts de verrou (comparaison-puis-`DEL`, comparaison-puis-`PEXPIRE`) par leur contenu. */
+  eval(script: string, _numKeys: number, ...args: unknown[]): Promise<number> {
+    const key = String(args[0]);
+    const token = String(args[1]);
+    if (this.store.get(key) !== token) return Promise.resolve(0);
+    if (script.includes('DEL')) {
+      this.store.delete(key);
+      return Promise.resolve(1);
+    }
+    return Promise.resolve(1);
+  }
+
   seed(key: string, value: string): void {
     this.store.set(key, value);
+  }
+
+  has(key: string): boolean {
+    return this.store.has(key);
   }
 }
 
@@ -61,7 +90,15 @@ function buildOffer(externalId: string, overrides: Partial<FranceTravailOffer> =
   return {
     kind: 'FRANCE_TRAVAIL',
     externalId,
-    raw: { id: externalId, intitule: `Poste ${externalId}`, formations: [], langues: [], competences: [], ...overrides },
+    raw: {
+      id: externalId,
+      intitule: `Poste ${externalId}`,
+      formations: [],
+      langues: [],
+      competences: [],
+      entreprise: { nom: COMPANY_PREFIX },
+      ...overrides,
+    },
   };
 }
 
@@ -140,17 +177,28 @@ describe('JobSyncService.ensureFresh', () => {
     expect(connector.calls).toHaveLength(1);
   });
 
-  it('un verrou deja pose evite un second appel au connecteur', async () => {
+  it('le verrou est libere apres une synchronisation, meme reussie', async () => {
     const redis = new FakeRedis();
-    const hash = new JobSyncService(prisma, fakeRedisService(redis), ingestion, []).computeQueryHash(
-      buildQuery({ q: 'sync-test-lock' }),
-    );
-    redis.seed(`jobs:sync:lock:${hash}`, '1');
+    const connector = new FakeConnector([[buildOffer('FT-SYNC-UNLOCK')]]);
+    const service = makeService(connector, redis);
+    const hash = service.computeQueryHash(buildQuery({ q: 'sync-test-unlock' }));
+
+    await service.ensureFresh(buildQuery({ q: 'sync-test-unlock' }));
+
+    expect(redis.has(`jobs:sync:lock:${hash}`)).toBe(false);
+  });
+
+  it('un verrou deja pose (jeton d_un autre porteur) evite un second appel, statut cache sans synchronisation prealable', async () => {
+    const redis = new FakeRedis();
+    const hash = makeService(null, redis).computeQueryHash(buildQuery({ q: 'sync-test-lock' }));
+    redis.seed(`jobs:sync:lock:${hash}`, 'jeton-d-un-autre-porteur');
     const connector = new FakeConnector([[buildOffer('FT-SYNC-LOCK')]]);
     const service = makeService(connector, redis);
 
     const result = await service.ensureFresh(buildQuery({ q: 'sync-test-lock' }));
 
+    expect(result.status).toBe('cached');
+    expect(result.syncedAt).toBeNull();
     expect(result.message).toBe('Actualisation déjà en cours.');
     expect(connector.calls).toHaveLength(0);
   });
@@ -174,31 +222,44 @@ describe('JobSyncService.ensureFresh', () => {
     expect(job).not.toBeNull();
   });
 
-  it('echec partiel sans aucun resultat : degrade', async () => {
+  it('echec partiel sans aucun resultat : degrade, jamais mis en cache', async () => {
+    const redis = new FakeRedis();
     const connector = new FakeConnector([new SourceUnavailableError('FRANCE_TRAVAIL'), []]);
-    const service = makeService(connector);
+    const service = makeService(connector, redis);
     const query = buildQuery({ q: 'sync-test-partial-zero', communes: ['57463', '75056'] });
+    const hash = service.computeQueryHash(query);
 
     const result = await service.ensureFresh(query);
 
     expect(result.status).toBe('degraded');
     expect(result.message).toContain('France Travail ne répond pas');
-    const sync = await prisma.jobSearchSync.findUniqueOrThrow({ where: { queryHash: service.computeQueryHash(query) } });
+    const sync = await prisma.jobSearchSync.findUniqueOrThrow({ where: { queryHash: hash } });
     expect(sync.lastStatus).toBe('PARTIAL');
     expect(sync.resultCount).toBe(0);
+    expect(await redis.get(`jobs:sync:${hash}`)).toBeNull();
   });
 
   it('echec total : degrade et JobSearchSync FAILED, jamais mis en cache', async () => {
+    const redis = new FakeRedis();
     const connector = new FakeConnector([new SourceUnavailableError('FRANCE_TRAVAIL')]);
-    const service = makeService(connector);
+    const service = makeService(connector, redis);
     const query = buildQuery({ q: 'sync-test-failed' });
+    const hash = service.computeQueryHash(query);
 
     const result = await service.ensureFresh(query);
 
     expect(result.status).toBe('degraded');
-    const sync = await prisma.jobSearchSync.findUniqueOrThrow({ where: { queryHash: service.computeQueryHash(query) } });
+    const sync = await prisma.jobSearchSync.findUniqueOrThrow({ where: { queryHash: hash } });
     expect(sync.lastStatus).toBe('FAILED');
     expect(sync.lastError).toContain('SourceUnavailableError');
+    expect(await redis.get(`jobs:sync:${hash}`)).toBeNull();
+  });
+
+  it('une erreur qui n_est pas une JobSourceError remonte au lieu d_etre avalee', async () => {
+    const connector = new FakeConnector([new Error('bug interne (fake)')]);
+    const service = makeService(connector);
+
+    await expect(service.ensureFresh(buildQuery({ q: 'sync-test-bug' }))).rejects.toThrow('bug interne (fake)');
   });
 
   it('SourceNotConfiguredError leve par le connecteur devient not_configured', async () => {
@@ -235,6 +296,21 @@ describe('JobSyncService.ensureFresh', () => {
     const service = makeService(null);
     const a = buildQuery({ q: 'sync-test-hash-communes', communes: ['57463', '75056'] });
     const b = buildQuery({ q: 'sync-test-hash-communes', communes: ['75056', '57463'] });
+    expect(service.computeQueryHash(a)).toBe(service.computeQueryHash(b));
+  });
+
+  it('le hash de requete ignore la distance sans commune', () => {
+    const service = makeService(null);
+    const a = buildQuery({ q: 'sync-test-hash-national', communes: [], distance: 10 });
+    const b = buildQuery({ q: 'sync-test-hash-national', communes: [], distance: 80 });
+    expect(service.computeQueryHash(a)).toBe(service.computeQueryHash(b));
+  });
+
+  it('le hash de requete repose sur les codes France Travail mappes, pas l_enumeration locale', () => {
+    const service = makeService(null);
+    // APPRENTICESHIP et INTERNSHIP se mappent tous deux vers aucun code : meme appel a la source.
+    const a = buildQuery({ q: 'sync-test-hash-contract', contractTypes: ['APPRENTICESHIP'] });
+    const b = buildQuery({ q: 'sync-test-hash-contract', contractTypes: ['INTERNSHIP'] });
     expect(service.computeQueryHash(a)).toBe(service.computeQueryHash(b));
   });
 });

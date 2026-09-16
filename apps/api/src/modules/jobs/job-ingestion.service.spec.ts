@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaService } from '../../common/prisma.service';
 import { JobIngestionService } from './job-ingestion.service';
@@ -5,6 +6,30 @@ import type { JobDraft } from './lib/job-draft';
 
 const prisma = new PrismaService();
 const service = new JobIngestionService(prisma);
+
+/**
+ * Enveloppe `prisma.$transaction` : échoue une fois avec un `P2002` fabriqué
+ * (course simulée), puis délègue au vrai client pour toutes les tentatives
+ * suivantes. Le premier appel ne touche jamais la base — seule la nouvelle
+ * tentative de `upsertMany` (déjà réelle) le fait.
+ */
+function prismaThatFailsOnceWithP2002(real: PrismaService): PrismaService {
+  let hasFailedOnce = false;
+  return {
+    $transaction: (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+      if (!hasFailedOnce) {
+        hasFailedOnce = true;
+        return Promise.reject(
+          new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`fingerprint`)', {
+            code: 'P2002',
+            clientVersion: '5.22.0',
+          }),
+        );
+      }
+      return real.$transaction(fn);
+    },
+  } as unknown as PrismaService;
+}
 
 // Préfixe distinctif par processus : deux workers vitest ne partagent jamais la même entreprise.
 const COMPANY_PREFIX = `Ingestion Test ${process.pid}`;
@@ -171,5 +196,73 @@ describe('JobIngestionService.upsertMany', () => {
     expect(goodJob).not.toBeNull();
     const badJob = await prisma.job.findFirst({ where: { company: bad.company } });
     expect(badJob).toBeNull();
+  });
+
+  it('retente une fois apres un P2002 puis rattache par empreinte (course a la creation)', async () => {
+    const existingDraft = buildDraft({ source: { ...buildDraft().source, externalId: 'FT-ING-P2002-EXISTING' } });
+    await service.upsertMany([existingDraft]);
+
+    const raceDraft = buildDraft({ source: { ...buildDraft().source, externalId: 'FT-ING-P2002-NEW' } });
+    const flakyService = new JobIngestionService(prismaThatFailsOnceWithP2002(prisma));
+
+    const report = await flakyService.upsertMany([raceDraft]);
+
+    expect(report).toEqual({ created: 0, updated: 0, attached: 1, unchanged: 0, skipped: 0 });
+    const jobs = await prisma.job.findMany({ where: { company: existingDraft.company } });
+    expect(jobs).toHaveLength(1);
+    const sources = await prisma.jobSource.findMany({ where: { jobId: jobs[0]?.id } });
+    expect(sources.map((source) => source.externalId).sort()).toEqual(['FT-ING-P2002-EXISTING', 'FT-ING-P2002-NEW']);
+  });
+
+  it('recalcule l_empreinte quand titre/entreprise/commune changent lors d_une mise a jour', async () => {
+    const draft = buildDraft({ source: { ...buildDraft().source, externalId: 'FT-ING-REFRESH' } });
+    await service.upsertMany([draft]);
+    const before = await prisma.job.findFirstOrThrow({ where: { company: draft.company } });
+
+    const renamed = buildDraft({
+      title: 'Développeuse plateforme',
+      source: { ...draft.source, sourceUpdatedAt: new Date('2026-09-06T00:00:00Z') },
+    });
+    const report = await service.upsertMany([renamed]);
+
+    expect(report).toEqual({ created: 0, updated: 1, attached: 0, unchanged: 0, skipped: 0 });
+    const after = await prisma.job.findUniqueOrThrow({ where: { id: before.id } });
+    expect(after.title).toBe('Développeuse plateforme');
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+
+  it('garde l_ancienne empreinte si le recalcul entre en collision (P2002)', async () => {
+    const jobA = buildDraft({ title: 'Role A', source: { ...buildDraft().source, externalId: 'FT-ING-COLLISION-A' } });
+    const jobB = buildDraft({
+      title: 'Role B',
+      company: `${COMPANY_PREFIX} SA — B`,
+      communeCode: '75056',
+      postalCode: '75000',
+      departmentCode: '75',
+      locationLabel: 'Paris (75)',
+      source: { ...buildDraft().source, externalId: 'FT-ING-COLLISION-B' },
+    });
+    await service.upsertMany([jobA, jobB]);
+    const before = await prisma.job.findFirstOrThrow({ where: { company: jobA.company, title: 'Role A' } });
+    const targetJob = await prisma.job.findFirstOrThrow({ where: { company: jobB.company } });
+
+    // Le brouillon renomme A pour prendre exactement titre/entreprise/commune de B :
+    // sa nouvelle empreinte recalculee entre alors en collision avec celle de B.
+    const renamed = buildDraft({
+      title: jobB.title,
+      company: jobB.company,
+      communeCode: jobB.communeCode,
+      postalCode: jobB.postalCode,
+      departmentCode: jobB.departmentCode,
+      locationLabel: jobB.locationLabel,
+      source: { ...jobA.source, sourceUpdatedAt: new Date('2026-09-07T00:00:00Z') },
+    });
+    const report = await service.upsertMany([renamed]);
+
+    expect(report).toEqual({ created: 0, updated: 1, attached: 0, unchanged: 0, skipped: 0 });
+    const after = await prisma.job.findUniqueOrThrow({ where: { id: before.id } });
+    expect(after.fingerprint).toBe(before.fingerprint);
+    expect(after.fingerprint).not.toBe(targetJob.fingerprint);
+    expect(after.title).toBe('Role B');
   });
 });

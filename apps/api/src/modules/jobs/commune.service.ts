@@ -53,6 +53,13 @@ export class CommuneService {
       return;
     }
 
+    if (communes.length === 0) {
+      // Réponse vide (panne silencieuse, schéma inattendu…) : jamais posée comme
+      // « chargée » pour 30 jours, sinon `/jobs/communes` resterait vide tout ce temps.
+      this.logger.warn('Référentiel des communes vide, non posé comme chargé.');
+      return;
+    }
+
     for (let index = 0; index < communes.length; index += UPSERT_BATCH_SIZE) {
       const batch = communes.slice(index, index + UPSERT_BATCH_SIZE).map((commune) => ({
         code: commune.code,
@@ -85,12 +92,19 @@ export class CommuneService {
     return rows.map(toCommuneDto);
   }
 
-  /** Correspondance exacte (normalisée) d'abord, puis préfixe — jamais de choix ambigu silencieux. */
+  /**
+   * Correspondance exacte (normalisée) d'abord, puis préfixe. Plusieurs communes
+   * homonymes (même nom normalisé, communes distinctes) donnent `null` plutôt qu'un
+   * choix arbitraire : aucun ordre ne rendrait ce choix sûr, jamais de préférence
+   * silencieuse pour l'une d'entre elles.
+   */
   async resolveByName(name: string): Promise<CommuneDto | null> {
     const key = normalizeForKey(name);
     if (!key) return null;
 
-    const exact = await this.prisma.commune.findFirst({ where: { nameNormalized: key }, orderBy: { name: 'asc' } });
+    const exactMatches = await this.prisma.commune.findMany({ where: { nameNormalized: key }, take: 2 });
+    if (exactMatches.length > 1) return null;
+    const [exact] = exactMatches;
     if (exact) return toCommuneDto(exact);
 
     const prefix = await this.prisma.commune.findFirst({

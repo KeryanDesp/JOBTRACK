@@ -20,6 +20,16 @@ type IngestionOutcome = keyof IngestionReport;
 
 type Tx = Prisma.TransactionClient;
 
+/** `skipFingerprintUpdate` : mis à `true` uniquement sur la nouvelle tentative après un `P2002`. */
+interface UpsertOptions {
+  skipFingerprintUpdate?: boolean;
+}
+
+/** Codes moteur Prisma signalant une panne de connectivité (P1xxx) ou un pool épuisé (P2024). */
+const CONNECTIVITY_ERROR_CODE_PATTERN = /^P1\d{3}$/;
+const CONNECTION_POOL_TIMEOUT_CODE = 'P2024';
+const UNIQUE_CONSTRAINT_CODE = 'P2002';
+
 function emptyReport(): IngestionReport {
   return { created: 0, updated: 0, attached: 0, unchanged: 0, skipped: 0 };
 }
@@ -107,13 +117,29 @@ export class JobIngestionService {
 
     for (const draft of drafts) {
       try {
-        const outcome = await this.prisma.$transaction((tx) => this.upsertOne(tx, draft, now));
+        const outcome = await this.runTransaction(draft, now, {});
         report[outcome] += 1;
+        continue;
       } catch (error) {
         if (this.isConnectivityError(error)) throw error;
-        this.logger.warn(
-          `Offre ignorée (${draft.source.kind}:${draft.source.externalId}) : ${(error as Error).message}`,
-        );
+
+        if (this.isUniqueConstraintViolation(error)) {
+          // Course avec un autre appelant (création concurrente de la même empreinte,
+          // ou collision d'empreinte recalculée) : une seule nouvelle tentative, qui
+          // relit l'état à jour et prend le chemin rattachement/mise à jour.
+          try {
+            const outcome = await this.runTransaction(draft, now, { skipFingerprintUpdate: true });
+            report[outcome] += 1;
+            continue;
+          } catch (retryError) {
+            if (this.isConnectivityError(retryError)) throw retryError;
+            this.logIgnored(draft, retryError);
+            report.skipped += 1;
+            continue;
+          }
+        }
+
+        this.logIgnored(draft, error);
         report.skipped += 1;
       }
     }
@@ -121,7 +147,21 @@ export class JobIngestionService {
     return report;
   }
 
-  private async upsertOne(tx: Tx, draft: JobDraft, now: Date): Promise<IngestionOutcome> {
+  private runTransaction(draft: JobDraft, now: Date, options: UpsertOptions): Promise<IngestionOutcome> {
+    return this.prisma.$transaction((tx) => this.upsertOne(tx, draft, now, options));
+  }
+
+  /** Jamais le message d'erreur (pourrait, en théorie, porter un fragment de contenu d'offre) : seulement le code. */
+  private logIgnored(draft: JobDraft, error: unknown): void {
+    this.logger.warn(`Offre ignorée (${draft.source.kind}:${draft.source.externalId}) : ${this.errorLabel(error)}`);
+  }
+
+  private errorLabel(error: unknown): string {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) return error.code;
+    return error instanceof Error ? error.constructor.name : 'Error';
+  }
+
+  private async upsertOne(tx: Tx, draft: JobDraft, now: Date, options: UpsertOptions): Promise<IngestionOutcome> {
     const existingSource = await tx.jobSource.findUnique({
       where: { source_externalId: { source: draft.source.kind, externalId: draft.source.externalId } },
       include: { job: true },
@@ -141,7 +181,7 @@ export class JobIngestionService {
       });
 
       if (isNewer(draft.source.sourceUpdatedAt, existingSource.sourceUpdatedAt)) {
-        await this.refreshJob(tx, existingSource.jobId, draft, now);
+        await this.refreshJob(tx, existingSource.jobId, draft, now, existingSource.job.fingerprint, options);
         return 'updated';
       }
 
@@ -158,7 +198,7 @@ export class JobIngestionService {
       // Le rattachement ne réécrit jamais les champs descriptifs à l'aveugle : seule
       // une source dont l'horodatage bat celui déjà connu peut les rafraîchir.
       if (isNewer(draft.source.sourceUpdatedAt, existingJob.sourceUpdatedAt)) {
-        await this.refreshJob(tx, existingJob.id, draft, now);
+        await this.refreshJob(tx, existingJob.id, draft, now, existingJob.fingerprint, options);
       } else {
         await tx.job.update({ where: { id: existingJob.id }, data: { lastSeenAt: now, expiredAt: null } });
       }
@@ -173,10 +213,34 @@ export class JobIngestionService {
     return 'created';
   }
 
-  private async refreshJob(tx: Tx, jobId: string, draft: JobDraft, now: Date): Promise<void> {
+  /**
+   * Rafraîchit les champs descriptifs d'un `Job` déjà connu. Recalcule aussi son
+   * `fingerprint` (titre/entreprise/commune ont pu changer) sauf sur la nouvelle
+   * tentative qui suit un `P2002` (`options.skipFingerprintUpdate`) : la collision
+   * avec une empreinte déjà prise par un autre `Job` n'est jamais résorbable en
+   * retentant, l'ancienne empreinte est alors conservée et journalisée.
+   */
+  private async refreshJob(
+    tx: Tx,
+    jobId: string,
+    draft: JobDraft,
+    now: Date,
+    currentFingerprint: string,
+    options: UpsertOptions,
+  ): Promise<void> {
+    const data = { ...buildJobData(draft), lastSeenAt: now, expiredAt: null };
+    const newFingerprint = draftFingerprint(draft);
+    const fingerprintChanged = newFingerprint !== currentFingerprint;
+
+    if (fingerprintChanged && options.skipFingerprintUpdate) {
+      this.logger.warn(
+        `Empreinte recalculée en collision pour l'offre ${draft.source.kind}:${draft.source.externalId}, conservée inchangée.`,
+      );
+    }
+
     await tx.job.update({
       where: { id: jobId },
-      data: { ...buildJobData(draft), lastSeenAt: now, expiredAt: null },
+      data: fingerprintChanged && !options.skipFingerprintUpdate ? { ...data, fingerprint: newFingerprint } : data,
     });
     await this.replaceSkillsAndRequirements(tx, jobId, draft);
   }
@@ -202,10 +266,23 @@ export class JobIngestionService {
     }
   }
 
-  /** Seules les pannes de connectivité Prisma remontent : jamais une contrainte violée sur une offre. */
+  /**
+   * Pannes de connectivité Prisma (moteur inatteignable, panique Rust, requête dont
+   * le moteur ne peut pas rendre compte, pool de connexions épuisé) : elles remontent
+   * toujours, jamais comptées comme une offre en échec. Une contrainte violée sur une
+   * seule offre (P2002 hors nouvelle tentative, contrainte étrangère…) reste locale.
+   */
   private isConnectivityError(error: unknown): boolean {
-    return (
-      error instanceof Prisma.PrismaClientInitializationError || error instanceof Prisma.PrismaClientRustPanicError
-    );
+    if (error instanceof Prisma.PrismaClientInitializationError) return true;
+    if (error instanceof Prisma.PrismaClientRustPanicError) return true;
+    if (error instanceof Prisma.PrismaClientUnknownRequestError) return true;
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return CONNECTIVITY_ERROR_CODE_PATTERN.test(error.code) || error.code === CONNECTION_POOL_TIMEOUT_CODE;
+    }
+    return false;
+  }
+
+  private isUniqueConstraintViolation(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_CONSTRAINT_CODE;
   }
 }

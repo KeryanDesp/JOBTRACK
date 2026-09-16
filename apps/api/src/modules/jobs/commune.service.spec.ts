@@ -43,7 +43,7 @@ class FakeConnector implements JobSourceConnector {
   readonly kind = 'FRANCE_TRAVAIL';
   calls = 0;
 
-  constructor(private readonly communes: SourceCommune[]) {}
+  constructor(public communes: SourceCommune[]) {}
 
   search(): Promise<[]> {
     return Promise.resolve([]);
@@ -99,6 +99,22 @@ describe('CommuneService.ensureLoaded', () => {
     await expect(service.ensureLoaded()).resolves.toBeUndefined();
     const rows = await prisma.commune.findMany({ where: { code: { startsWith: CODE_PREFIX } } });
     expect(rows).toHaveLength(0);
+  });
+
+  it('ne pose jamais la cle 30 jours si le referentiel renvoie une liste vide', async () => {
+    const redis = new FakeRedis();
+    const connector = new FakeConnector([]);
+    const service = new CommuneService(prisma, fakeRedisService(redis), [connector]);
+
+    await service.ensureLoaded();
+    expect(await redis.get('jobs:communes:loadedAt')).toBeNull();
+
+    // Une seconde tentative, cette fois avec des donnees, doit donc rappeler le connecteur.
+    connector.communes.push(...SAMPLE_COMMUNES);
+    await service.ensureLoaded();
+    expect(connector.calls).toBe(2);
+    const rows = await prisma.commune.findMany({ where: { code: { startsWith: CODE_PREFIX } } });
+    expect(rows).toHaveLength(3);
   });
 });
 
@@ -162,5 +178,20 @@ describe('CommuneService.resolveByName', () => {
   it('renvoie null si aucune commune ne correspond', async () => {
     const service = new CommuneService(prisma, fakeRedisService(new FakeRedis()), []);
     expect(await service.resolveByName('Ville-Inconnue-Xyz')).toBeNull();
+  });
+
+  it('renvoie null si plusieurs communes homonymes partagent la meme cle exacte', async () => {
+    await prisma.commune.create({
+      data: {
+        code: code('4'),
+        name: 'Metz',
+        nameNormalized: normalizeForKey('Metz'),
+        postalCode: '88888',
+        departmentCode: '99',
+      },
+    });
+    const service = new CommuneService(prisma, fakeRedisService(new FakeRedis()), []);
+
+    expect(await service.resolveByName('Metz')).toBeNull();
   });
 });

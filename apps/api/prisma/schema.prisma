@@ -389,4 +389,5 @@ model Commune {
   departmentCode String
 
   @@index([nameNormalized])
+  @@index([postalCode])
 }
