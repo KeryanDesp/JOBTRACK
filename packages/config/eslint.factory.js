@@ -20,11 +20,12 @@ export function createEslintConfig(tsconfigRootDir) {
     {
       languageOptions: {
         parserOptions: {
-          // `prisma/*.ts` couvre le script de seed, `e2e/*.ts` les specs e2e :
-          // toutes hors du `include` de src. `**` est refusé par typescript-eslint :
-          // n'utilise que des motifs simples.
+          // `prisma/*.ts` couvre le script de seed, `scripts/*.ts` les autres scripts
+          // ponctuels (ex. nettoyage e2e), `e2e/*.ts` les specs e2e : toutes hors du
+          // `include` de src. `**` est refusé par typescript-eslint : n'utilise que
+          // des motifs simples.
           projectService: {
-            allowDefaultProject: ['*.js', '*.config.*', 'prisma/*.ts'],
+            allowDefaultProject: ['*.js', '*.config.*', 'prisma/*.ts', 'scripts/*.ts'],
           },
           tsconfigRootDir,
         },
