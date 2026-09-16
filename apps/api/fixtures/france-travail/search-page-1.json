@@ -304,6 +304,42 @@
       "origineOffre": { "origine": "1", "urlOrigine": "https://candidat.francetravail.fr/offres/recherche/detail/FT-0008-fictive", "partenaires": [] },
       "tempsPlein": true,
       "deplacementLibelle": null
+    },
+    {
+      "id": "FT-0020",
+      "intitule": "Chargé(e) de mission biodiversité",
+      "description": "Forêt Digitale, association environnementale, recrute un(e) chargé(e) de mission biodiversité pour son antenne de Rennes.",
+      "dateCreation": "2026-09-07T08:00:00.000Z",
+      "dateActualisation": "2026-09-07T08:00:00.000Z",
+      "lieuTravail": { "libelle": "35 - RENNES", "latitude": 48.1173, "longitude": -1.6778, "codePostal": "35000", "commune": "35238" },
+      "romeCode": "K1802",
+      "romeLibelle": "Développement local",
+      "appellationlibelle": "Chargé / Chargée de mission environnement",
+      "entreprise": { "nom": "Forêt Digitale", "description": "Association de protection de la biodiversité.", "logo": null, "url": null },
+      "typeContrat": "CDI",
+      "typeContratLibelle": "Contrat à durée indéterminée",
+      "natureContrat": "Contrat travail",
+      "experienceExige": "S",
+      "experienceLibelle": "1 An(s)",
+      "formations": [],
+      "langues": [],
+      "competences": [
+        { "code": "128900", "libelle": "Écologie", "exigence": "E" }
+      ],
+      "salaire": null,
+      "dureeTravailLibelle": "35H Horaires normaux",
+      "dureeTravailLibelleConverti": "Temps plein",
+      "alternance": false,
+      "contact": null,
+      "nombrePostes": 1,
+      "accessibleTH": false,
+      "qualificationCode": "6",
+      "qualificationLibelle": "Technicien",
+      "secteurActivite": "94",
+      "secteurActiviteLibelle": "Activités des organisations associatives",
+      "origineOffre": { "origine": "1", "urlOrigine": "https://candidat.francetravail.fr/offres/recherche/detail/FT-0020-fictive", "partenaires": [] },
+      "tempsPlein": true,
+      "deplacementLibelle": null
     }
   ]
 }

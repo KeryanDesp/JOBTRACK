@@ -43,10 +43,14 @@ export class FranceTravailConnector implements JobSourceConnector {
       }
 
       pageIndex += 1;
-      const pageLength = result.offers.length;
-      // On ne redemande une page suivante que si la précédente était pleine :
-      // une page courte signifie qu'il n'y a plus de résultat au-delà.
-      if (pageLength < PAGE_SIZE) break;
+      // On se fie à `Content-Range` (first/last), jamais à `offers.length` :
+      // une réponse dont certaines lignes échouent le schéma tolérant aurait un
+      // tableau plus court que la page réelle, ce qui arrêterait la pagination
+      // prématurément si on se basait sur sa taille. `result.total` (renvoyé par
+      // le client) peut d'ailleurs rester > 0 avec une page vide quand le corps
+      // entier a échoué le schéma — cf. `FranceTravailClient.search`.
+      const isFullPage = result.first !== null && result.last !== null && result.last - result.first + 1 === PAGE_SIZE;
+      if (!isFullPage) break;
       rangeStart = rangeEnd + 1;
     }
 

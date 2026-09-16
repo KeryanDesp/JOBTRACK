@@ -19,6 +19,15 @@ const emptyToUndefined = (value: unknown): unknown => (value === '' ? undefined 
 const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const optionalUrl = z.preprocess(emptyToUndefined, z.string().url().optional());
 
+/**
+ * Comme `optionalUrl`, mais exige le schéma `https://` : les URL France
+ * Travail transportent un secret (jeton, identifiants) et ne doivent jamais
+ * pouvoir dégrader vers `http://`, y compris si quelqu'un modifie le `.env`
+ * par erreur.
+ */
+const optionalHttpsUrl = (message: string) =>
+  z.preprocess(emptyToUndefined, z.string().url().startsWith('https://', message).optional());
+
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(3001),
@@ -56,10 +65,15 @@ export const serverEnvSchema = z.object({
   FRANCE_TRAVAIL_CLIENT_ID: optionalString,
   FRANCE_TRAVAIL_CLIENT_SECRET: optionalString,
   // Defauts alignes sur la documentation officielle de l'API « Offres d'emploi v2 ».
-  FRANCE_TRAVAIL_API_URL: optionalUrl.transform(
-    (value) => value ?? 'https://api.francetravail.io/partenaire/offresdemploi/v2',
-  ),
-  FRANCE_TRAVAIL_TOKEN_URL: optionalUrl.transform(
+  // Pas de `?` dans l'URL de base : le client y ajoute lui-meme ses parametres
+  // de requete (`buildUrl`) — une base qui en contiendrait deja produirait une
+  // requete corrompue (refuse aussi a la construction du client, en second filet).
+  FRANCE_TRAVAIL_API_URL: optionalHttpsUrl('FRANCE_TRAVAIL_API_URL doit commencer par https://.')
+    .refine((value) => value === undefined || !value.includes('?'), {
+      message: "FRANCE_TRAVAIL_API_URL ne doit pas contenir de paramètres (le client les ajoute lui-même).",
+    })
+    .transform((value) => value ?? 'https://api.francetravail.io/partenaire/offresdemploi/v2'),
+  FRANCE_TRAVAIL_TOKEN_URL: optionalHttpsUrl('FRANCE_TRAVAIL_TOKEN_URL doit commencer par https://.').transform(
     (value) => value ?? 'https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire',
   ),
   FRANCE_TRAVAIL_SCOPE: optionalString.transform((value) => value ?? 'api_offresdemploiv2 o2dsoffre'),
