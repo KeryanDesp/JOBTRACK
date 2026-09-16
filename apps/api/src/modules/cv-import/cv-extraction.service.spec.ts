@@ -154,4 +154,88 @@ describe('CvExtractionService', () => {
 
     await expect(service.extract(DOCX_INPUT)).rejects.toBeInstanceOf(CvUnreadableError);
   });
+
+  it('leve CvUnreadableError quand `parse` echoue avec une AnthropicError nue (JSON tronque ou hors schema)', async () => {
+    const bareError = new Anthropic.AnthropicError('sortie brute non conforme');
+    const messages = fakeMessages({ parse: vi.fn<Parse>().mockRejectedValue(bareError) });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBeInstanceOf(CvUnreadableError);
+  });
+
+  it('leve CvUnreadableError quand stop_reason vaut max_tokens, meme si parsed_output est renseigne', async () => {
+    const messages = fakeMessages({
+      parse: vi.fn<Parse>().mockResolvedValue({
+        model: 'claude-opus-5',
+        stop_reason: 'max_tokens',
+        parsed_output: WIRE_EXTRACTION,
+        usage: { input_tokens: 1_000, output_tokens: 16_000 },
+      }),
+    });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBeInstanceOf(CvUnreadableError);
+  });
+
+  it('leve AiNotConfiguredError quand Anthropic refuse l_authentification', async () => {
+    const authError = new Anthropic.AuthenticationError(401, {}, 'clé invalide', new Headers());
+    const messages = fakeMessages({ parse: vi.fn<Parse>().mockRejectedValue(authError) });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBeInstanceOf(AiNotConfiguredError);
+  });
+
+  it('leve AiUnavailableError quand la connexion a Anthropic echoue', async () => {
+    const connectionError = new Anthropic.APIConnectionError({ message: 'panne réseau' });
+    const messages = fakeMessages({ parse: vi.fn<Parse>().mockRejectedValue(connectionError) });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBeInstanceOf(AiUnavailableError);
+  });
+
+  it('repropage telle quelle une erreur inconnue (bug, pas une erreur du SDK Anthropic)', async () => {
+    const bug = new Error('bug interne inattendu');
+    const messages = fakeMessages({ parse: vi.fn<Parse>().mockRejectedValue(bug) });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBe(bug);
+  });
+
+  it('ecarte une experience dont la date est calendairement invalide (29 fevrier 2021) sans faire echouer l_extraction', async () => {
+    const messages = fakeMessages({
+      parse: vi.fn<Parse>().mockResolvedValue({
+        model: 'claude-opus-5',
+        stop_reason: 'end_turn',
+        parsed_output: {
+          ...WIRE_EXTRACTION,
+          experiences: [
+            {
+              company: 'Acme',
+              role: 'Dev',
+              location: null,
+              startDate: '2021-02-29',
+              endDate: null,
+              isCurrent: true,
+              description: null,
+            },
+          ],
+        },
+        usage: { input_tokens: 1_000, output_tokens: 200 },
+      }),
+    });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    const result = await service.extract(PDF_INPUT);
+
+    expect(result.extraction.experiences).toHaveLength(0);
+  });
+
+  it('leve AiUnavailableError quand `countTokens` echoue avec une erreur de quota (429)', async () => {
+    const rateLimitError = new Anthropic.RateLimitError(429, {}, 'limité', new Headers());
+    const messages = fakeMessages({ countTokens: vi.fn<CountTokens>().mockRejectedValue(rateLimitError) });
+    const service = new CvExtractionService(fakeClient(messages));
+
+    await expect(service.extract(PDF_INPUT)).rejects.toBeInstanceOf(AiUnavailableError);
+    expect(messages.parse).not.toHaveBeenCalled();
+  });
 });

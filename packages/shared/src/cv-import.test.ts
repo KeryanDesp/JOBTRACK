@@ -1,3 +1,4 @@
+import { z as zWireTest } from 'zod/v4';
 import { describe, expect, it } from 'vitest';
 import {
   cvApplySchema,
@@ -212,14 +213,33 @@ describe('cvExtractionSchema', () => {
     expect(parsed.preferences).toEqual({ desiredRoles: [], locations: [] });
   });
 
-  it('limite le nombre d_experiences a 50', () => {
+  it('tronque le nombre d_experiences a 50 plutot que d_echouer', () => {
     const experiences = Array.from({ length: 51 }, () => ({ company: 'A', role: 'B', startDate: '2020' }));
-    expect(cvExtractionSchema.safeParse({ experiences }).success).toBe(false);
+    const parsed = cvExtractionSchema.parse({ experiences });
+    expect(parsed.experiences).toHaveLength(50);
   });
 
-  it('limite le nombre de competences a 100', () => {
+  it('tronque le nombre de competences a 100 plutot que d_echouer', () => {
     const skills = Array.from({ length: 101 }, (_, i) => ({ name: `Skill${i}` }));
-    expect(cvExtractionSchema.safeParse({ skills }).success).toBe(false);
+    const parsed = cvExtractionSchema.parse({ skills });
+    expect(parsed.skills).toHaveLength(100);
+  });
+
+  it('ecarte une experience invalide au milieu de deux experiences valides', () => {
+    const experiences = [
+      { company: 'Acme', role: 'Dev', startDate: '2020' },
+      { company: 'Beta', role: 'Stagiaire', startDate: '2022', endDate: '2021' }, // fin avant debut : invalide
+      { company: 'Gamma', role: 'Lead', startDate: '2023' },
+    ];
+    const parsed = cvExtractionSchema.parse({ experiences });
+    expect(parsed.experiences).toHaveLength(2);
+    expect(parsed.experiences.map((experience) => experience.company)).toEqual(['Acme', 'Gamma']);
+  });
+
+  it('tronque un resume trop long plutot que d_echouer', () => {
+    const summary = 'a'.repeat(2500);
+    const parsed = cvExtractionSchema.parse({ identity: { summary } });
+    expect(parsed.identity.summary).toHaveLength(2000);
   });
 
   it('coupe les technologies d_un projet a 20 elements sans faire echouer le parsing', () => {
@@ -286,6 +306,11 @@ describe('cvExtractionWireSchema', () => {
     expect(() => cvExtractionSchema.parse(wireSample)).not.toThrow();
     const parsed = cvExtractionSchema.parse(wireSample);
     expect(parsed.experiences[1]?.isCurrent).toBe(false);
+  });
+
+  it('genere un json schema portant les bornes maxLength (zod v4 toJSONSchema)', () => {
+    const jsonSchema = zWireTest.toJSONSchema(cvExtractionWireSchema);
+    expect(JSON.stringify(jsonSchema)).toContain('maxLength');
   });
 });
 

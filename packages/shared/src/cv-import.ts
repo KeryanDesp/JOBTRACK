@@ -37,6 +37,26 @@ const draftUrl = z.union([z.string(), z.null(), z.undefined()]).transform((value
 });
 
 /**
+ * Texte optionnel de brouillon : contrairement a `optionalText` (profile.ts),
+ * un texte plus long que `max` ne fait pas echouer le parsing — il est tronque.
+ * Reserve aux champs d'identite du brouillon (`cvExtractionSchema`), qui forment
+ * un objet unique plutot qu'une liste : un seul champ trop long ne doit pas faire
+ * perdre toute l'extraction, alors qu'une liste peut simplement ecarter l'element
+ * fautif (cf. `sanitizeDraftList` ci-dessous).
+ */
+function draftOptionalText(max: number) {
+  return z
+    .union([z.literal(''), z.null(), z.string()])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      if (value === '' || value === null) return null;
+      const trimmed = value.trim();
+      return trimmed === '' ? null : trimmed.slice(0, max);
+    });
+}
+
+/**
  * Normalise une liste de chaines issue d'un modele : espaces superflus retires,
  * entrees vides ecartees (jamais d'echec pour ca), tronquee a `maxItems`
  * elements de `maxLength` caracteres chacun au plus.
@@ -47,6 +67,27 @@ function sanitizeStringList(values: string[] | undefined, maxItems: number, maxL
     .filter((value) => value.length > 0)
     .slice(0, maxItems)
     .map((value) => value.slice(0, maxLength));
+}
+
+/**
+ * Liste de brouillon issue d'un modele : chaque element est valide isolement
+ * par `schema` et un element invalide (date incoherente, champ obligatoire
+ * absent, etc.) est ecarte plutot que de faire echouer toute l'extraction —
+ * un CV avec 20 experiences valables et une mal formee doit renvoyer les 20,
+ * pas une erreur globale. Tronquee a `max` elements apres filtrage.
+ */
+function sanitizeDraftList<Output>(schema: z.ZodType<Output, z.ZodTypeDef, unknown>, max: number) {
+  return z
+    .array(z.unknown())
+    .default([])
+    .transform((items) =>
+      items
+        .flatMap((item) => {
+          const result = schema.safeParse(item);
+          return result.success ? [result.data] : [];
+        })
+        .slice(0, max),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -316,25 +357,33 @@ export type ProjectDraft = z.infer<typeof projectDraftSchema>;
 // du modele (cle absente) reste valide.
 // ---------------------------------------------------------------------------
 
+// Champs libres remplis a partir d'un CV fourni par l'utilisateur final : le
+// contenu (intitules, descriptions, resume...) est donc une prose non fiable,
+// au meme titre que le document source. Tant qu'elle reste stockee et
+// affichee telle quelle, ce n'est qu'une donnee ; a partir de la tranche 5, ou
+// ce brouillon sera re-envoye a un modele (suggestions, reecriture...), il
+// faudra le delimiter explicitement (balises + rappel, comme dans
+// `CvExtractionService.buildContent`) pour eviter qu'un texte injecte dans le
+// CV d'origine ne soit interprete comme une instruction a ce moment-la.
 export const cvExtractionSchema = z.object({
   identity: z
     .object({
-      firstName: optionalText(80),
-      lastName: optionalText(80),
-      phone: optionalText(30),
-      city: optionalText(80),
-      country: optionalText(80),
-      title: optionalText(120),
-      summary: optionalText(2000),
+      firstName: draftOptionalText(80),
+      lastName: draftOptionalText(80),
+      phone: draftOptionalText(30),
+      city: draftOptionalText(80),
+      country: draftOptionalText(80),
+      title: draftOptionalText(120),
+      summary: draftOptionalText(2000),
     })
     .transform(omitUndefinedValues)
     .default({}),
-  experiences: z.array(experienceDraftSchema).max(50, 'Maximum 50 expériences.').default([]),
-  educations: z.array(educationDraftSchema).max(30, 'Maximum 30 formations.').default([]),
-  skills: z.array(skillDraftSchema).max(100, 'Maximum 100 compétences.').default([]),
-  languages: z.array(languageDraftSchema).max(20, 'Maximum 20 langues.').default([]),
-  certifications: z.array(certificationDraftSchema).max(30, 'Maximum 30 certifications.').default([]),
-  projects: z.array(projectDraftSchema).max(30, 'Maximum 30 projets.').default([]),
+  experiences: sanitizeDraftList(experienceDraftSchema, 50),
+  educations: sanitizeDraftList(educationDraftSchema, 30),
+  skills: sanitizeDraftList(skillDraftSchema, 100),
+  languages: sanitizeDraftList(languageDraftSchema, 20),
+  certifications: sanitizeDraftList(certificationDraftSchema, 30),
+  projects: sanitizeDraftList(projectDraftSchema, 30),
   preferences: z
     .object({
       desiredRoles: z
@@ -361,44 +410,49 @@ export type CvExtraction = z.output<typeof cvExtractionSchema>;
 // enumerations reelles.
 // ---------------------------------------------------------------------------
 
+// Les bornes ci-dessous miroitent celles des schemas de brouillon
+// (`experienceDraftSchema`, `sanitizeStringList`, etc.) : `zodOutputFormat` les
+// convertit en `maxLength`/`maxItems` dans le JSON Schema envoye a Anthropic
+// (zod v4 `toJSONSchema`), ce qui incite le modele a respecter nos limites
+// avant meme que `cvExtractionSchema` ne les fasse respecter cote serveur.
 const identityWireSchema = zWire
   .object({
-    firstName: zWire.string().nullable(),
-    lastName: zWire.string().nullable(),
-    phone: zWire.string().nullable(),
-    city: zWire.string().nullable(),
-    country: zWire.string().nullable(),
-    title: zWire.string().nullable(),
-    summary: zWire.string().nullable(),
+    firstName: zWire.string().max(80).nullable(),
+    lastName: zWire.string().max(80).nullable(),
+    phone: zWire.string().max(30).nullable(),
+    city: zWire.string().max(80).nullable(),
+    country: zWire.string().max(80).nullable(),
+    title: zWire.string().max(120).nullable(),
+    summary: zWire.string().max(2000).nullable(),
   })
   .strict();
 
 const experienceWireSchema = zWire
   .object({
-    company: zWire.string(),
-    role: zWire.string(),
-    location: zWire.string().nullable(),
+    company: zWire.string().max(120),
+    role: zWire.string().max(120),
+    location: zWire.string().max(120).nullable(),
     startDate: zWire.string().nullable(),
     endDate: zWire.string().nullable(),
     isCurrent: zWire.boolean().nullable(),
-    description: zWire.string().nullable(),
+    description: zWire.string().max(2000).nullable(),
   })
   .strict();
 
 const educationWireSchema = zWire
   .object({
-    school: zWire.string(),
-    degree: zWire.string(),
-    field: zWire.string().nullable(),
+    school: zWire.string().max(120),
+    degree: zWire.string().max(120),
+    field: zWire.string().max(120).nullable(),
     startDate: zWire.string().nullable(),
     endDate: zWire.string().nullable(),
-    description: zWire.string().nullable(),
+    description: zWire.string().max(2000).nullable(),
   })
   .strict();
 
 const skillWireSchema = zWire
   .object({
-    name: zWire.string(),
+    name: zWire.string().max(60),
     category: zWire.string().nullable(),
     level: zWire.string().nullable(),
   })
@@ -406,46 +460,46 @@ const skillWireSchema = zWire
 
 const languageWireSchema = zWire
   .object({
-    name: zWire.string(),
+    name: zWire.string().max(60),
     level: zWire.string().nullable(),
   })
   .strict();
 
 const certificationWireSchema = zWire
   .object({
-    name: zWire.string(),
-    issuer: zWire.string(),
+    name: zWire.string().max(120),
+    issuer: zWire.string().max(120),
     issuedAt: zWire.string().nullable(),
     expiresAt: zWire.string().nullable(),
-    credentialUrl: zWire.string().nullable(),
+    credentialUrl: zWire.string().max(2000).nullable(),
   })
   .strict();
 
 const projectWireSchema = zWire
   .object({
-    name: zWire.string(),
-    description: zWire.string().nullable(),
-    url: zWire.string().nullable(),
-    technologies: zWire.array(zWire.string()),
+    name: zWire.string().max(120),
+    description: zWire.string().max(2000).nullable(),
+    url: zWire.string().max(2000).nullable(),
+    technologies: zWire.array(zWire.string().max(80)).max(20),
   })
   .strict();
 
 const preferencesWireSchema = zWire
   .object({
-    desiredRoles: zWire.array(zWire.string()),
-    locations: zWire.array(zWire.string()),
+    desiredRoles: zWire.array(zWire.string().max(80)).max(10),
+    locations: zWire.array(zWire.string().max(80)).max(10),
   })
   .strict();
 
 export const cvExtractionWireSchema = zWire
   .object({
     identity: identityWireSchema,
-    experiences: zWire.array(experienceWireSchema),
-    educations: zWire.array(educationWireSchema),
-    skills: zWire.array(skillWireSchema),
-    languages: zWire.array(languageWireSchema),
-    certifications: zWire.array(certificationWireSchema),
-    projects: zWire.array(projectWireSchema),
+    experiences: zWire.array(experienceWireSchema).max(50),
+    educations: zWire.array(educationWireSchema).max(30),
+    skills: zWire.array(skillWireSchema).max(100),
+    languages: zWire.array(languageWireSchema).max(20),
+    certifications: zWire.array(certificationWireSchema).max(30),
+    projects: zWire.array(projectWireSchema).max(30),
     preferences: preferencesWireSchema,
   })
   .strict();
