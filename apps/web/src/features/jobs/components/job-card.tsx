@@ -1,5 +1,6 @@
 import type { JobSummaryDto } from '@jobtrack/shared';
 import { EXPERIENCE_LEVEL_LABELS, REMOTE_MODE_LABELS } from '@jobtrack/shared';
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,8 +14,14 @@ interface JobCardProps {
   job: JobSummaryDto;
 }
 
-/** Carte de résultat (spec §2/§7) : titre, entreprise, lieu, badges, fraîcheur, compétences, actions. */
-export function JobCard({ job }: JobCardProps) {
+/**
+ * Carte de résultat (spec §2/§7) : titre, entreprise, lieu, badges, fraîcheur,
+ * compétences, actions. `memo` : dans la liste, la bascule optimiste d'une
+ * seule carte (`useSaveJob`) ne change la référence que de l'objet `job`
+ * concerné (spec `use-jobs.ts`) — sans `memo`, chaque bascule re-rendrait
+ * inutilement toutes les autres cartes de la page.
+ */
+function JobCardComponent({ job }: JobCardProps) {
   const salary = formatSalaryRange(job.salaryMinAnnual, job.salaryMaxAnnual, job.currency);
   const location = formatLocation(job.locationLabel, job.departmentCode);
   // Les compétences exigées passent déjà en premier côté API (spec §6) : pas de tri ici.
@@ -44,7 +51,10 @@ export function JobCard({ job }: JobCardProps) {
           (job.remoteModeInferred ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge variant="outline">{REMOTE_MODE_LABELS[job.remoteMode]}</Badge>
+                {/* `<button>` plutôt que le badge lui-même : un `<span>` n'est jamais focusable/atteignable au clavier. */}
+                <button type="button" className="cursor-default rounded-full">
+                  <Badge variant="outline">{REMOTE_MODE_LABELS[job.remoteMode]}</Badge>
+                </button>
               </TooltipTrigger>
               <TooltipContent>Télétravail mentionné dans l&apos;annonce</TooltipContent>
             </Tooltip>
@@ -74,3 +84,5 @@ export function JobCard({ job }: JobCardProps) {
     </Card>
   );
 }
+
+export const JobCard = memo(JobCardComponent);

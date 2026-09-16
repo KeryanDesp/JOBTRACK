@@ -175,11 +175,21 @@ describe('JobsPage', () => {
     expect(await screen.findByText(/France Travail ne répond pas\./)).toBeInTheDocument();
   });
 
-  it('affiche l_etat vide avec le bouton de reinitialisation', async () => {
+  it('affiche l_etat vide sans bouton de reinitialisation quand aucun filtre n_est actif', async () => {
     fetchPreferences.mockResolvedValue(EMPTY_PREFS);
     searchJobs.mockResolvedValue(makeList({ items: [], total: 0 }));
 
     renderPage('/jobs');
+
+    expect(await screen.findByText('Aucune offre ne correspond.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Réinitialiser les filtres' })).not.toBeInTheDocument();
+  });
+
+  it('affiche le bouton de reinitialisation dans l_etat vide quand un filtre est actif', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList({ items: [], total: 0 }));
+
+    renderPage('/jobs?contrat=CDI');
 
     expect(await screen.findByText('Aucune offre ne correspond.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Réinitialiser les filtres' })).toBeInTheDocument();

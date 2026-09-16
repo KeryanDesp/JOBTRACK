@@ -21,6 +21,8 @@ const DISABLED_TABS = [
   { value: 'high-priority', label: 'Forte priorité' },
 ] as const;
 
+const DISABLED_HINT = 'Disponible avec le score (tranche 4)';
+
 export function JobTabs({ value, onChange }: JobTabsProps) {
   return (
     <Tabs value={value} onValueChange={(next) => onChange(next as JobTab)}>
@@ -33,13 +35,20 @@ export function JobTabs({ value, onChange }: JobTabsProps) {
         {DISABLED_TABS.map((tab) => (
           <Tooltip key={tab.value}>
             <TooltipTrigger asChild>
-              <span tabIndex={0} className="inline-flex cursor-not-allowed">
+              {/*
+                `role="button" aria-disabled` plutôt qu'un onglet réellement désactivé :
+                un lecteur d'écran doit entendre pourquoi l'action est indisponible
+                (`aria-label` porte l'info-bulle elle-même), pas seulement son libellé.
+                `TabsTrigger disabled` reste seulement pour le rendu visuel (grisé,
+                `pointer-events-none`) — le `<span>` englobant reçoit seul le survol/focus.
+              */}
+              <span role="button" aria-disabled="true" aria-label={DISABLED_HINT} tabIndex={0} className="inline-flex cursor-not-allowed">
                 <TabsTrigger value={tab.value} disabled>
                   {tab.label}
                 </TabsTrigger>
               </span>
             </TooltipTrigger>
-            <TooltipContent>Disponible avec le score (tranche 4)</TooltipContent>
+            <TooltipContent>{DISABLED_HINT}</TooltipContent>
           </Tooltip>
         ))}
       </TabsList>

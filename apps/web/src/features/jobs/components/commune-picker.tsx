@@ -17,24 +17,31 @@ const MAX_COMMUNES = 3;
 /**
  * Combobox de communes (spec §7) : `Popover` + `Input` + listbox maison,
  * autocomplétion via `useCommuneSearch` (anti-rebond 250 ms côté hook).
- * Puces retirables jusqu'à trois lieux ; au-delà, la saisie est désactivée
- * plutôt que d'accepter une quatrième sélection silencieusement ignorée.
+ * Puces retirables jusqu'à trois lieux ; au-delà, la saisie reste
+ * focusable (juste sans effet, `aria-describedby` explique pourquoi) plutôt
+ * que désactivée, ce qui la retirerait de l'ordre de tabulation.
  */
 export function CommunePicker({ value, onChange }: CommunePickerProps) {
   const [inputValue, setInputValue] = useState('');
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const listboxId = useId();
+  const maxHintId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const atMax = value.length >= MAX_COMMUNES;
   const trimmed = inputValue.trim();
   // Sous le max autorisé de caractères, aucune requête n'est déclenchée (le hook l'exige déjà),
-  // mais on force aussi une chaîne vide une fois le maximum de communes atteint : la saisie est
-  // désactivée, inutile de laisser une recherche déjà en vol rouvrir la liste.
+  // mais on force aussi une chaîne vide une fois le maximum de communes atteint : la saisie reste
+  // active mais aucune recherche déjà en vol ne doit rouvrir la liste.
   const searchQuery = useCommuneSearch(atMax ? '' : inputValue);
   const options = searchQuery.data ?? [];
   const open = focused && !atMax && trimmed.length >= 2;
+  const activeOption = activeIndex >= 0 ? options[activeIndex] : undefined;
+
+  function optionId(code: string): string {
+    return `${listboxId}-${code}`;
+  }
 
   function selectCommune(commune: CommuneDto) {
     if (value.some((entry) => entry.code === commune.code)) return;
@@ -46,6 +53,9 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
 
   function removeCommune(code: string) {
     onChange(value.filter((entry) => entry.code !== code));
+    // Le bouton retiré disparaît avec la puce : sans ce renvoi explicite, le focus
+    // tomberait au mieux sur <body>, perdant tout repère clavier.
+    inputRef.current?.focus();
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -81,10 +91,11 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
             aria-expanded={open}
             aria-controls={listboxId}
             aria-autocomplete="list"
+            aria-activedescendant={activeOption ? optionId(activeOption.code) : undefined}
+            aria-describedby={atMax ? maxHintId : undefined}
             autoComplete="off"
             placeholder={atMax ? 'Trois lieux maximum.' : 'Ville, code postal…'}
             value={inputValue}
-            disabled={atMax}
             onChange={(event) => {
               setInputValue(event.target.value);
               setActiveIndex(-1);
@@ -99,7 +110,7 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
           className="w-(--radix-popover-trigger-width) p-1"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
-          <ul id={listboxId} role="listbox" className="max-h-56 space-y-0.5 overflow-auto">
+          <ul id={listboxId} role="listbox" aria-live="polite" className="max-h-56 space-y-0.5 overflow-auto">
             {searchQuery.isFetching && <li className="px-2 py-1.5 text-sm text-muted-foreground">Recherche…</li>}
             {!searchQuery.isFetching && options.length === 0 && (
               <li className="px-2 py-1.5 text-sm text-muted-foreground">Aucune commune trouvée.</li>
@@ -107,6 +118,7 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
             {options.map((commune, index) => (
               <li
                 key={commune.code}
+                id={optionId(commune.code)}
                 role="option"
                 aria-selected={index === activeIndex}
                 className={cn(
@@ -127,7 +139,11 @@ export function CommunePicker({ value, onChange }: CommunePickerProps) {
         </PopoverContent>
       </Popover>
 
-      {atMax && <p className="text-sm text-muted-foreground">Trois lieux maximum.</p>}
+      {atMax && (
+        <p id={maxHintId} className="text-sm text-muted-foreground">
+          Trois lieux maximum.
+        </p>
+      )}
 
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

@@ -53,7 +53,7 @@ describe('CommunePicker', () => {
     expect(screen.getByRole('combobox')).toHaveValue('');
   });
 
-  it('affiche un message et desactive la saisie une fois trois lieux atteints', async () => {
+  it('affiche un message lie par aria-describedby une fois trois lieux atteints, sans desactiver la saisie', async () => {
     searchCommunes.mockResolvedValueOnce([METZ]).mockResolvedValueOnce([NANCY]).mockResolvedValueOnce([PARIS]);
     const user = userEvent.setup();
     renderPicker();
@@ -65,8 +65,26 @@ describe('CommunePicker', () => {
       await waitFor(() => expect(screen.getByRole('combobox')).toHaveValue(''));
     }
 
-    expect(await screen.findByText('Trois lieux maximum.')).toBeInTheDocument();
-    expect(screen.getByRole('combobox')).toBeDisabled();
+    const hint = await screen.findByText('Trois lieux maximum.');
+    const combobox = screen.getByRole('combobox');
+    // Reste focusable (pas `disabled`, qui la retirerait de l'ordre de tabulation) :
+    // le message explique juste pourquoi une nouvelle saisie n'aura pas d'effet.
+    expect(combobox).not.toBeDisabled();
+    expect(combobox).toHaveAttribute('aria-describedby', hint.id);
+  });
+
+  it('renvoie le focus sur le champ de recherche apres le retrait d_une puce', async () => {
+    searchCommunes.mockResolvedValue([METZ]);
+    const user = userEvent.setup();
+    renderPicker();
+
+    await user.type(screen.getByRole('combobox'), 'Metz');
+    const option = await screen.findByRole('option', { name: /Metz/ });
+    await user.click(option);
+
+    await user.click(await screen.findByRole('button', { name: 'Retirer Metz' }));
+
+    expect(screen.getByRole('combobox')).toHaveFocus();
   });
 
   it('affiche un message quand aucune commune ne correspond', async () => {

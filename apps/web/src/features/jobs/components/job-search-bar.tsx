@@ -60,7 +60,14 @@ export function JobSearchBar({ q, distance, communes, onCommunesResolved, onSear
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+    // Collante sur mobile seulement (spec §7) : les critères de recherche restent
+    // atteignables en scrollant une longue liste, sous l'en-tête de l'application (qui,
+    // lui, défile normalement) plutôt que fixée par-dessus. Redevient statique dès `md`,
+    // où la barre est déjà visible en permanence au-dessus des filtres.
+    <form
+      onSubmit={handleSubmit}
+      className="sticky top-0 z-20 -mx-4 flex flex-wrap items-end gap-3 bg-background/95 px-4 py-3 backdrop-blur-sm md:static md:z-auto md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none"
+    >
       <div className="min-w-48 flex-1 space-y-2">
         <Label htmlFor="job-search-q">Mots-clés</Label>
         <Input

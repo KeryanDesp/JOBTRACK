@@ -21,12 +21,16 @@ interface JobListProps {
   isPlaceholderData: boolean;
   onRetry: () => void;
   onPageChange: (page: number) => void;
-  onResetFilters: () => void;
+  /** `undefined` quand aucun filtre n'est actif : rien à réinitialiser, le bouton disparaît. */
+  onResetFilters: (() => void) | undefined;
 }
 
 /**
  * Numéros de page à afficher (≤ 7, avec ellipses) : toujours la première, la
- * dernière, et jusqu'à une page de part et d'autre de la page courante.
+ * dernière, et jusqu'à une page de part et d'autre de la page courante. Un
+ * seul numéro manquant entre deux pages conservées (écart de 2) est affiché
+ * directement plutôt que remplacé par une ellipse, qui n'a de sens que pour
+ * représenter plusieurs pages sautées à la fois.
  */
 function pageNumbers(current: number, total: number): (number | 'ellipsis')[] {
   if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
@@ -37,7 +41,11 @@ function pageNumbers(current: number, total: number): (number | 'ellipsis')[] {
   const result: (number | 'ellipsis')[] = [];
   let previous = 0;
   for (const page of sorted) {
-    if (previous !== 0 && page - previous > 1) result.push('ellipsis');
+    if (previous !== 0) {
+      const gap = page - previous;
+      if (gap === 2) result.push(previous + 1);
+      else if (gap > 2) result.push('ellipsis');
+    }
     result.push(page);
     previous = page;
   }
@@ -67,7 +75,7 @@ export function JobList({ data, isPending, isError, isPlaceholderData, onRetry, 
         icon={SearchX}
         title="Aucune offre ne correspond."
         description="Élargissez le rayon ou retirez un filtre."
-        action={{ label: 'Réinitialiser les filtres', onClick: onResetFilters }}
+        action={onResetFilters ? { label: 'Réinitialiser les filtres', onClick: onResetFilters } : undefined}
       />
     );
   }

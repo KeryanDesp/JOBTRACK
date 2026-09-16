@@ -5,7 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jobKeys } from '../lib/query-keys';
-import { useCommuneSearch, useJob, useJobSearch, useJobsCapabilities, useSavedJobs, useSaveJob } from './use-jobs';
+import { useCommuneSearch, useJob, useJobSearch, useJobsCapabilities, useSavedJobs, useSaveJob, type RefreshRef } from './use-jobs';
 
 const saveJob = vi.hoisted(() => vi.fn());
 const unsaveJob = vi.hoisted(() => vi.fn());
@@ -287,6 +287,34 @@ describe('useJobSearch', () => {
 
     await waitFor(() => expect(result.current.data).toEqual(listB));
     expect(result.current.isPlaceholderData).toBe(false);
+  });
+
+  it('envoie refresh:true uniquement lors du refetch explicite via refreshRef, jamais au changement de filtre suivant', async () => {
+    searchJobs.mockResolvedValue(makeList([]));
+    const client = makeClient();
+    const refreshRef: RefreshRef = { current: false };
+
+    const { result, rerender } = renderHook(({ query }: { query: JobSearchQuery }) => useJobSearch(query, { refreshRef }), {
+      wrapper: wrapperFor(client),
+      initialProps: { query: jobSearchQuerySchema.parse({ q: 'a' }) },
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(searchJobs).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'a', refresh: false }));
+
+    // « Actualiser » : posé juste avant `refetch()`, comme le fait `jobs-page.tsx`.
+    refreshRef.current = true;
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(searchJobs).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'a', refresh: true }));
+    // Consommé : la ref ne reste pas armée pour la requête suivante.
+    expect(refreshRef.current).toBe(false);
+
+    // Un changement de filtre (nouvelle clé de cache) juste après ne doit jamais
+    // hériter du `refresh: true` de l'actualisation précédente.
+    rerender({ query: jobSearchQuerySchema.parse({ q: 'b' }) });
+    await waitFor(() => expect(searchJobs).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'b', refresh: false })));
   });
 });
 

@@ -27,10 +27,39 @@ export function useJobsCapabilities() {
   });
 }
 
-export function useJobSearch(query: JobSearchQuery, options: { enabled?: boolean } = {}) {
+/** Ref mutable dont `useJobSearch` consomme le contenu (voir `consumeRefreshFlag`). */
+export interface RefreshRef {
+  current: boolean;
+}
+
+export interface UseJobSearchOptions {
+  enabled?: boolean;
+  /**
+   * Posée à `true` par l'appelant juste avant `refetch()` (spec §2 : « Actualiser »)
+   * pour forcer une resynchronisation explicite auprès de France Travail. `refresh`
+   * est volontairement absent de `jobKeys.search` (voir `lib/query-keys.ts`) : sans
+   * cette ref, changer uniquement `refresh` ne produirait ni nouvelle clé de cache ni
+   * nouvel appel — `refetch()` est ce qui déclenche réellement la requête, et cette ref
+   * est ce qui lui fait porter `refresh: true` une seule fois.
+   */
+  refreshRef?: RefreshRef;
+}
+
+/**
+ * Consomme le drapeau de rafraîchissement forcé : lu puis immédiatement remis à
+ * `false`, pour qu'un changement de filtre ultérieur (qui déclenche sa propre requête
+ * via une nouvelle clé de cache) ne rejoue jamais ce `refresh: true`.
+ */
+function consumeRefreshFlag(ref: RefreshRef | undefined): boolean {
+  if (!ref?.current) return false;
+  ref.current = false;
+  return true;
+}
+
+export function useJobSearch(query: JobSearchQuery, options: UseJobSearchOptions = {}) {
   return useQuery({
     queryKey: jobKeys.search(query),
-    queryFn: () => searchJobs(query),
+    queryFn: () => searchJobs({ ...query, refresh: consumeRefreshFlag(options.refreshRef) }),
     enabled: options.enabled,
     // Garde la page précédente affichée pendant le chargement de la suivante
     // (pagination, changement de filtre) plutôt qu'un écran vide entre deux.

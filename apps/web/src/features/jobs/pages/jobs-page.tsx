@@ -6,14 +6,14 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { profileKeys } from '@/features/profile/lib/query-keys';
 import { fetchPreferences, type PreferencesDto } from '@/services/api/profile';
 import { searchCommunes } from '@/services/api/jobs';
-import { JobFilters } from '../components/job-filters';
+import { hasActiveJobFilters, JobFilters } from '../components/job-filters';
 import { JobList } from '../components/job-list';
 import { JobSearchBar, type JobSearchSubmit } from '../components/job-search-bar';
 import { JobSortSelect } from '../components/job-sort-select';
 import { JobTabs } from '../components/job-tabs';
 import { SyncBanner } from '../components/sync-banner';
 import { useJobSearch } from '../hooks/use-jobs';
-import { isDefaultQuery, useJobSearchParams } from '../lib/search-params';
+import { isDefaultQuery, readJobSearchQuery, useJobSearchParams } from '../lib/search-params';
 
 type CommuneMap = Record<string, CommuneDto>;
 
@@ -72,7 +72,8 @@ function subtitleFor(isPending: boolean, total: number | undefined): string {
 export function JobsPage() {
   const [query, setQuery] = useJobSearchParams();
   const [communeMap, setCommuneMap] = useState<CommuneMap>({});
-  const [forceRefresh, setForceRefresh] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRef = useRef(false);
   const appliedPreferencesRef = useRef(false);
 
   const preferencesQuery = useQuery({ queryKey: profileKeys.preferences, queryFn: fetchPreferences });
@@ -91,6 +92,13 @@ export function JobsPage() {
     if (!preferencesQuery.data) return;
     void preferencesToQuery(preferencesQuery.data).then((result) => {
       if (!result) return;
+      // La résolution des communes est asynchrone (spec §7) : pendant son attente,
+      // l'utilisateur a pu taper sa propre recherche. On relit l'URL réelle plutôt que
+      // la fermeture (potentiellement périmée) de `query`, et on abandonne si elle a
+      // bougé — jamais écraser une saisie faite pendant que ce calcul tournait encore.
+      const currentQuery = readJobSearchQuery(new URLSearchParams(window.location.search));
+      if (!isDefaultQuery(currentQuery)) return;
+
       if (result.communes.length > 0) {
         setCommuneMap((previous) => {
           const merged = { ...previous };
@@ -102,15 +110,13 @@ export function JobsPage() {
     });
   }, [preferencesQuery.isPending, preferencesQuery.data, query, setQuery]);
 
-  const effectiveQuery: JobSearchQuery = { ...query, refresh: forceRefresh };
-  const searchResult = useJobSearch(effectiveQuery);
+  const searchResult = useJobSearch(query, { refreshRef });
 
-  // Le rafraîchissement forcé ne vit jamais dans l'URL (spec §7) : une fois la requête posée
-  // (succès ou échec), on revient à `refresh: false` pour que les recherches suivantes
-  // retrouvent le cache normal.
-  useEffect(() => {
-    if (forceRefresh && !searchResult.isFetching) setForceRefresh(false);
-  }, [forceRefresh, searchResult.isFetching]);
+  function handleRefresh() {
+    refreshRef.current = true;
+    setRefreshing(true);
+    void searchResult.refetch().finally(() => setRefreshing(false));
+  }
 
   const resolvedCommunes = query.communes.map((code) => communeMap[code] ?? fallbackCommune(code));
 
@@ -143,6 +149,15 @@ export function JobsPage() {
   }
 
   const total = searchResult.data?.total;
+  const filterValues = {
+    contractTypes: query.contractTypes,
+    remoteModes: query.remoteModes,
+    experienceLevels: query.experienceLevels,
+    salaryMin: query.salaryMin,
+    publishedWithinDays: query.publishedWithinDays,
+    sources: query.sources,
+  };
+  const activeFilters = hasActiveJobFilters(filterValues);
 
   return (
     <TooltipProvider>
@@ -159,25 +174,13 @@ export function JobsPage() {
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <JobFilters
-              value={{
-                contractTypes: query.contractTypes,
-                remoteModes: query.remoteModes,
-                experienceLevels: query.experienceLevels,
-                salaryMin: query.salaryMin,
-                publishedWithinDays: query.publishedWithinDays,
-                sources: query.sources,
-              }}
-              onChange={(patch) => setQuery(patch)}
-            />
+            <JobFilters value={filterValues} onChange={(patch, options) => setQuery(patch, options)} />
             <JobSortSelect value={query.sort} onChange={(sort) => setQuery({ sort })} />
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <JobTabs value={query.tab} onChange={(tab) => setQuery({ tab })} />
-            {searchResult.data && (
-              <SyncBanner sync={searchResult.data.sync} onRefresh={() => setForceRefresh(true)} refreshing={forceRefresh} />
-            )}
+            {searchResult.data && <SyncBanner sync={searchResult.data.sync} onRefresh={handleRefresh} refreshing={refreshing} />}
           </div>
 
           <JobList
@@ -187,7 +190,7 @@ export function JobsPage() {
             isPlaceholderData={searchResult.isPlaceholderData}
             onRetry={() => void searchResult.refetch()}
             onPageChange={handlePageChange}
-            onResetFilters={handleResetFilters}
+            onResetFilters={activeFilters ? handleResetFilters : undefined}
           />
         </div>
       </div>

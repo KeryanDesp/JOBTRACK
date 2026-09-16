@@ -8,7 +8,7 @@ import {
   REMOTE_MODE_LABELS,
 } from '@jobtrack/shared';
 import { SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -17,15 +17,21 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { useDebouncedValue } from '@/hooks/use-debounced-value';
 
 type FilterValues = Pick<
   JobSearchQuery,
   'contractTypes' | 'remoteModes' | 'experienceLevels' | 'salaryMin' | 'publishedWithinDays' | 'sources'
 >;
 
+interface FilterChangeOptions {
+  /** Remplace l'entrée d'historique courante plutôt que d'en empiler une nouvelle (écriture intermédiaire, ex. anti-rebond). */
+  replace?: boolean;
+}
+
 interface JobFiltersProps {
   value: FilterValues;
-  onChange: (patch: Partial<FilterValues>) => void;
+  onChange: (patch: Partial<FilterValues>, options?: FilterChangeOptions) => void;
 }
 
 // Une seule source existe pour l'instant (France Travail, spec §1/§10) : le filtre ne
@@ -34,12 +40,18 @@ interface JobFiltersProps {
 const SOURCE_OPTIONS = JOB_SOURCE_KINDS.map((kind) => ({ value: kind, label: JOB_SOURCE_LABELS[kind] }));
 
 const PUBLISHED_ANY = 'any';
+const SALARY_DEBOUNCE_MS = 400;
 
 function countActiveFilters(value: FilterValues): number {
   let count = value.contractTypes.length + value.remoteModes.length + value.experienceLevels.length + value.sources.length;
   if (value.salaryMin !== undefined) count += 1;
   if (value.publishedWithinDays !== undefined) count += 1;
   return count;
+}
+
+/** Un filtre au moins est actif — utilisé aussi par `jobs-page.tsx` pour n'afficher « Réinitialiser les filtres » que si utile. */
+export function hasActiveJobFilters(value: FilterValues): boolean {
+  return countActiveFilters(value) > 0;
 }
 
 function emptyFilters(): FilterValues {
@@ -81,9 +93,60 @@ function MultiSelectPopover<T extends string>({ label, options, selected, onTogg
   );
 }
 
+interface SalaryMinFieldProps {
+  value: number | undefined;
+  onFieldChange: (patch: Partial<FilterValues>, options?: FilterChangeOptions) => void;
+}
+
+/**
+ * Salaire minimum (spec §7) : anti-rebond 400 ms plutôt qu'une écriture à
+ * chaque frappe — sinon chaque chiffre saisi rejouerait toute la recherche.
+ * `useId()` : ce champ est monté deux fois en même temps dès que le `Sheet`
+ * mobile est ouvert (rangée desktop masquée en CSS, jamais démontée) ; un
+ * `id` fixe dupliquerait `<label for>`/`<input id>` dans le document.
+ */
+function SalaryMinField({ value, onFieldChange }: SalaryMinFieldProps) {
+  const inputId = useId();
+  const [text, setText] = useState(value !== undefined ? String(value) : '');
+  const debounced = useDebouncedValue(text, SALARY_DEBOUNCE_MS);
+
+  // Resynchronise depuis l'extérieur (réinitialisation des filtres, navigation) : un
+  // changement de `value` qui ne vient pas de ce champ doit toujours l'emporter.
+  // Volontairement pas de dépendance sur `text`/`debounced` ici : ne réagit qu'à un
+  // changement externe de `value` (pas de plugin `react-hooks` dans ce projet pour
+  // l'imposer, mais le suivre volontairement évite une boucle texte → valeur → texte).
+  useEffect(() => {
+    setText(value !== undefined ? String(value) : '');
+  }, [value]);
+
+  useEffect(() => {
+    const parsed = debounced === '' ? undefined : Number(debounced);
+    if (parsed === value) return;
+    onFieldChange({ salaryMin: parsed }, { replace: true });
+  }, [debounced]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <Label htmlFor={inputId} className="sr-only">
+        Salaire annuel minimum
+      </Label>
+      <Input
+        id={inputId}
+        type="number"
+        step={1000}
+        min={0}
+        placeholder="Salaire annuel minimum"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        className="w-48"
+      />
+    </div>
+  );
+}
+
 interface FilterFieldsProps {
   value: FilterValues;
-  onFieldChange: (patch: Partial<FilterValues>) => void;
+  onFieldChange: (patch: Partial<FilterValues>, options?: FilterChangeOptions) => void;
 }
 
 /** Champs partagés entre la rangée desktop et le `Sheet` mobile (spec §7). */
@@ -112,24 +175,7 @@ function FilterFields({ value, onFieldChange }: FilterFieldsProps) {
         onToggle={(next) => onFieldChange({ experienceLevels: next })}
       />
 
-      <div className="flex items-center gap-2">
-        <Label htmlFor="job-filter-salary-min" className="sr-only">
-          Salaire annuel minimum
-        </Label>
-        <Input
-          id="job-filter-salary-min"
-          type="number"
-          step={1000}
-          min={0}
-          placeholder="Salaire annuel minimum"
-          value={value.salaryMin ?? ''}
-          onChange={(event) => {
-            const raw = event.target.value;
-            onFieldChange({ salaryMin: raw === '' ? undefined : Number(raw) });
-          }}
-          className="w-48"
-        />
-      </div>
+      <SalaryMinField value={value.salaryMin} onFieldChange={onFieldChange} />
 
       <Select
         value={value.publishedWithinDays === undefined ? PUBLISHED_ANY : String(value.publishedWithinDays)}
