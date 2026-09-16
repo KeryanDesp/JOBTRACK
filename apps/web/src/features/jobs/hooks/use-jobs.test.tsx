@@ -1,30 +1,38 @@
-import type { JobDetailDto, JobListResponseDto, JobSummaryDto } from '@jobtrack/shared';
+import type { JobDetailDto, JobListResponseDto, JobSearchQuery, JobSummaryDto } from '@jobtrack/shared';
+import { jobSearchQuerySchema } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jobKeys } from '../lib/query-keys';
-import { useSaveJob } from './use-jobs';
+import { useCommuneSearch, useJob, useJobSearch, useJobsCapabilities, useSavedJobs, useSaveJob } from './use-jobs';
 
 const saveJob = vi.hoisted(() => vi.fn());
 const unsaveJob = vi.hoisted(() => vi.fn());
+const fetchJob = vi.hoisted(() => vi.fn());
+const fetchJobsCapabilities = vi.hoisted(() => vi.fn());
+const fetchSavedJobs = vi.hoisted(() => vi.fn());
+const searchCommunes = vi.hoisted(() => vi.fn());
+const searchJobs = vi.hoisted(() => vi.fn());
 
-// Seuls `saveJob`/`unsaveJob` sont exercés par ces tests ; les autres exports
-// du module sont mockés à vide pour que l'import ne casse pas, mais ne sont
-// jamais appelés ici (pas de `useQuery` monté dans ces tests).
 vi.mock('@/services/api/jobs', () => ({
   saveJob,
   unsaveJob,
-  fetchJob: vi.fn(),
-  fetchJobsCapabilities: vi.fn(),
-  fetchSavedJobs: vi.fn(),
-  searchCommunes: vi.fn(),
-  searchJobs: vi.fn(),
+  fetchJob,
+  fetchJobsCapabilities,
+  fetchSavedJobs,
+  searchCommunes,
+  searchJobs,
 }));
 
 afterEach(() => {
   saveJob.mockReset();
   unsaveJob.mockReset();
+  fetchJob.mockReset();
+  fetchJobsCapabilities.mockReset();
+  fetchSavedJobs.mockReset();
+  searchCommunes.mockReset();
+  searchJobs.mockReset();
 });
 
 function makeJobSummary(overrides: Partial<JobSummaryDto> = {}): JobSummaryDto {
@@ -89,15 +97,18 @@ function makeList(items: JobSummaryDto[]): JobListResponseDto {
   return { items, total: items.length, page: 1, pageSize: 20, sync: { status: 'ok', syncedAt: null, message: null } };
 }
 
-function renderUseSaveJob(client: QueryClient) {
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
-  return renderHook(() => useSaveJob(), { wrapper });
-}
-
 function makeClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+}
+
+function wrapperFor(client: QueryClient) {
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+}
+
+function renderUseSaveJob(client: QueryClient) {
+  return renderHook(() => useSaveJob(), { wrapper: wrapperFor(client) });
 }
 
 describe('useSaveJob', () => {
@@ -183,5 +194,151 @@ describe('useSaveJob', () => {
     act(() => result.current.mutate({ id: 'job-inconnue', saved: true }));
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it('deux bascules rapprochees sur la meme offre se terminent dans le bon etat final', async () => {
+    saveJob.mockResolvedValue(undefined);
+    unsaveJob.mockResolvedValue(undefined);
+    const client = makeClient();
+    client.setQueryData(jobKeys.detail('job-1'), makeJobDetail({ saved: false }));
+
+    const { result } = renderUseSaveJob(client);
+    act(() => {
+      result.current.mutate({ id: 'job-1', saved: true });
+      result.current.mutate({ id: 'job-1', saved: false });
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryData<JobDetailDto>(jobKeys.detail('job-1'))?.saved).toBe(false);
+    });
+    // La portee (`scope.id`) serialise les deux mutations : chacune s'execute
+    // bien une seule fois, la seconde ne remplace jamais la premiere, elle la
+    // suit.
+    expect(saveJob).toHaveBeenCalledTimes(1);
+    expect(unsaveJob).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useJobsCapabilities', () => {
+  it('renvoie les capacites annoncees par le serveur', async () => {
+    fetchJobsCapabilities.mockResolvedValue({ sources: { franceTravail: true } });
+    const client = makeClient();
+
+    const { result } = renderHook(() => useJobsCapabilities(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.data).toEqual({ sources: { franceTravail: true } }));
+  });
+});
+
+describe('useJob', () => {
+  it('renvoie le detail de l_offre demandee', async () => {
+    const detail = makeJobDetail({ id: 'job-1' });
+    fetchJob.mockResolvedValue(detail);
+    const client = makeClient();
+
+    const { result } = renderHook(() => useJob('job-1'), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.data).toEqual(detail));
+    expect(fetchJob).toHaveBeenCalledWith('job-1');
+  });
+});
+
+describe('useSavedJobs', () => {
+  it('renvoie la liste des offres sauvegardees', async () => {
+    const saved = [makeJobSummary({ id: 'job-1', saved: true })];
+    fetchSavedJobs.mockResolvedValue(saved);
+    const client = makeClient();
+
+    const { result } = renderHook(() => useSavedJobs(), { wrapper: wrapperFor(client) });
+
+    await waitFor(() => expect(result.current.data).toEqual(saved));
+  });
+});
+
+describe('useJobSearch', () => {
+  it('garde les resultats precedents affiches pendant le chargement de la recherche suivante', async () => {
+    const listA = makeList([makeJobSummary({ id: 'job-1' })]);
+    const listB = makeList([makeJobSummary({ id: 'job-2' })]);
+    let resolveB: ((value: JobListResponseDto) => void) | undefined;
+
+    searchJobs.mockImplementation((query: JobSearchQuery) => {
+      if (query.q === 'a') return Promise.resolve(listA);
+      return new Promise<JobListResponseDto>((resolve) => {
+        resolveB = resolve;
+      });
+    });
+
+    const client = makeClient();
+    const { result, rerender } = renderHook(({ query }: { query: JobSearchQuery }) => useJobSearch(query), {
+      wrapper: wrapperFor(client),
+      initialProps: { query: jobSearchQuerySchema.parse({ q: 'a' }) },
+    });
+
+    await waitFor(() => expect(result.current.data).toEqual(listA));
+
+    rerender({ query: jobSearchQuerySchema.parse({ q: 'b' }) });
+
+    // Pendant le chargement de la recherche "b", les donnees de "a" restent
+    // affichees (`placeholderData: keepPreviousData`) plutot qu'un ecran vide.
+    expect(result.current.data).toEqual(listA);
+    expect(result.current.isPlaceholderData).toBe(true);
+
+    act(() => resolveB?.(listB));
+
+    await waitFor(() => expect(result.current.data).toEqual(listB));
+    expect(result.current.isPlaceholderData).toBe(false);
+  });
+});
+
+describe('useCommuneSearch', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  // Chaque test part d'une valeur vide puis passe a la valeur testee : c'est
+  // le changement (comme la frappe au clavier dans `CommunePicker`) qui doit
+  // etre anti-rebondi, pas seulement une valeur deja presente au montage.
+  function renderCommuneSearch(client: QueryClient, initialQ = '') {
+    return renderHook(({ q }: { q: string }) => useCommuneSearch(q), {
+      wrapper: wrapperFor(client),
+      initialProps: { q: initialQ },
+    });
+  }
+
+  it('n_appelle pas searchCommunes avant le delai de 250 ms', () => {
+    searchCommunes.mockResolvedValue([]);
+    const client = makeClient();
+
+    const { rerender } = renderCommuneSearch(client);
+    rerender({ q: 'metz' });
+    void act(() => vi.advanceTimersByTime(100));
+
+    expect(searchCommunes).not.toHaveBeenCalled();
+  });
+
+  it('n_appelle jamais searchCommunes pour un seul caractere', () => {
+    searchCommunes.mockResolvedValue([]);
+    const client = makeClient();
+
+    const { rerender } = renderCommuneSearch(client);
+    rerender({ q: 'm' });
+    void act(() => vi.advanceTimersByTime(250));
+
+    expect(searchCommunes).not.toHaveBeenCalled();
+  });
+
+  it('interroge searchCommunes avec la valeur anti-rebondie une fois le delai ecoule', async () => {
+    searchCommunes.mockResolvedValue([]);
+    const client = makeClient();
+
+    const { rerender } = renderCommuneSearch(client);
+    rerender({ q: 'metz' });
+    void act(() => vi.advanceTimersByTime(250));
+    // Laisse la microtask du declenchement de la requete s'executer sous horloge simulee.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(searchCommunes).toHaveBeenCalledWith('metz');
+    expect(client.getQueryCache().findAll({ queryKey: jobKeys.communes('metz') })).toHaveLength(1);
   });
 });

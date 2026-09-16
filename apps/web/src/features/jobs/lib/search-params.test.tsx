@@ -31,6 +31,11 @@ describe('readJobSearchQuery / writeJobSearchQuery', () => {
     const query = jobSearchQuerySchema.parse({});
     expect(writeJobSearchQuery(query).toString()).toBe('');
   });
+
+  it('n_ecrit jamais refresh dans l_url, meme quand il vaut vrai', () => {
+    const query = jobSearchQuerySchema.parse({ q: 'developpeur', refresh: true });
+    expect(writeJobSearchQuery(query).toString()).not.toContain('refresh');
+  });
 });
 
 describe('isDefaultQuery', () => {
@@ -38,7 +43,7 @@ describe('isDefaultQuery', () => {
     expect(isDefaultQuery(jobSearchQuerySchema.parse({}))).toBe(true);
   });
 
-  it('renvoie faux dès qu_un champ diffère du defaut', () => {
+  it('renvoie faux des qu_un champ differe du defaut', () => {
     expect(isDefaultQuery(jobSearchQuerySchema.parse({ q: 'developpeur' }))).toBe(false);
   });
 });
@@ -83,5 +88,42 @@ describe('useJobSearchParams', () => {
     act(() => result.current[1]({ page: 4 }, { resetPage: true }));
 
     expect(result.current[0].page).toBe(1);
+  });
+
+  it('remet refresh a faux des qu_un appel ne le mentionne pas explicitement', () => {
+    const { result } = renderHook(() => useJobSearchParams(), {
+      wrapper: wrapperAt('/jobs?refresh=1'),
+    });
+
+    expect(result.current[0].refresh).toBe(true);
+
+    act(() => result.current[1]({ q: 'developpeur' }));
+
+    expect(result.current[0].refresh).toBe(false);
+  });
+
+  it('applique deux appels successifs de setQuery dans le meme tick', () => {
+    const { result } = renderHook(() => useJobSearchParams(), {
+      wrapper: wrapperAt('/jobs'),
+    });
+
+    act(() => {
+      result.current[1]({ q: 'developpeur' });
+      result.current[1]({ distance: 20 });
+    });
+
+    expect(result.current[0].q).toBe('developpeur');
+    expect(result.current[0].distance).toBe(20);
+  });
+
+  it('renvoie une fonction setQuery referentiellement stable entre deux rendus', () => {
+    const { result, rerender } = renderHook(() => useJobSearchParams(), {
+      wrapper: wrapperAt('/jobs'),
+    });
+
+    const firstSetQuery = result.current[1];
+    rerender();
+
+    expect(result.current[1]).toBe(firstSetQuery);
   });
 });

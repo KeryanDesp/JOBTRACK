@@ -35,7 +35,13 @@ export function useJobSearch(query: JobSearchQuery, options: { enabled?: boolean
     // Garde la page précédente affichée pendant le chargement de la suivante
     // (pagination, changement de filtre) plutôt qu'un écran vide entre deux.
     placeholderData: keepPreviousData,
-    staleTime: 60_000,
+    // Le serveur ne resynchronise une recherche auprès de France Travail que
+    // toutes les 15 minutes (spec §5, cache `jobs:sync:{hash}`) : revalider
+    // le cache client plus souvent que ça ne changerait rien à la réponse,
+    // juste une requête réseau de plus. 5 minutes reste bien en deçà de ce
+    // cache serveur tout en évitant de garder un résultat affiché trop
+    // longtemps sans jamais le confronter à nouveau au serveur.
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -73,18 +79,31 @@ function findCachedSummary(queryClient: QueryClient, id: string): JobSummaryDto 
   return undefined;
 }
 
+// Clé et portée partagées par toutes les mutations de sauvegarde, quelle que
+// soit l'offre concernée : `scope.id` sérialise les bascules rapprochées
+// (deux clics sur la même carte, ou sur deux cartes à la fois) plutôt que de
+// les laisser courir en parallèle, où la réponse la plus lente pourrait
+// écraser l'état posé par la plus rapide.
+const SAVE_MUTATION_KEY = ['jobs', 'save'] as const;
+const SAVE_MUTATION_SCOPE = { id: 'jobs-save' };
+
 /**
  * Sauvegarde/retrait optimiste (spec §7) : le détail (`jobKeys.detail`),
  * toutes les listes de recherche en cache et la liste des favoris sont mis à
  * jour immédiatement, avant la réponse serveur. Un échec restaure exactement
  * l'état capturé dans `onMutate` (rollback) ; `onSettled` invalide ensuite
  * ces mêmes clés pour que la vérité serveur finisse toujours par s'imposer,
- * succès ou échec.
+ * succès ou échec — mais seulement une fois la dernière mutation en cours
+ * réglée (`isMutating(...) === 1`) : invalider après chaque bascule d'une
+ * série rapprochée réintroduirait brièvement l'état serveur (pas encore à
+ * jour) entre deux optimistic updates.
  */
 export function useSaveJob() {
   const queryClient = useQueryClient();
 
   return useMutation({
+    mutationKey: SAVE_MUTATION_KEY,
+    scope: SAVE_MUTATION_SCOPE,
     mutationFn: ({ id, saved }: SaveJobVariables) => (saved ? saveJob(id) : unsaveJob(id)),
     onMutate: async ({ id, saved }) => {
       await queryClient.cancelQueries({ queryKey: jobKeys.detail(id) });
@@ -123,6 +142,7 @@ export function useSaveJob() {
       if (context.previousSaved) queryClient.setQueryData(jobKeys.saved, context.previousSaved);
     },
     onSettled: (_data, _error, { id }) => {
+      if (queryClient.isMutating({ mutationKey: SAVE_MUTATION_KEY }) !== 1) return;
       void queryClient.invalidateQueries({ queryKey: jobKeys.saved });
       void queryClient.invalidateQueries({ queryKey: SEARCH_PREFIX });
       void queryClient.invalidateQueries({ queryKey: jobKeys.detail(id) });

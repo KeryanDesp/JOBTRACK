@@ -7,10 +7,17 @@ import type { JobSearchQuery } from '@jobtrack/shared';
  * ce tri, une recherche reconstruite depuis l'URL dans un ordre différent de
  * celui posé par `jobs-page.tsx` recréerait une entrée de cache distincte au
  * lieu de réutiliser celle déjà en mémoire.
+ *
+ * `refresh` est retiré de la clé plutôt que normalisé : ce champ ne change
+ * jamais les résultats attendus (mêmes critères), seulement la fraîcheur de
+ * la synchronisation serveur. Le garder dans la clé créerait une deuxième
+ * entrée de cache parallèle pour la même recherche dès qu'on clique sur
+ * « Actualiser », au lieu de mettre à jour l'entrée déjà affichée.
  */
 function normalizeJobSearchQuery(query: JobSearchQuery) {
+  const { refresh: _refresh, ...rest } = query;
   return {
-    ...query,
+    ...rest,
     communes: [...query.communes].sort(),
     contractTypes: [...query.contractTypes].sort(),
     remoteModes: [...query.remoteModes].sort(),

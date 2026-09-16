@@ -39,6 +39,36 @@ describe('formatRelativeTime', () => {
   it('utilise l_heure courante quand now n_est pas fourni', () => {
     expect(formatRelativeTime(new Date().toISOString())).toBe("à l'instant");
   });
+
+  // Bornes exactes (revue) : troncature (jamais un arrondi qui anticipe une
+  // unite pas encore ecoulee) et ecarts futurs ramenes a 0.
+  it('reste a l_instant juste sous la borne de 60 secondes (59 s)', () => {
+    expect(formatRelativeTime(isoBefore(59_000), NOW)).toBe("à l'instant");
+  });
+
+  it('bascule sur les minutes exactement a 60 secondes', () => {
+    expect(formatRelativeTime(isoBefore(60_000), NOW)).toBe('il y a 1 minute');
+  });
+
+  it('tronque a 23 heures a 23 h 59 (n_arrondit pas a 24 heures)', () => {
+    expect(formatRelativeTime(isoBefore(23 * 3_600_000 + 59 * 60_000), NOW)).toBe('il y a 23 heures');
+  });
+
+  it('affiche hier a 47 heures (pas encore 2 jours entiers)', () => {
+    expect(formatRelativeTime(isoBefore(47 * 3_600_000), NOW)).toBe('hier');
+  });
+
+  it('affiche 3 jours a 72 heures', () => {
+    expect(formatRelativeTime(isoBefore(72 * 3_600_000), NOW)).toBe('il y a 3 jours');
+  });
+
+  it('affiche la semaine derniere a exactement 7 jours', () => {
+    expect(formatRelativeTime(isoBefore(7 * 24 * 3_600_000), NOW)).toBe('la semaine dernière');
+  });
+
+  it('ramene un ecart futur a a l_instant plutot qu_un « dans X »', () => {
+    expect(formatRelativeTime(new Date(NOW.getTime() + 3_600_000).toISOString(), NOW)).toBe("à l'instant");
+  });
 });
 
 describe('formatSalaryRange', () => {
@@ -66,8 +96,39 @@ describe('formatSalaryRange', () => {
     expect(formatSalaryRange(45_500, null)).toBe('à partir de 46 k€');
   });
 
-  it('utilise le code de la devise quand elle n_est pas EUR', () => {
-    expect(formatSalaryRange(45_000, 70_000, 'USD')).toBe('45–70 kUSD');
+  it('formate une valeur unique sans tiret quand les deux bornes sont egales', () => {
+    expect(formatSalaryRange(45_000, 45_000)).toBe('45 k€');
+  });
+
+  it('compacte les deux bornes ensemble dès que max atteint 1000, meme si min est plus petit', () => {
+    expect(formatSalaryRange(800, 1_500)).toBe('1–2 k€');
+  });
+
+  it('n_utilise pas le format compact quand max reste sous 1000', () => {
+    expect(formatSalaryRange(200, 800)).toBe('200–800 €');
+  });
+
+  it('utilise Intl.NumberFormat en notation compacte pour une devise non EUR', () => {
+    // Construit l'attendu avec le meme formateur plutot qu'un litteral : les
+    // espaces inserees par `Intl.NumberFormat` (insecables/etroites) ne sont
+    // pas des espaces ordinaires et rendraient un litteral copie-colle fragile.
+    const usd = new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: 'USD',
+      notation: 'compact',
+      maximumFractionDigits: 0,
+    });
+    expect(formatSalaryRange(45_000, 70_000, 'USD')).toBe(`${usd.format(45_000)}–${usd.format(70_000)}`);
+  });
+
+  it('applique la meme regle de devise non EUR a une borne unique', () => {
+    const usd = new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: 'USD',
+      notation: 'compact',
+      maximumFractionDigits: 0,
+    });
+    expect(formatSalaryRange(45_000, null, 'USD')).toBe(`à partir de ${usd.format(45_000)}`);
   });
 });
 
