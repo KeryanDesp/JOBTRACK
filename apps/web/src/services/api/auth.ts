@@ -1,5 +1,6 @@
 import type {
   ActiveSession,
+  ChangePasswordFormInput,
   ForgotPasswordFormInput,
   LoginFormInput,
   RegisterFormInput,
@@ -27,6 +28,9 @@ export const forgotPassword = (body: ForgotPasswordFormInput) =>
 
 export const resetPassword = (body: ResetPasswordFormInput) =>
   apiRequest<void>('/auth/reset-password', { method: 'POST', body: JSON.stringify(body) });
+
+export const changePassword = (body: ChangePasswordFormInput) =>
+  apiRequest<void>('/auth/password', { method: 'PATCH', body: JSON.stringify(body) });
 
 export const fetchSessions = () => apiRequest<ActiveSession[]>('/auth/sessions');
 
