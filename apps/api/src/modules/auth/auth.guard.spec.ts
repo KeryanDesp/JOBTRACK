@@ -56,6 +56,7 @@ const STORED_USER: SessionUser = {
   email: 'utilisateur@jobtrack.local',
   firstName: 'Utilisateur',
   lastName: 'Test',
+  onboardingCompleted: false,
 };
 
 beforeEach(() => {
