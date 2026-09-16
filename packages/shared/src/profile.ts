@@ -1,26 +1,31 @@
 import { z } from 'zod';
 
 /**
- * Texte optionnel de formulaire. `''` signifie « effacer » et devient `null`
- * (colonne nullable) ; une clé absente reste `undefined` (inchangée).
- * `'   '` est aussi traité comme une effacement : le `.trim()` de la branche
- * chaîne produit `''`, que la transformation reconnaît ensuite.
+ * Texte optionnel de formulaire. `''` ou `null` signifient « effacer » et
+ * deviennent `null` (colonne nullable) ; une clé absente reste `undefined`
+ * (inchangée). `'   '` est aussi traité comme une effacement : le `.trim()`
+ * de la branche chaîne produit `''`, que la transformation reconnaît ensuite.
+ * `null` est accepté en entrée (élargissement — la sortie reste inchangée)
+ * pour qu'un brouillon d'extraction de CV, qui émet `null` plutôt que `''`
+ * pour un champ vide, s'applique directement avec ce même schéma.
  */
-const optionalText = (max: number) =>
+export const optionalText = (max: number) =>
   z
-    .union([z.literal(''), z.string().trim().max(max, `Maximum ${max} caractères.`)])
+    .union([z.literal(''), z.null(), z.string().trim().max(max, `Maximum ${max} caractères.`)])
     .optional()
-    .transform((value) => (value === '' ? null : value));
+    .transform((value) => (value === '' || value === null ? null : value));
 
 /**
- * URL optionnelle de formulaire : mêmes règles que optionalText (`''` → `null`,
- * absente → `undefined`), avec validation d'URL et un schéma restreint à http(s) sur
- * la branche non vide — un `javascript:` ou `data:` bien formé pour `new URL()` mais
- * dangereux une fois affiché en lien cliquable ne doit jamais être accepté.
+ * URL optionnelle de formulaire : mêmes règles que optionalText (`''` ou `null`
+ * → `null`, absente → `undefined`), avec validation d'URL et un schéma restreint
+ * à http(s) sur la branche non vide — un `javascript:` ou `data:` bien formé
+ * pour `new URL()` mais dangereux une fois affiché en lien cliquable ne doit
+ * jamais être accepté.
  */
-const optionalUrl = z
+export const optionalUrl = z
   .union([
     z.literal(''),
+    z.null(),
     z
       .string()
       .max(2000, 'Maximum 2000 caractères.')
@@ -28,7 +33,7 @@ const optionalUrl = z
       .refine((value) => /^https?:$/.test(new URL(value).protocol), 'URL invalide.'),
   ])
   .optional()
-  .transform((value) => (value === '' ? null : value));
+  .transform((value) => (value === '' || value === null ? null : value));
 
 /**
  * Nombre optionnel saisi dans un formulaire. `''` signifie « effacer » et devient
@@ -39,7 +44,7 @@ const optionalUrl = z
  * `z.preprocess` non plus, pour que `z.input` reste `'' | number | string`,
  * exploitable côté React Hook Form.
  */
-const optionalNumber = (max: number) =>
+export const optionalNumber = (max: number) =>
   z
     .union([
       z.literal(''),
@@ -62,7 +67,7 @@ const optionalNumber = (max: number) =>
  * (sémantique PATCH : omis = inchangé). Ne change rien pour les clés déjà
  * absentes ou dont la valeur est définie.
  */
-function omitUndefinedValues<T extends Record<string, unknown>>(value: T): T {
+export function omitUndefinedValues<T extends Record<string, unknown>>(value: T): T {
   const result = { ...value };
   for (const key of Object.keys(result) as (keyof T)[]) {
     if (result[key] === undefined) delete result[key];

@@ -283,11 +283,12 @@ export class AuthController {
       const profile = await google.exchangeCode(code, pending.verifier);
       const user = await this.auth.findOrCreateFromGoogle(profile);
       await this.openSession(user.id, request, reply);
+      // Nouveau compte (ou compte existant n'ayant jamais terminé l'onboarding) :
+      // redirection vers le parcours d'accueil plutôt que directement sur le profil.
+      this.redirectTo(reply, `${env.WEB_ORIGIN}${user.onboardingCompleted ? '/profile' : '/onboarding'}`);
     } catch (error) {
       this.redirectForGoogleError(reply, error);
-      return;
     }
-    this.redirectTo(reply, `${env.WEB_ORIGIN}/profile`);
   }
 
   private requireGoogle(): GoogleService {

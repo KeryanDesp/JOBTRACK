@@ -24,11 +24,11 @@ const LEVEL_LABELS: Record<SkillFormInput['level'] & string, string> = {
 
 const DEFAULT_VALUES: SkillFormInput = { name: '', category: 'TECHNICAL', level: 'INTERMEDIATE' };
 
-function toFormValues(item: CollectionItem<'skills'>): SkillFormInput {
+export function toFormValues(item: CollectionItem<'skills'>): SkillFormInput {
   return { name: item.name, category: item.category, level: item.level };
 }
 
-function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
+export function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
   const {
     register,
     control,

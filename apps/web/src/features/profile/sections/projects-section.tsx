@@ -14,11 +14,12 @@ import type { CollectionItem } from '@/services/api/profile';
  * que le champ HTML les produit), contrairement à `ProjectFormInput` dont le
  * type reflète ce que le schéma accepte (`string[]`).
  */
-type ProjectFormValues = Omit<ProjectFormInput, 'technologies'> & { technologies: string };
+export type ProjectFormValues = Omit<ProjectFormInput, 'technologies'> & { technologies: string };
 
 // `technologies` : chaîne de tags séparés par des virgules côté formulaire,
 // tableau côté schéma. `url`/`description` (optionnels) acceptent déjà `''`.
-function normalize(raw: ProjectFormValues): unknown {
+// Exportée : réutilisée par la revue d'extraction de CV (`extraction-review.tsx`).
+export function normalize(raw: ProjectFormValues): unknown {
   return splitTags(raw, 'technologies');
 }
 
@@ -29,7 +30,7 @@ const DEFAULT_VALUES: ProjectFormValues = {
   technologies: '',
 };
 
-function toFormValues(item: CollectionItem<'projects'>): ProjectFormValues {
+export function toFormValues(item: CollectionItem<'projects'>): ProjectFormValues {
   return {
     name: item.name,
     description: item.description ?? '',
@@ -38,7 +39,7 @@ function toFormValues(item: CollectionItem<'projects'>): ProjectFormValues {
   };
 }
 
-function ProjectFields({ form }: { form: UseFormReturn<ProjectFormValues> }) {
+export function ProjectFields({ form }: { form: UseFormReturn<ProjectFormValues> }) {
   const {
     register,
     formState: { errors },

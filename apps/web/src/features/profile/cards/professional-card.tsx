@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { FormFieldError } from '@/features/auth/components/form-field-error';
 import { ServerErrorAlert } from '@/features/auth/components/server-error-alert';
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
+import { profileKeys } from '@/features/profile/lib/query-keys';
 import { zodResolverWith } from '@/lib/forms';
 import { fetchProfile, updateProfile, type ProfileDto } from '@/services/api/profile';
 
@@ -20,7 +21,6 @@ import { fetchProfile, updateProfile, type ProfileDto } from '@/services/api/pro
 type ProfessionalFormInput = Pick<ProfileFormInput, 'title' | 'summary' | 'yearsExperience'>;
 
 const FIELDS = ['title', 'summary', 'yearsExperience'] as const;
-const PROFILE_QUERY_KEY = ['profile'] as const;
 const SUMMARY_MAX = 2000;
 
 function toFormValues(profile: ProfileDto): ProfessionalFormInput {
@@ -33,7 +33,7 @@ function toFormValues(profile: ProfileDto): ProfessionalFormInput {
 
 export function ProfessionalCard() {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchProfile });
+  const query = useQuery({ queryKey: profileKeys.all, queryFn: fetchProfile });
   const [formAlert, setFormAlert] = useState<string>();
 
   const form = useForm<ProfessionalFormInput, unknown, ProfileInput>({
@@ -59,7 +59,7 @@ export function ProfessionalCard() {
     mutationFn: (body: ProfileFormInput) => updateProfile(body),
     onSuccess: (updated) => {
       toast.success('Enregistré.');
-      queryClient.setQueryData(PROFILE_QUERY_KEY, updated);
+      queryClient.setQueryData(profileKeys.all, updated);
       form.reset(toFormValues(updated));
     },
     onError: (error: unknown) => {

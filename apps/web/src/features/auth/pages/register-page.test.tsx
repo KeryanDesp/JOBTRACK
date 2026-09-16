@@ -1,18 +1,26 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegisterPage } from './register-page';
 
 const register = vi.hoisted(() => vi.fn());
 vi.mock('@/services/api/auth', () => ({ register, startGoogleLogin: vi.fn() }));
 
+function OnboardingProbe() {
+  const location = useLocation();
+  return <p>Route actuelle : {location.pathname}</p>;
+}
+
 function renderPage() {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={['/register']}>
-        <RegisterPage />
+        <Routes>
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/onboarding" element={<OnboardingProbe />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -23,7 +31,13 @@ beforeEach(() => register.mockReset());
 describe('RegisterPage', () => {
   it('soumet les quatre champs et ouvre la session', async () => {
     const user = userEvent.setup();
-    register.mockResolvedValue({ id: '1', email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' });
+    register.mockResolvedValue({
+      id: '1',
+      email: 'ada@example.com',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      onboardingCompleted: false,
+    });
     renderPage();
 
     await user.type(screen.getByLabelText('Prénom'), 'Ada');
@@ -43,5 +57,25 @@ describe('RegisterPage', () => {
         password: 'un-mot-de-passe-de-douze',
       });
     });
+  });
+
+  it('redirige vers l_onboarding apres une inscription reussie', async () => {
+    const user = userEvent.setup();
+    register.mockResolvedValue({
+      id: '1',
+      email: 'ada@example.com',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      onboardingCompleted: false,
+    });
+    renderPage();
+
+    await user.type(screen.getByLabelText('Prénom'), 'Ada');
+    await user.type(screen.getByLabelText('Nom'), 'Lovelace');
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.type(screen.getByLabelText('Mot de passe'), 'un-mot-de-passe-de-douze');
+    await user.click(screen.getByRole('button', { name: 'Créer mon compte' }));
+
+    expect(await screen.findByText('Route actuelle : /onboarding')).toBeInTheDocument();
   });
 });

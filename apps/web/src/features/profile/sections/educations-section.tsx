@@ -11,9 +11,10 @@ import { formatMonthYear } from '@/lib/dates';
 import type { CollectionItem } from '@/services/api/profile';
 
 /** `endDate` reste une chaîne côté formulaire (voir `experiences-section.tsx`). */
-type EducationFormValues = Omit<EducationFormInput, 'endDate'> & { endDate: string };
+export type EducationFormValues = Omit<EducationFormInput, 'endDate'> & { endDate: string };
 
-function normalize(raw: EducationFormValues): unknown {
+// Exportée : réutilisée par la revue d'extraction de CV (`extraction-review.tsx`).
+export function normalize(raw: EducationFormValues): unknown {
   return emptyToNull(raw, ['endDate']);
 }
 
@@ -26,7 +27,7 @@ const DEFAULT_VALUES: EducationFormValues = {
   description: '',
 };
 
-function toFormValues(item: CollectionItem<'educations'>): EducationFormValues {
+export function toFormValues(item: CollectionItem<'educations'>): EducationFormValues {
   return {
     school: item.school,
     degree: item.degree,
@@ -37,7 +38,7 @@ function toFormValues(item: CollectionItem<'educations'>): EducationFormValues {
   };
 }
 
-function EducationFields({ form }: { form: UseFormReturn<EducationFormValues> }) {
+export function EducationFields({ form }: { form: UseFormReturn<EducationFormValues> }) {
   const {
     register,
     formState: { errors },

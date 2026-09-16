@@ -4,9 +4,11 @@ import { ForgotPasswordPage } from '@/features/auth/pages/forgot-password-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
+import { ImportCvPage } from '@/features/cv-import/pages/import-cv-page';
 import { LandingPage } from '@/features/landing/landing-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
+import { OnboardingPage } from '@/features/onboarding/pages/onboarding-page';
 import { ProfilePage } from '@/features/profile/pages/profile-page';
 import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { AppLayout } from '../layouts/app-layout';
@@ -21,16 +23,25 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute />,
     children: [
+      // Hors `AppLayout` (pas de sidebar/navigation pendant l'accueil) mais toujours
+      // sous `ProtectedRoute` : un visiteur non connecté ne doit pas y accéder.
+      { path: '/onboarding', element: <OnboardingPage /> },
+      { path: '/onboarding/:step', element: <OnboardingPage /> },
       {
         element: <AppLayout />,
         // Les autres écrans n'ont pas encore leur implémentation : ils restent sur
         // « Bientôt disponible ». Profil (tâche 15) et Paramètres (tâche 16) sont
         // livrés et remplacent le leur.
-        children: NAV_ITEMS.map((item) => {
-          if (item.to === '/profile') return { path: item.to, element: <ProfilePage /> };
-          if (item.to === '/settings') return { path: item.to, element: <SettingsPage /> };
-          return { path: item.to, element: <ComingSoonPage label={item.label} /> };
-        }),
+        children: [
+          // Sous `AppLayout` comme `/profile`, mais absente de `NAV_ITEMS` (pas d'entrée de
+          // navigation propre : on y accède depuis le bouton « Importer un CV » du profil).
+          { path: '/profile/import', element: <ImportCvPage /> },
+          ...NAV_ITEMS.map((item) => {
+            if (item.to === '/profile') return { path: item.to, element: <ProfilePage /> };
+            if (item.to === '/settings') return { path: item.to, element: <SettingsPage /> };
+            return { path: item.to, element: <ComingSoonPage label={item.label} /> };
+          }),
+        ],
       },
     ],
   },

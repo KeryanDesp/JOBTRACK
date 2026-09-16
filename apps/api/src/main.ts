@@ -12,6 +12,14 @@ async function bootstrap(): Promise<void> {
 
   await app.listen({ port: env.API_PORT, host: '0.0.0.0' });
   Logger.log(`API démarrée sur http://localhost:${env.API_PORT}/api/v1`, 'Bootstrap');
+
+  // Jamais la clé elle-même : seulement si le service IA est disponible.
+  Logger.log(
+    env.ANTHROPIC_API_KEY
+      ? 'Service IA : configuré'
+      : 'Service IA : non configuré (ANTHROPIC_API_KEY absente)',
+    'Bootstrap',
+  );
 }
 
 void bootstrap();

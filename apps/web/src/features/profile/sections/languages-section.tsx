@@ -20,11 +20,11 @@ const LEVEL_LABELS: Record<LanguageFormInput['level'], string> = {
 
 const DEFAULT_VALUES: LanguageFormInput = { name: '', level: 'A1' };
 
-function toFormValues(item: CollectionItem<'languages'>): LanguageFormInput {
+export function toFormValues(item: CollectionItem<'languages'>): LanguageFormInput {
   return { name: item.name, level: item.level };
 }
 
-function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
+export function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
   const {
     register,
     control,

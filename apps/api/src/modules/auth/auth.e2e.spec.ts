@@ -625,7 +625,7 @@ describe('Connexion Google', () => {
     expect(fakeGoogle.exchangeCode).not.toHaveBeenCalled();
   });
 
-  it('cree le compte et ouvre une session au callback', async () => {
+  it('cree le compte, ouvre une session et redirige vers l_onboarding', async () => {
     const { cookieHeader, state } = await startFlow();
     fakeGoogle.exchangeCode.mockResolvedValueOnce(GOOGLE_PROFILE);
 
@@ -636,7 +636,8 @@ describe('Connexion Google', () => {
     });
 
     expect(callback.statusCode).toBe(302);
-    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/profile`);
+    // Nouveau compte : jamais passe par l'onboarding, donc redirection dediee (pas /profile).
+    expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/onboarding`);
     expect(findCookie(callback.headers, 'jt_session')).toContain('jt_session=');
     expect(findCookie(callback.headers, 'jt_csrf')).toContain('jt_csrf=');
     // Le cookie de state, à usage unique, ne doit pas survivre au callback.
@@ -645,7 +646,8 @@ describe('Connexion Google', () => {
     const newCookies = cookiesFrom(callback.headers);
     const me = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: newCookies } });
     expect(me.statusCode).toBe(200);
-    expect(me.json<{ email: string }>().email).toBe(GOOGLE_PROFILE.email);
+    expect(me.json<{ email: string; onboardingCompleted: boolean }>().email).toBe(GOOGLE_PROFILE.email);
+    expect(me.json<{ onboardingCompleted: boolean }>().onboardingCompleted).toBe(false);
   });
 
   it('redirige vers la page de connexion quand google refuse', async () => {
@@ -686,7 +688,8 @@ describe('Connexion Google', () => {
 
     const first = await app.inject({ method: 'GET', url, headers: { cookie: cookieHeader } });
     expect(first.statusCode).toBe(302);
-    expect(first.headers.location).toBe(`${env.WEB_ORIGIN}/profile`);
+    // Nouveau compte : redirection vers l'onboarding (voir le test dedie ci-dessus).
+    expect(first.headers.location).toBe(`${env.WEB_ORIGIN}/onboarding`);
 
     // Rejeu : on renvoie volontairement le même cookie de state (déjà expiré côté navigateur
     // par la réponse précédente) pour simuler un callback intercepté puis rejoué.
@@ -696,11 +699,16 @@ describe('Connexion Google', () => {
     expect(fakeGoogle.exchangeCode).toHaveBeenCalledTimes(1);
   });
 
-  it('relie un compte google a un utilisateur verifie du meme email', async () => {
+  it('relie un compte google a un utilisateur verifie du meme email et le renvoie vers son profil', async () => {
     const email = `e2e-google-verifie-${process.pid}@jobtrack.local`;
     await registerUser(email);
     const registered = await prisma.user.findUniqueOrThrow({ where: { email } });
-    await prisma.user.update({ where: { id: registered.id }, data: { emailVerifiedAt: new Date() } });
+    // Onboarding deja termine par ce compte existant : contrairement a une creation, le
+    // rattachement doit renvoyer vers /profile, pas re-forcer le parcours d'accueil.
+    await prisma.user.update({
+      where: { id: registered.id },
+      data: { emailVerifiedAt: new Date(), onboardingCompletedAt: new Date() },
+    });
 
     const { cookieHeader, state } = await startFlow();
     fakeGoogle.exchangeCode.mockResolvedValueOnce({
@@ -748,6 +756,38 @@ describe('Connexion Google', () => {
 
     expect(callback.statusCode).toBe(302);
     expect(callback.headers.location).toBe(`${env.WEB_ORIGIN}/login?error=google_link`);
+  });
+});
+
+describe('Onboarding', () => {
+  it('termine l_onboarding et le reflete sur /auth/me', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+
+    const before = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: cookieHeader } });
+    expect(before.json<{ onboardingCompleted: boolean }>().onboardingCompleted).toBe(false);
+
+    const complete = await app.inject({
+      method: 'POST',
+      url: '/api/v1/onboarding/complete',
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+    expect(complete.statusCode).toBe(204);
+
+    const after = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: { cookie: cookieHeader } });
+    expect(after.json<{ onboardingCompleted: boolean }>().onboardingCompleted).toBe(true);
+  });
+
+  it('refuse sans jeton csrf', async () => {
+    const { cookieHeader } = await registerUser();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/onboarding/complete',
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('CSRF_MISMATCH');
   });
 });
 

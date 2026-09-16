@@ -18,11 +18,18 @@ coverage/
 playwright-report/
 test-results/
 
-# Documents personnels utilisés comme fixtures locales — jamais versionnés
-fixtures/private/
+# Documents personnels utilisés comme fixtures locales — jamais versionnés (à toute profondeur)
+**/fixtures/private/
 
 # Cache de dépendances Vite
 .vite/
+
+# Fichiers stockes sur disque (CV importes) — jamais versionnes
+# Ancre a la racine : sans le `/` initial, ce motif masquerait aussi
+# apps/api/src/common/storage/ (code source, pas des fichiers uploades).
+/storage/
+# Idem quand l API est lancee depuis apps/api (nest --watch : cwd = apps/api)
+/apps/api/storage/
 
 # Configuration locale de l outil (launch.json)
 .claude/

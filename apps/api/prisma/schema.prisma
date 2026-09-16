@@ -8,15 +8,17 @@ datasource db {
 }
 
 model User {
-  id              String    @id @default(cuid())
-  email           String    @unique
-  passwordHash    String?
-  emailVerifiedAt DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  passwordHash          String?
+  emailVerifiedAt       DateTime?
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   profile       Profile?
   oauthAccounts OAuthAccount[]
+  cvImports     CvImport[]
 }
 
 enum OAuthProvider {
@@ -196,19 +198,48 @@ enum ExperienceLevel {
 }
 
 model JobPreferences {
-  id                String            @id @default(cuid())
-  profileId         String            @unique
+  id                String           @id @default(cuid())
+  profileId         String           @unique
   desiredRoles      String[]
   desiredCategories String[]
   salaryMin         Int?
   salaryMax         Int?
-  currency          String            @default("EUR")
+  currency          String           @default("EUR")
   locations         String[]
-  searchRadiusKm    Int               @default(25)
+  searchRadiusKm    Int              @default(25)
   remoteModes       RemoteMode[]
   contractTypes     ContractType[]
   availability      String?
   experienceLevel   ExperienceLevel?
 
   profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+enum CvImportStatus {
+  PENDING
+  EXTRACTED
+  FAILED
+  APPLIED
+}
+
+model CvImport {
+  id           String         @id @default(cuid())
+  userId       String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String
+  status       CvImportStatus @default(PENDING)
+  extracted    Json?
+  error        String?
+  model        String?
+  inputTokens  Int?
+  outputTokens Int?
+  createdAt    DateTime       @default(now())
+  extractedAt  DateTime?
+  appliedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

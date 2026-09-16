@@ -247,6 +247,7 @@ export class AuthService {
       // register() crée toujours un profil ; le repli vide ne couvre qu'une base incohérente.
       firstName: user.profile?.firstName ?? '',
       lastName: user.profile?.lastName ?? '',
+      onboardingCompleted: user.onboardingCompletedAt !== null,
     };
   }
 }

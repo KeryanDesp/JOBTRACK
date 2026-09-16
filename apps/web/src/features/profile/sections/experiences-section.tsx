@@ -17,13 +17,15 @@ import type { CollectionItem } from '@/services/api/profile';
  * renvoie `''`, jamais `null`), contrairement à `ExperienceFormInput` dont le
  * type reflète ce que le schéma accepte (`string | null | undefined`).
  */
-type ExperienceFormValues = Omit<ExperienceFormInput, 'endDate'> & { endDate: string };
+export type ExperienceFormValues = Omit<ExperienceFormInput, 'endDate'> & { endDate: string };
 
 // `endDate` (nullable, sans branche `''`) a besoin de `null` ; `location` et
 // `description` (texte optionnel) acceptent déjà `''` nativement et n'ont pas
 // besoin d'être convertis (les y convertir enverrait `null`, rejeté par le
 // schéma partagé, cf. `lib/forms.ts`).
-function normalize(raw: ExperienceFormValues): unknown {
+// Exportée : réutilisée par la revue d'extraction de CV (`extraction-review.tsx`)
+// pour normaliser un brouillon édité avant de l'envoyer avec le même schéma.
+export function normalize(raw: ExperienceFormValues): unknown {
   return emptyToNull(raw, ['endDate']);
 }
 
@@ -37,7 +39,7 @@ const DEFAULT_VALUES: ExperienceFormValues = {
   description: '',
 };
 
-function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormValues {
+export function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormValues {
   return {
     company: item.company,
     role: item.role,
@@ -49,7 +51,7 @@ function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormValues
   };
 }
 
-function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormValues> }) {
+export function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormValues> }) {
   const {
     register,
     watch,

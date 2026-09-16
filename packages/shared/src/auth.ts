@@ -73,6 +73,7 @@ export interface SessionUser {
   email: string;
   firstName: string;
   lastName: string;
+  onboardingCompleted: boolean;
 }
 
 export interface ActiveSession {

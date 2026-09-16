@@ -10,11 +10,12 @@ import { formatMonthYear } from '@/lib/dates';
 import type { CollectionItem } from '@/services/api/profile';
 
 /** `expiresAt` reste une chaîne côté formulaire (voir `experiences-section.tsx`). */
-type CertificationFormValues = Omit<CertificationFormInput, 'expiresAt'> & { expiresAt: string };
+export type CertificationFormValues = Omit<CertificationFormInput, 'expiresAt'> & { expiresAt: string };
 
 // `expiresAt` (nullable, sans branche `''`) a besoin de `null` ; `credentialUrl`
 // (URL optionnelle) accepte déjà `''` nativement, comme les champs texte optionnels.
-function normalize(raw: CertificationFormValues): unknown {
+// Exportée : réutilisée par la revue d'extraction de CV (`extraction-review.tsx`).
+export function normalize(raw: CertificationFormValues): unknown {
   return emptyToNull(raw, ['expiresAt']);
 }
 
@@ -26,7 +27,7 @@ const DEFAULT_VALUES: CertificationFormValues = {
   credentialUrl: '',
 };
 
-function toFormValues(item: CollectionItem<'certifications'>): CertificationFormValues {
+export function toFormValues(item: CollectionItem<'certifications'>): CertificationFormValues {
   return {
     name: item.name,
     issuer: item.issuer,
@@ -36,7 +37,7 @@ function toFormValues(item: CollectionItem<'certifications'>): CertificationForm
   };
 }
 
-function CertificationFields({ form }: { form: UseFormReturn<CertificationFormValues> }) {
+export function CertificationFields({ form }: { form: UseFormReturn<CertificationFormValues> }) {
   const {
     register,
     formState: { errors },

@@ -9,3 +9,8 @@ allowBuilds:
   argon2: true
   esbuild: true
   prisma: true
+# Contournement du delai de securite anti-supply-chain de pnpm (minimumReleaseAge) pour
+# la version exacte demandee de ce SDK, trop recemment publiee : verifie, sans cette
+# exclusion `pnpm install --frozen-lockfile` echoue avec ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION.
+minimumReleaseAgeExclude:
+  - '@anthropic-ai/sdk@0.126.0'

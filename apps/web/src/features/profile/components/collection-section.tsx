@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from '@/components/ui/skeleton';
 import { ServerErrorAlert } from '@/features/auth/components/server-error-alert';
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
+import { profileKeys } from '@/features/profile/lib/query-keys';
 import { zodResolverWith } from '@/lib/forms';
 import {
   createItem,
@@ -75,7 +76,7 @@ export function CollectionSection<N extends CollectionName, TValues extends Fiel
   renderFields,
 }: CollectionSectionProps<N, TValues>) {
   const queryClient = useQueryClient();
-  const queryKey = ['profile', name] as const;
+  const queryKey = profileKeys.collection(name);
   const query = useQuery({ queryKey, queryFn: () => fetchCollection(name) });
 
   const [dialogState, setDialogState] = useState<DialogState<N>>(null);
