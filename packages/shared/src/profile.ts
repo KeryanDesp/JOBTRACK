@@ -195,3 +195,23 @@ export type LanguageInput = z.infer<typeof languageSchema>;
 export type CertificationInput = z.infer<typeof certificationSchema>;
 export type ProjectInput = z.infer<typeof projectSchema>;
 export type ReorderInput = z.infer<typeof reorderSchema>;
+
+/**
+ * Les types ci-dessus (`z.infer` = type de *sortie*) décrivent ce que Zod
+ * produit après validation — champs par défaut posés (`category`,
+ * `isCurrent`, `technologies`…), `''` déjà transformé en `null`. Ils ne
+ * conviennent pas pour typer ce qu'un formulaire envoie : un champ avec
+ * `.default()` y est optionnel en entrée mais obligatoire en sortie, et un
+ * champ texte optionnel y accepte encore `''`. Les types `*FormInput`
+ * (`z.input`) couvrent ce cas : « ce que le formulaire envoie », par
+ * opposition à « ce que l'API renvoie ».
+ */
+export type ProfileFormInput = z.input<typeof profileSchema>;
+export type JobPreferencesFormInput = z.input<typeof jobPreferencesSchema>;
+export type ExperienceFormInput = z.input<typeof experienceSchema>;
+export type EducationFormInput = z.input<typeof educationSchema>;
+export type SkillFormInput = z.input<typeof skillSchema>;
+export type LanguageFormInput = z.input<typeof languageSchema>;
+export type CertificationFormInput = z.input<typeof certificationSchema>;
+export type ProjectFormInput = z.input<typeof projectSchema>;
+export type ReorderFormInput = z.input<typeof reorderSchema>;

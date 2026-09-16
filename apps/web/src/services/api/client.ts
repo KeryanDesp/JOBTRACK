@@ -1,4 +1,7 @@
 // Sans le `/` final : Fastify ne tolère pas les doubles barres, `//health` renverrait 404.
+// L'API doit partager le site (domaine enregistrable) du SPA : le cookie `jt_csrf`
+// lisible ici est posé par l'API — sur un autre domaine, l'en-tête CSRF ne serait
+// jamais envoyé.
 const BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace(/\/+$/, '');
 
 const GENERIC_MESSAGE = 'Une erreur est survenue. Veuillez réessayer.';
@@ -35,6 +38,8 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     typeof value === 'object' &&
     value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0 &&
     Object.values(value).every((entry) => typeof entry === 'string')
   );
 }
@@ -42,6 +47,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 const MUTATING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
 export function readCsrfCookie(): string | null {
+  // Alphabet base64url : jamais besoin de décoder pour le poser dans l'en-tête.
   return /(?:^|;\s*)jt_csrf=([^;]+)/.exec(document.cookie)?.[1] ?? null;
 }
 

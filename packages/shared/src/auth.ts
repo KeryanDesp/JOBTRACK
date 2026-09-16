@@ -50,6 +50,19 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
+/**
+ * Types de sortie (`z.infer`) ci-dessus : « ce que l'API renvoie » comme
+ * forme validée. Les types `*FormInput` (`z.input`) ci-dessous décrivent
+ * « ce que le formulaire envoie » avant validation — identiques ici en
+ * pratique (aucun défaut ni transformation sur ces schémas), mais nommés à
+ * part pour rester cohérents avec `profile.ts` si ces schémas évoluent.
+ */
+export type RegisterFormInput = z.input<typeof registerSchema>;
+export type LoginFormInput = z.input<typeof loginSchema>;
+export type ForgotPasswordFormInput = z.input<typeof forgotPasswordSchema>;
+export type ResetPasswordFormInput = z.input<typeof resetPasswordSchema>;
+export type ChangePasswordFormInput = z.input<typeof changePasswordSchema>;
+
 export interface SessionUser {
   id: string;
   email: string;

@@ -1,5 +1,6 @@
 import type { SessionUser } from '@jobtrack/shared';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { ApiError } from '@/services/api/client';
 import { fetchMe } from '@/services/api/auth';
 
@@ -23,7 +24,10 @@ export function useSession(): UseQueryResult<SessionUser | null> {
       }
     },
     staleTime: 5 * 60_000,
-    retry: false,
+    // Pas de `retry: false` ici : on hérite de `shouldRetry` (query-provider.tsx),
+    // qui ne retente déjà jamais un 4xx (dont notre propre 401, traité ci-dessus
+    // avant que la politique de nouvelle tentative n'entre en jeu) et retente deux
+    // fois une panne réseau ou un 5xx.
   });
 }
 
@@ -33,5 +37,8 @@ export function useSession(): UseQueryResult<SessionUser | null> {
  */
 export function useSetSession(): (user: SessionUser | null) => void {
   const queryClient = useQueryClient();
-  return (user: SessionUser | null) => queryClient.setQueryData(SESSION_QUERY_KEY, user);
+  return useCallback(
+    (user: SessionUser | null) => queryClient.setQueryData(SESSION_QUERY_KEY, user),
+    [queryClient],
+  );
 }

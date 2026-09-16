@@ -1,27 +1,31 @@
 import type {
   ActiveSession,
-  ForgotPasswordInput,
-  LoginInput,
-  RegisterInput,
-  ResetPasswordInput,
+  ForgotPasswordFormInput,
+  LoginFormInput,
+  RegisterFormInput,
+  ResetPasswordFormInput,
   SessionUser,
 } from '@jobtrack/shared';
 import { apiRequest } from './client';
 
-export const login = (body: LoginInput) =>
+// Corps de requête typés avec le type d'entrée Zod (`*FormInput` : « ce que le
+// formulaire envoie »), pas le type de sortie (« ce que l'API renvoie ») —
+// identiques ici en pratique, mais l'appelant doit pouvoir passer ce qu'un
+// formulaire produit avant validation, pas après.
+export const login = (body: LoginFormInput) =>
   apiRequest<SessionUser>('/auth/login', { method: 'POST', body: JSON.stringify(body) });
 
-export const register = (body: RegisterInput) =>
+export const register = (body: RegisterFormInput) =>
   apiRequest<SessionUser>('/auth/register', { method: 'POST', body: JSON.stringify(body) });
 
 export const logout = () => apiRequest<void>('/auth/logout', { method: 'POST' });
 
 export const fetchMe = () => apiRequest<SessionUser>('/auth/me');
 
-export const forgotPassword = (body: ForgotPasswordInput) =>
+export const forgotPassword = (body: ForgotPasswordFormInput) =>
   apiRequest<{ message: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(body) });
 
-export const resetPassword = (body: ResetPasswordInput) =>
+export const resetPassword = (body: ResetPasswordFormInput) =>
   apiRequest<void>('/auth/reset-password', { method: 'POST', body: JSON.stringify(body) });
 
 export const fetchSessions = () => apiRequest<ActiveSession[]>('/auth/sessions');
