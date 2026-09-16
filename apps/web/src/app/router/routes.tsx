@@ -7,6 +7,7 @@ import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { LandingPage } from '@/features/landing/landing-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
+import { ProfilePage } from '@/features/profile/pages/profile-page';
 import { AppLayout } from '../layouts/app-layout';
 import { ProtectedRoute } from './protected-route';
 
@@ -21,12 +22,13 @@ export const router = createBrowserRouter([
     children: [
       {
         element: <AppLayout />,
-        // Le profil et les paramètres n'ont pas encore leur écran (tâches 15-16) :
-        // ils restent sur « Bientôt disponible » comme le reste de NAV_ITEMS.
-        children: NAV_ITEMS.map((item) => ({
-          path: item.to,
-          element: <ComingSoonPage label={item.label} />,
-        })),
+        // Les autres écrans n'ont pas encore leur implémentation : ils restent sur
+        // « Bientôt disponible ». Le profil est livré (tâche 15) et remplace le sien.
+        children: NAV_ITEMS.map((item) =>
+          item.to === '/profile'
+            ? { path: item.to, element: <ProfilePage /> }
+            : { path: item.to, element: <ComingSoonPage label={item.label} /> },
+        ),
       },
     ],
   },
