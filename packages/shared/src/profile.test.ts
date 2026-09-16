@@ -100,6 +100,10 @@ describe('profileSchema', () => {
     const untouched = profileSchema.parse({ firstName: 'A', lastName: 'B' });
     expect('phone' in untouched).toBe(false);
   });
+
+  it('accepte aussi null en entree pour effacer un champ texte optionnel', () => {
+    expect(profileSchema.parse({ firstName: 'A', lastName: 'B', phone: null }).phone).toBeNull();
+  });
 });
 
 describe('optionalUrl (via projectSchema.url)', () => {
@@ -115,6 +119,10 @@ describe('optionalUrl (via projectSchema.url)', () => {
   it('efface un champ url vide et laisse une cle absente inchangee', () => {
     expect(projectSchema.parse({ name: 'X', url: '' }).url).toBeNull();
     expect(projectSchema.parse({ name: 'X' }).url).toBeUndefined();
+  });
+
+  it('accepte aussi null en entree pour effacer l_url', () => {
+    expect(projectSchema.parse({ name: 'X', url: null }).url).toBeNull();
   });
 });
 
