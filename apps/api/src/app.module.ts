@@ -6,9 +6,10 @@ import { RateLimitGuard } from './common/rate-limit.guard';
 import { AuthGuard } from './modules/auth/auth.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 @Module({
-  imports: [CommonModule, AuthModule, HealthModule],
+  imports: [CommonModule, AuthModule, ProfileModule, HealthModule],
   providers: [
     // L'ordre compte : débit d'abord (avant tout travail coûteux), puis session, puis CSRF.
     { provide: APP_GUARD, useClass: RateLimitGuard },
