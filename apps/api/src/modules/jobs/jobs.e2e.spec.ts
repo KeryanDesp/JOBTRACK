@@ -14,7 +14,7 @@ import { configureApp, createAdapter } from '../../app.setup';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
 import { SessionService } from '../auth/session.service';
-import { CommuneService } from './commune.service';
+import { normalizeForKey } from './lib/text';
 import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, type JobSourceConnector } from './sources/job-source.connector';
 import { SourceUnavailableError } from './sources/source.errors';
@@ -220,11 +220,22 @@ beforeAll(async () => {
   redis = app.get(RedisService);
   jobSync = app.get(JobSyncService);
 
-  // Chargé une seule fois pour toute la suite (jamais dans `beforeEach`) : le référentiel
-  // des communes est une donnée de développement légitime et durable (revue sécurité), pas
-  // un artefact de test à revider — `jobs:communes:loadedAt` et les lignes `Commune`
-  // insérées ne sont donc jamais nettoyés par cette suite.
-  await app.get(CommuneService).ensureLoaded();
+  // Communes de test insérées directement (une fois pour toute la suite, jamais dans
+  // `beforeEach`), sans passer par `ensureLoaded()` : celui-ci est gardé par la clé Redis
+  // `jobs:communes:loadedAt` (30 jours), que cette suite ne touche jamais — s'y fier
+  // rendrait les tests dépendants de l'état de la Redis de développement (clé posée par
+  // une exécution précédente alors que les lignes ont été nettoyées → référentiel vide).
+  const sampleCommunes = await fake.listCommunes();
+  await prisma.commune.createMany({
+    data: sampleCommunes.map((commune) => ({
+      code: commune.code,
+      name: commune.name,
+      nameNormalized: normalizeForKey(commune.name),
+      postalCode: commune.postalCode,
+      departmentCode: commune.departmentCode,
+    })),
+    skipDuplicates: true,
+  });
 });
 
 beforeEach(async () => {
