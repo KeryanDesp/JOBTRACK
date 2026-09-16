@@ -102,3 +102,18 @@ export function formatLocation(label: string | null, departmentCode: string | nu
   if (departmentCode !== null) return `Département ${departmentCode}`;
   return 'Lieu non précisé';
 }
+
+// Insensible à la casse (`HTTPS://…` reste valide) : seule condition avant de
+// poser un `href`/`src` externe (logo, site de l'entreprise, lien de source),
+// jamais un autre schéma (`javascript:`, `data:`...) qui serait dangereux à
+// exposer tel quel (spec §5/§8).
+const HTTP_URL_REGEX = /^https?:\/\//i;
+
+/**
+ * Garde de type partagée (revue f9bf90c, point 7) : auparavant dupliquée dans
+ * `job-detail-header.tsx`, `job-sources.tsx` et `job-detail-page.tsx`, chacune
+ * avec une casse de signature légèrement différente.
+ */
+export function isHttpUrl(value: string | null | undefined): value is string {
+  return typeof value === 'string' && HTTP_URL_REGEX.test(value);
+}

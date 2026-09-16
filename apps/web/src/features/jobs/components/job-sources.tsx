@@ -2,14 +2,10 @@ import type { JobSourceDto } from '@jobtrack/shared';
 import { JOB_SOURCE_LABELS } from '@jobtrack/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { isHttpUrl } from '../lib/format';
 
 interface JobSourcesProps {
   sources: JobSourceDto[];
-}
-
-/** `http(s)` uniquement : jamais de lien externe vers un schéma non fiable (spec §5/§8). */
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//.test(value);
 }
 
 /**
@@ -52,7 +48,12 @@ export function JobSources({ sources }: JobSourcesProps) {
               </div>
               {isHttpUrl(source.url) && (
                 <Button asChild variant="outline" size="sm">
-                  <a href={source.url} target="_blank" rel="noopener noreferrer">
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Voir l'annonce sur ${JOB_SOURCE_LABELS[source.kind]}`}
+                  >
                     Voir l&apos;annonce
                   </a>
                 </Button>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -17,6 +17,9 @@ const COLLAPSE_LIMIT = 1_200;
  */
 export function JobDescription({ description }: JobDescriptionProps) {
   const [expanded, setExpanded] = useState(false);
+  // Identifiant stable par instance (revue f9bf90c, point 2) : lie le bouton de
+  // repli/dépli au paragraphe qu'il contrôle pour les lecteurs d'écran.
+  const textId = useId();
   const trimmed = description.trim();
   if (trimmed === '') return null;
 
@@ -29,9 +32,18 @@ export function JobDescription({ description }: JobDescriptionProps) {
         <CardTitle>Description</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="whitespace-pre-line text-sm">{shown}</p>
+        <p id={textId} className="whitespace-pre-line text-sm">
+          {shown}
+        </p>
         {isLong && (
-          <Button type="button" variant="link" className="h-auto p-0" onClick={() => setExpanded((value) => !value)}>
+          <Button
+            type="button"
+            variant="link"
+            className="h-auto p-0"
+            aria-expanded={expanded}
+            aria-controls={textId}
+            onClick={() => setExpanded((value) => !value)}
+          >
             {expanded ? 'Voir moins' : 'Voir plus'}
           </Button>
         )}

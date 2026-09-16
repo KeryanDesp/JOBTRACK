@@ -1,4 +1,5 @@
 import type { JobDetailDto } from '@jobtrack/shared';
+import { FileQuestion } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { ErrorState } from '@/components/shared/error-state';
 import { Alert, AlertTitle } from '@/components/ui/alert';
@@ -12,7 +13,7 @@ import { JobDetailHeader } from '../components/job-detail-header';
 import { JobRequirements } from '../components/job-requirements';
 import { JobSources } from '../components/job-sources';
 import { useJob } from '../hooks/use-jobs';
-import { formatRelativeTime } from '../lib/format';
+import { formatRelativeTime, isHttpUrl } from '../lib/format';
 
 /** Squelette de chargement (spec tâche 9) : en-tête puis deux blocs de section. */
 function DetailSkeleton() {
@@ -35,9 +36,31 @@ function DetailSkeleton() {
 /** Retour vers la liste (spec tâche 9) : toujours `/jobs`, jamais l'historique (`-1`), qui casserait un lien direct sans page précédente. */
 function BackToJobsLink() {
   return (
-    <Link to="/jobs" className="inline-block text-sm text-muted-foreground hover:text-foreground">
-      ← Offres
+    <Link to="/jobs" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      {/* Décoratif (revue f9bf90c, point 10) : le lecteur d'écran n'a besoin que du texte « Offres ». */}
+      <span aria-hidden="true">←</span>
+      Offres
     </Link>
+  );
+}
+
+/**
+ * Bloc dédié 404 (revue f9bf90c, point 3) : un message et un lien de retour,
+ * jamais de « Réessayer » — re-demander le même identifiant produirait à
+ * nouveau un 404, contrairement à `ErrorState` (réservé aux erreurs
+ * transitoires, ci-dessous dans `JobDetailPage`).
+ */
+function NotFoundBlock() {
+  return (
+    <div role="status" className="flex flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+        <FileQuestion className="size-5 text-muted-foreground" />
+      </div>
+      <p className="text-base font-medium">Offre introuvable.</p>
+      <Link to="/jobs" className="mt-6 text-sm font-medium text-primary underline-offset-4 hover:underline">
+        Retour aux offres
+      </Link>
+    </div>
   );
 }
 
@@ -46,7 +69,12 @@ interface ConditionRow {
   value: string;
 }
 
-/** Lignes non nulles des conditions (spec tâche 9) : seules celles renseignées apparaissent. */
+/**
+ * Lignes non nulles des conditions (spec tâche 9) : seules celles renseignées
+ * apparaissent. La « déplacements » de la spec §2 n'a pas encore de champ
+ * dédié dans `JobDetailDto` (revue f9bf90c, point 12) — reportée, pas
+ * oubliée : à ajouter ici quand le contrat partagé la portera.
+ */
 function buildConditionRows(job: JobDetailDto): ConditionRow[] {
   const rows: ConditionRow[] = [];
   if (job.workingTimeLabel) rows.push({ label: 'Durée du travail', value: job.workingTimeLabel });
@@ -81,16 +109,10 @@ export function JobDetailPage() {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
         <BackToJobsLink />
-        <ErrorState
-          message={notFound ? 'Offre introuvable.' : "Impossible de charger l'offre. Réessayez."}
-          onRetry={() => void jobQuery.refetch()}
-        />
-        {notFound && (
-          <div className="text-center">
-            <Link to="/jobs" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
-              Retour aux offres
-            </Link>
-          </div>
+        {notFound ? (
+          <NotFoundBlock />
+        ) : (
+          <ErrorState message="Impossible de charger l'offre. Réessayez." onRetry={() => void jobQuery.refetch()} />
         )}
       </div>
     );
@@ -104,8 +126,14 @@ export function JobDetailPage() {
 
   return (
     <TooltipProvider>
-      {/* `pb-24` réserve la hauteur de la barre d'actions collante mobile (voir `JobDetailHeader`) pour qu'elle ne recouvre jamais la dernière section. */}
-      <div className="mx-auto max-w-3xl space-y-6 pb-24 sm:pb-0">
+      {/*
+        `pb-28` réserve la hauteur de la barre d'actions collante mobile (voir
+        `JobDetailHeader`, revue f9bf90c point 1 : la barre est maintenant
+        positionnée au-dessus d'`AppBottomNav`, elle-même déjà couverte par le
+        `pb-20` du `<main>` de `AppLayout`) pour qu'elle ne recouvre jamais la
+        dernière section.
+      */}
+      <div className="mx-auto max-w-3xl space-y-6 pb-28 sm:pb-0">
         <BackToJobsLink />
 
         {job.expiredAt && (
@@ -162,7 +190,7 @@ export function JobDetailPage() {
             <CardContent className="space-y-2">
               {job.company && <p className="text-sm font-medium">{job.company}</p>}
               {job.companyDescription && <p className="whitespace-pre-line text-sm text-muted-foreground">{job.companyDescription}</p>}
-              {job.companyUrl && /^https?:\/\//.test(job.companyUrl) && (
+              {isHttpUrl(job.companyUrl) && (
                 <a href={job.companyUrl} target="_blank" rel="noopener noreferrer" className="block text-sm text-primary hover:underline">
                   {job.companyUrl}
                 </a>

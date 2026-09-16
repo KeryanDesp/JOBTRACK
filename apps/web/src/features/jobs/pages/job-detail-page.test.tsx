@@ -1,6 +1,6 @@
 import type { JobDetailDto } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,18 +8,24 @@ import { ApiError } from '@/services/api/client';
 import { JobDetailPage } from './job-detail-page';
 
 const fetchJob = vi.hoisted(() => vi.fn());
+const saveJob = vi.hoisted(() => vi.fn());
+const unsaveJob = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/jobs', () => ({
   fetchJob,
-  saveJob: vi.fn(),
-  unsaveJob: vi.fn(),
+  saveJob,
+  unsaveJob,
   fetchJobsCapabilities: vi.fn(),
   fetchSavedJobs: vi.fn(),
   searchCommunes: vi.fn(),
   searchJobs: vi.fn(),
 }));
 
-afterEach(() => fetchJob.mockReset());
+afterEach(() => {
+  fetchJob.mockReset();
+  saveJob.mockReset();
+  unsaveJob.mockReset();
+});
 
 function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
   return {
@@ -114,12 +120,22 @@ describe('JobDetailPage', () => {
     expect(externalLink).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  it('affiche un message d_offre introuvable avec un lien de retour sur une 404', async () => {
+  it('affiche un message d_offre introuvable avec un lien de retour, sans bouton reessayer, sur une 404', async () => {
     fetchJob.mockRejectedValue(new ApiError('Offre introuvable.', 404));
     renderPage();
 
     expect(await screen.findByText('Offre introuvable.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Retour aux offres' })).toHaveAttribute('href', '/jobs');
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).not.toBeInTheDocument();
+  });
+
+  it('garde le bouton reessayer pour une erreur autre qu_une 404', async () => {
+    fetchJob.mockRejectedValue(new ApiError('Panne serveur.', 500));
+    renderPage();
+
+    expect(await screen.findByText("Impossible de charger l'offre. Réessayez.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Réessayer' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Retour aux offres' })).not.toBeInTheDocument();
   });
 
   it('signale une offre qui n_est plus publiee', async () => {
@@ -136,11 +152,39 @@ describe('JobDetailPage', () => {
 
     const showMore = await screen.findByRole('button', { name: 'Voir plus' });
     expect(screen.getByText(/…$/)).toBeInTheDocument();
+    expect(showMore).toHaveAttribute('aria-expanded', 'false');
+    const textId = showMore.getAttribute('aria-controls');
+    expect(textId).toBeTruthy();
+    expect(document.getElementById(textId ?? '')).toHaveTextContent(/…$/);
 
     const user = userEvent.setup();
     await user.click(showMore);
 
-    expect(screen.getByRole('button', { name: 'Voir moins' })).toBeInTheDocument();
+    const showLess = screen.getByRole('button', { name: 'Voir moins' });
+    expect(showLess).toHaveAttribute('aria-expanded', 'true');
+    expect(showLess).toHaveAttribute('aria-controls', textId);
     expect(screen.getByText(longDescription.trim())).toBeInTheDocument();
+  });
+
+  it('bascule sauvegarder/retirer depuis le detail', async () => {
+    saveJob.mockResolvedValue(undefined);
+    // `useSaveJob` invalide et refait la requête du détail une fois la mutation réglée (spec
+    // §7, « vérité serveur ») : un vrai serveur renverrait `saved: true` après la sauvegarde,
+    // d'où le second mock — sans lui, ce test figerait `fetchJob` sur sa réponse initiale et
+    // cette re-synchronisation écraserait la mise à jour optimiste qu'on veut vérifier.
+    fetchJob.mockResolvedValueOnce(makeDetail({ saved: false })).mockResolvedValue(makeDetail({ saved: true }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+    const [saveButton] = screen.getAllByRole('button', { name: 'Sauvegarder' });
+    if (!saveButton) throw new Error('Bouton "Sauvegarder" introuvable.');
+
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Retirer des favoris' })[0]).toHaveAttribute('aria-pressed', 'true');
+    });
+    expect(saveJob).toHaveBeenCalledWith('job-1');
   });
 });
