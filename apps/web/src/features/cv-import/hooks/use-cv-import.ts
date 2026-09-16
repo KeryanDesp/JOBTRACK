@@ -33,8 +33,14 @@ export function useCvCapabilities() {
  */
 export function useCvImport(id: string | null) {
   return useQuery({
-    queryKey: cvImportKeys.detail(id ?? 'none'),
-    queryFn: () => fetchCvImport(id as string),
+    queryKey: cvImportKeys.detail(id),
+    // `enabled: false` empêche déjà tout appel quand `id` est nul ; l'erreur
+    // ci-dessous est un filet de sécurité qui documente cette invariante sans
+    // jamais recourir à un cast pour satisfaire le type de `fetchCvImport`.
+    queryFn: () => {
+      if (id === null) throw new Error('Aucun import de CV en cours.');
+      return fetchCvImport(id);
+    },
     enabled: id !== null,
   });
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useSession } from '@/features/auth/hooks/use-session';
+import { useDeleteCvImport } from '@/features/cv-import/hooks/use-cv-import';
 import { OnboardingLayout } from '../layouts/onboarding-layout';
 import { clearOnboardingImportId, getOnboardingImportId, setOnboardingImportId, setOnboardingResult } from '../lib/storage';
 import { isOnboardingStep, type OnboardingStep } from '../lib/steps';
@@ -22,6 +23,7 @@ export function OnboardingPage() {
   const params = useParams<{ step?: string }>();
   const navigate = useNavigate();
   const { data: user } = useSession();
+  const deleteCvImport = useDeleteCvImport();
   const [importId, setImportId] = useState<string | null>(() => getOnboardingImportId());
 
   const rawStep = params.step ?? 'bienvenue';
@@ -43,10 +45,16 @@ export function OnboardingPage() {
   function handleExtracted(id: string): void {
     setImportId(id);
     setOnboardingImportId(id);
-    goToStep('verification');
+    // `replace: true` : revenir en arrière depuis « vérification » ne doit
+    // jamais renvoyer sur l'écran d'envoi qui vient de réussir.
+    navigate('/onboarding/verification', { replace: true });
   }
 
   function handleReviewBack(): void {
+    // Au mieux : abandonner la vérification jette le brouillon extrait, mais
+    // l'utilisateur ne doit jamais rester bloqué ici pour autant — une panne
+    // réseau sur cette suppression ne doit pas empêcher de revenir à « cv ».
+    if (importId) deleteCvImport.mutate(importId);
     clearOnboardingImportId();
     setImportId(null);
     goToStep('cv');
@@ -66,7 +74,9 @@ export function OnboardingPage() {
           onBack={handleReviewBack}
         />
       )}
-      {step === 'preferences' && <PreferencesStep importId={importId} onNext={() => goToStep('fin')} />}
+      {step === 'preferences' && (
+        <PreferencesStep importId={importId} onNext={() => navigate('/onboarding/fin', { replace: true })} />
+      )}
       {step === 'fin' && <DoneStep />}
     </OnboardingLayout>
   );

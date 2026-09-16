@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { ChevronLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -7,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useCompleteOnboarding } from '@/features/cv-import/hooks/use-cv-import';
 import { StepIndicator } from '../components/step-indicator';
-import type { OnboardingStep } from '../lib/steps';
+import { ONBOARDING_STEPS, type OnboardingStep } from '../lib/steps';
 
 interface OnboardingLayoutProps {
   step: OnboardingStep;
@@ -16,8 +17,10 @@ interface OnboardingLayoutProps {
 
 /**
  * Coquille commune aux cinq étapes de l'accueil : logo, indicateur d'étapes,
- * contenu centré (`max-w-2xl`), « Passer » en haut à droite (masqué sur la
- * dernière étape — rien à passer une fois arrivé). `MotionConfig
+ * contenu centré (`max-w-2xl`), « Précédent » / « Passer » (spec §2). «
+ * Précédent » navigue vers l'étape qui précède `step` dans `ONBOARDING_STEPS`
+ * — masqué sur la première (rien avant) et la dernière (l'accueil est déjà
+ * terminé, revenir en arrière n'a plus de sens). `MotionConfig
  * reducedMotion="user"` est posé une fois pour toute l'app dans `main.tsx` :
  * la transition ci-dessous respecte donc `prefers-reduced-motion` sans code
  * supplémentaire ici. `key={step}` force le remontage de la transition à
@@ -28,6 +31,9 @@ export function OnboardingLayout({ step, children }: OnboardingLayoutProps) {
   const navigate = useNavigate();
   const completeOnboarding = useCompleteOnboarding();
   const [skipOpen, setSkipOpen] = useState(false);
+
+  const currentIndex = ONBOARDING_STEPS.findIndex((entry) => entry.key === step);
+  const previousStep = step !== 'fin' && currentIndex > 0 ? ONBOARDING_STEPS[currentIndex - 1] : undefined;
 
   function handleConfirmSkip(): void {
     completeOnboarding.mutate(undefined, {
@@ -57,12 +63,19 @@ export function OnboardingLayout({ step, children }: OnboardingLayoutProps) {
         <motion.div key={step} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
           {children}
         </motion.div>
+
+        {previousStep && (
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/onboarding/${previousStep.key}`)}>
+            <ChevronLeft />
+            Précédent
+          </Button>
+        )}
       </div>
 
       <Dialog open={skipOpen} onOpenChange={setSkipOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Passer l'accueil ?</DialogTitle>
+            <DialogTitle>Passer la configuration ?</DialogTitle>
             <DialogDescription>Vous pourrez importer votre CV plus tard depuis votre profil.</DialogDescription>
           </DialogHeader>
           <DialogFooter>

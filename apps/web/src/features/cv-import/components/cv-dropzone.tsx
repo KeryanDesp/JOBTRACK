@@ -26,9 +26,14 @@ function validateFile(file: File, maxSizeBytes: number): string | null {
   return null;
 }
 
+const ONE_MEBIBYTE = 1024 * 1024;
+
 function formatFileSize(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  if (bytes < ONE_MEBIBYTE) return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
+  return `${(bytes / ONE_MEBIBYTE).toFixed(1)} Mo`;
 }
+
+const ERROR_ID = 'cv-dropzone-error';
 
 export interface CvDropzoneProps {
   /** Envoi en cours (progression déjà lancée par l'appelant) : désactive la zone et affiche la barre. */
@@ -105,6 +110,7 @@ export function CvDropzone({
         tabIndex={isUploading ? -1 : 0}
         aria-label="Zone de dépôt du CV"
         aria-disabled={isUploading || undefined}
+        aria-describedby={error ? ERROR_ID : undefined}
         onClick={openPicker}
         onKeyDown={handleKeyDown}
         onDragOver={(event) => {
@@ -114,7 +120,8 @@ export function CvDropzone({
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
         className={cn(
-          'flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors',
+          'flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors outline-none',
+          'focus-visible:ring-[3px] focus-visible:ring-ring/50',
           isDragging ? 'border-primary bg-primary/5' : 'border-border',
           isUploading && 'cursor-not-allowed opacity-60',
         )}
@@ -127,13 +134,17 @@ export function CvDropzone({
           type="file"
           accept={ACCEPT_ATTRIBUTE}
           aria-label="Choisir un fichier CV"
+          // La zone englobante (`role="button"`, ci-dessus) porte déjà le seul arrêt de
+          // tabulation de ce contrôle composite : sans ceci, Tab s'arrêterait deux fois
+          // (la zone, puis cet input caché) pour une seule action.
+          tabIndex={-1}
           disabled={isUploading}
           className="sr-only"
           onChange={(event) => handleFiles(event.target.files)}
         />
       </div>
 
-      <FormFieldError message={error ?? undefined} />
+      <FormFieldError id={ERROR_ID} message={error ?? undefined} />
 
       {file && !error && (
         <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">

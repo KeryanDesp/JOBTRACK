@@ -120,6 +120,11 @@ export function CvStep({ onExtracted, onManual }: CvStepProps) {
       <div className="flex flex-col items-center gap-3 py-10 text-center">
         <Loader2 className="text-primary size-6 animate-spin" aria-hidden />
         <p className="text-sm font-medium">Analyse en cours…</p>
+        {/* Cette phase peut durer jusqu'à 90 s (délai client) : « Annuler » reste
+            proposé, pas seulement pendant l'envoi du fichier lui-même. */}
+        <Button variant="ghost" size="sm" onClick={upload.abort}>
+          Annuler
+        </Button>
       </div>
     );
   }

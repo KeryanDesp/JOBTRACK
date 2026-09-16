@@ -7,14 +7,15 @@ describe('StepIndicator', () => {
     render(<StepIndicator current="preferences" />);
 
     const current = screen.getByText('Préférences').closest('li');
-    expect(current?.querySelector('[aria-current="step"]')).not.toBeNull();
+    expect(current).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('Étape 4 sur 5')).toBeInTheDocument();
 
     const done = screen.getByText('CV').closest('li');
     expect(done?.querySelector('svg')).not.toBeNull();
-    expect(done?.querySelector('[aria-current]')).toBeNull();
+    expect(done).not.toHaveAttribute('aria-current');
 
     const upcoming = screen.getByText('Terminé').closest('li');
     expect(upcoming?.querySelector('svg')).toBeNull();
-    expect(upcoming?.querySelector('[aria-current]')).toBeNull();
+    expect(upcoming).not.toHaveAttribute('aria-current');
   });
 });

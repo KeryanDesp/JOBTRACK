@@ -3,7 +3,7 @@ import { registerSchema, type RegisterFormInput } from '@jobtrack/shared';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,13 +21,8 @@ const REGISTER_FIELDS = ['firstName', 'lastName', 'email', 'password'] as const;
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const setSession = useSetSession();
   const [fieldErrorsApplied, setFieldErrorsApplied] = useState(false);
-
-  const rawFrom = (location.state as { from?: string } | null)?.from;
-  // Jamais une URL absolue ou protocol-relative : pas de redirection ouverte.
-  const from = rawFrom?.startsWith('/') && !rawFrom.startsWith('//') ? rawFrom : undefined;
 
   const {
     register,
@@ -40,11 +35,10 @@ export function RegisterPage() {
     mutationFn: registerUser,
     onSuccess: (user) => {
       setSession(user);
-      // Un nouvel inscrit est toujours amené sur l'accueil, jamais directement
-      // vers `from` (il n'a encore rien à y reprendre) — mais cette origine,
-      // mémorisée par `ProtectedRoute`, est transmise à l'accueil pour qu'il
-      // puisse y renvoyer une fois terminé (ou passé).
-      navigate('/onboarding', { replace: true, state: from ? { from } : undefined });
+      // Un nouvel inscrit est toujours amené à l'accueil : il n'a encore rien à
+      // reprendre ailleurs. Qu'il le termine ou le passe, l'accueil mène
+      // toujours au profil ensuite (spec §2) — aucune origine à mémoriser ici.
+      navigate('/onboarding', { replace: true });
     },
     onError: (error: unknown) => {
       if (applyFieldErrors<RegisterFormInput>(error, setError, REGISTER_FIELDS)) {

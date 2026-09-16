@@ -54,7 +54,7 @@ describe('OnboardingLayout', () => {
     expect(await screen.findByText('Route actuelle : /profile')).toBeInTheDocument();
   });
 
-  it('n_affiche pas de bouton passer sur la derniere etape', () => {
+  it('n_affiche ni passer ni precedent sur la derniere etape', () => {
     const client = new QueryClient();
     render(
       <QueryClientProvider client={client}>
@@ -67,5 +67,41 @@ describe('OnboardingLayout', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Passer' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Précédent' })).not.toBeInTheDocument();
+  });
+
+  it('n_affiche pas precedent sur la premiere etape et navigue vers celle-ci depuis la suivante', async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/onboarding/cv']}>
+          <Routes>
+            <Route
+              path="/onboarding/cv"
+              element={
+                <OnboardingLayout step="cv">
+                  <p>Contenu cv</p>
+                </OnboardingLayout>
+              }
+            />
+            <Route
+              path="/onboarding/bienvenue"
+              element={
+                <OnboardingLayout step="bienvenue">
+                  <p>Contenu bienvenue</p>
+                </OnboardingLayout>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Précédent' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Précédent' }));
+
+    expect(await screen.findByText('Contenu bienvenue')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Précédent' })).not.toBeInTheDocument();
   });
 });

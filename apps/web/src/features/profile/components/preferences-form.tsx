@@ -1,6 +1,6 @@
 import { jobPreferencesSchema, type JobPreferencesFormInput, type JobPreferencesInput } from '@jobtrack/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { ErrorState } from '@/components/shared/error-state';
@@ -145,6 +145,7 @@ export function PreferencesForm({ extraDefaults, submitLabel = 'Enregistrer', re
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: profileKeys.preferences, queryFn: fetchPreferences });
   const [formAlert, setFormAlert] = useState<string>();
+  const hasPrefilledRef = useRef(false);
 
   const form = useForm<PreferencesFormValues, unknown, JobPreferencesInput>({
     resolver: zodResolverWith<PreferencesFormValues, JobPreferencesInput>(jobPreferencesSchema, (raw) =>
@@ -153,11 +154,16 @@ export function PreferencesForm({ extraDefaults, submitLabel = 'Enregistrer', re
     defaultValues: DEFAULT_VALUES,
   });
 
-  // `extraDefaults` dans les dépendances : l'appelant (`PreferencesStep`) doit en passer une
-  // référence stable (la valeur déjà mémorisée par React Query, jamais un littéral recréé à
-  // chaque rendu) pour éviter une boucle de `reset` — voir `features/onboarding/steps/preferences-step.tsx`.
+  // `hasPrefilledRef` : le préremplissage ne s'applique qu'une fois, au premier
+  // chargement des préférences — jamais à un rendu ultérieur (revalidation en
+  // arrière-plan, changement de `extraDefaults`), qui écraserait sinon ce que
+  // l'utilisateur est déjà en train de saisir. Un enregistrement réussi
+  // (`mutation.onSuccess` ci-dessous) reste un `form.reset` explicite et
+  // volontaire, distinct de ce préremplissage initial.
   useEffect(() => {
-    if (query.data) form.reset(toFormValues(query.data, extraDefaults));
+    if (!query.data || hasPrefilledRef.current) return;
+    hasPrefilledRef.current = true;
+    form.reset(toFormValues(query.data, extraDefaults));
   }, [query.data, form, extraDefaults]);
 
   const mutation = useMutation({
