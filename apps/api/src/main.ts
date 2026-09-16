@@ -20,6 +20,14 @@ async function bootstrap(): Promise<void> {
       : 'Service IA : non configuré (ANTHROPIC_API_KEY absente)',
     'Bootstrap',
   );
+
+  // Jamais les identifiants eux-mêmes : seulement si le connecteur est disponible.
+  Logger.log(
+    env.FRANCE_TRAVAIL_CLIENT_ID && env.FRANCE_TRAVAIL_CLIENT_SECRET
+      ? 'Connecteur France Travail : configuré'
+      : 'Connecteur France Travail : non configuré (FRANCE_TRAVAIL_CLIENT_ID/SECRET absents)',
+    'Bootstrap',
+  );
 }
 
 void bootstrap();

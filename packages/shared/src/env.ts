@@ -50,6 +50,19 @@ export const serverEnvSchema = z.object({
 
   // Racine du stockage disque des fichiers (CV importes). Jamais versionnee.
   STORAGE_DIR: z.string().trim().min(1).default('./storage'),
+
+  // Connecteur France Travail (tranche 3) : optionnels, sans eux le connecteur
+  // est « non configure » (aucune offre reelle, l'API demarre quand meme).
+  FRANCE_TRAVAIL_CLIENT_ID: optionalString,
+  FRANCE_TRAVAIL_CLIENT_SECRET: optionalString,
+  // Defauts alignes sur la documentation officielle de l'API « Offres d'emploi v2 ».
+  FRANCE_TRAVAIL_API_URL: optionalUrl.transform(
+    (value) => value ?? 'https://api.francetravail.io/partenaire/offresdemploi/v2',
+  ),
+  FRANCE_TRAVAIL_TOKEN_URL: optionalUrl.transform(
+    (value) => value ?? 'https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire',
+  ),
+  FRANCE_TRAVAIL_SCOPE: optionalString.transform((value) => value ?? 'api_offresdemploiv2 o2dsoffre'),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
