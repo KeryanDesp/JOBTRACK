@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FormFieldError } from '@/features/auth/components/form-field-error';
 import type { CollectionItem } from '@/services/api/profile';
 
-const LEVEL_LABELS: Record<LanguageFormInput['level'], string> = {
+// Exportée : réutilisée par la revue d'extraction de CV (`extraction-review.tsx`).
+export const LEVEL_LABELS: Record<LanguageFormInput['level'], string> = {
   A1: 'A1',
   A2: 'A2',
   B1: 'B1',
@@ -18,13 +19,14 @@ const LEVEL_LABELS: Record<LanguageFormInput['level'], string> = {
   NATIVE: 'Langue maternelle',
 };
 
-const DEFAULT_VALUES: LanguageFormInput = { name: '', level: 'A1' };
+// Exportées : réutilisées par la revue d'extraction de CV (`extraction-review.tsx`).
+export const DEFAULT_VALUES: LanguageFormInput = { name: '', level: 'A1' };
 
-function toFormValues(item: CollectionItem<'languages'>): LanguageFormInput {
+export function toFormValues(item: CollectionItem<'languages'>): LanguageFormInput {
   return { name: item.name, level: item.level };
 }
 
-function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
+export function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
   const {
     register,
     control,

@@ -42,6 +42,11 @@ export function useCvImport(id: string | null) {
       return fetchCvImport(id);
     },
     enabled: id !== null,
+    // L'extraction est synchrone côté serveur (la réponse d'envoi est déjà `EXTRACTED`
+    // ou `FAILED`) : un brouillon lu `PENDING` n'arrive qu'en reprise (identifiant
+    // retrouvé en `sessionStorage` après un rechargement pendant l'analyse). Le sondage
+    // s'arrête de lui-même dès que le statut change.
+    refetchInterval: (query) => (query.state.data?.status === 'PENDING' ? 2000 : false),
   });
 }
 

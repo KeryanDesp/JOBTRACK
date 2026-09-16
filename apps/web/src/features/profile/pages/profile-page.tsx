@@ -1,3 +1,4 @@
+import { Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -47,7 +48,18 @@ function OnboardingBanner() {
 export function ProfilePage() {
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Mon profil" description="Gérez vos informations et votre parcours." />
+      <PageHeader
+        title="Mon profil"
+        description="Gérez vos informations et votre parcours."
+        actions={
+          <Button asChild variant="outline">
+            <Link to="/profile/import">
+              <Upload />
+              Importer un CV
+            </Link>
+          </Button>
+        }
+      />
       <div className="space-y-6">
         <OnboardingBanner />
         <PersonalInfoCard />
