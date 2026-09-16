@@ -4399,6 +4399,23 @@ git commit -m "test: parcours end-to-end inscription, profil et reconnexion"
 
 ---
 
+## Clôture de la tranche (revue finale de branche, 2026-09-16)
+
+Revue finale : **fusionnable après un correctif** (`87624cd`) — `GET /auth/sessions` renvoyait l'identifiant brut de session, c'est-à-dire la valeur du cookie `httpOnly` : un XSS aurait pu exfiltrer un jeton utilisable ailleurs. Désormais la liste expose un **handle opaque** (HMAC dérivé de `SESSION_SECRET`, clé séparée) et la révocation le résout côté serveur ; 404 inchangé pour un handle d'autrui. Mineurs corrigés dans le même commit : description masquée sur le dialogue de collection (a11y), ordre des dates sur formation et certification, débit 60/min sur `/health` (seule route publique non limitée), timeout de 5 s sur l'échange de code Google.
+
+Vérifié par la revue et non contesté : CORS fermé (origine étrangère non reflétée), en-têtes Helmet complets, surfaces d'erreur sans pile ni détail interne, isolation prouvée sur les six collections, PKCE + `id_token` + `email_verified` + passerelle de rattachement + state à usage unique, argon2id avec `burnTime` réel et `needsRehash`, réinitialisation à usage unique avec audit, CSRF lié à la session, aucune donnée de test résiduelle, CI cohérente (migrations, e2e API, Playwright).
+
+**Reporté à la tranche suivante (par priorité) :**
+1. **CSRF de connexion** — `/auth/login` est `@NoCsrf` : un POST cross-site peut connecter la victime sur le compte de l'attaquant (ses saisies de profil atterrissent chez lui). Correctif : jeton de double soumission pré-session émis au premier `GET`.
+2. **Vérification d'email** — aucun flux ; `emailVerifiedAt` n'est posé que par Google, donc le rattachement automatique Google ↔ compte à mot de passe n'a jamais lieu (sûr, mais plus strict que voulu).
+3. Plafond de sessions par utilisateur.
+4. `experienceLevel` impossible à effacer une fois posé (`''` à accepter dans le schéma partagé).
+5. `select` sur les réponses profil/collections (ne plus exposer `profileId`/`userId`/timestamps).
+6. `GET /profile/preferences` qui écrit (upsert) — un GET exempt de CSRF ne devrait pas muter.
+7. Compteurs de débit consommés avant authentification sur `PATCH /auth/password` (garde à réordonner ou clé `by: 'user'`).
+8. Nettoyage des clés `ratelimit:*` par la suite Playwright ; base Redis dédiée aux tests.
+9. Découpage du bundle (840 kio, avertissement Vite) ; premier mot de passe pour un compte Google depuis les paramètres ; onglets de paramètres synchronisés avec l'URL ; libellé lisible du user-agent.
+
 ## Limites assumées de la tranche
 
 | Limite | Tranche de résolution |
