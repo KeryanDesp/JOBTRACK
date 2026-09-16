@@ -1,6 +1,7 @@
 import { ErrorState } from '@/components/shared/error-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLogout } from '@/features/auth/hooks/use-logout';
@@ -53,15 +54,13 @@ export function AccountCard() {
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="account-email">Adresse email</Label>
-          <p id="account-email" className="text-sm">
-            {email}
-          </p>
+          {/* `readOnly`, pas `disabled` : le texte reste sélectionnable/copiable, et un
+              champ désactivé n'a pas de nom accessible via `aria-label`. */}
+          <Input id="account-email" readOnly value={email} aria-label="Adresse email" />
         </div>
         <div className="space-y-2">
           <Label htmlFor="account-name">Nom</Label>
-          <p id="account-name" className="text-sm">
-            {firstName} {lastName}
-          </p>
+          <Input id="account-name" readOnly value={`${firstName} ${lastName}`} aria-label="Nom" />
         </div>
       </CardContent>
       <CardFooter>

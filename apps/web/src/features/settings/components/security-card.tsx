@@ -13,7 +13,7 @@ import { ServerErrorAlert } from '@/features/auth/components/server-error-alert'
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
 import { changePassword } from '@/services/api/auth';
 import { ApiError } from '@/services/api/client';
-import { SESSIONS_QUERY_KEY } from './sessions-card';
+import { SESSIONS_QUERY_KEY } from '../lib/query-keys';
 
 const FIELDS = ['currentPassword', 'newPassword'] as const;
 const DEFAULT_VALUES: ChangePasswordFormInput = { currentPassword: '', newPassword: '' };

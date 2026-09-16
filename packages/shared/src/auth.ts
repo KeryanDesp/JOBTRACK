@@ -39,10 +39,15 @@ export const resetPasswordSchema = z.object({
   password: strongPassword,
 });
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, 'Le mot de passe actuel est obligatoire.'),
-  newPassword: strongPassword,
-});
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Le mot de passe actuel est obligatoire.'),
+    newPassword: strongPassword,
+  })
+  .refine((value) => value.newPassword !== value.currentPassword, {
+    path: ['newPassword'],
+    message: 'Le nouveau mot de passe doit être différent de l’actuel.',
+  });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

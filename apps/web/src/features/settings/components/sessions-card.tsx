@@ -8,8 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import { topLevelMessage } from '@/features/auth/lib/form-errors';
 import { fetchSessions, revokeSession } from '@/services/api/auth';
-
-export const SESSIONS_QUERY_KEY = ['auth', 'sessions'] as const;
+import { SESSIONS_QUERY_KEY } from '../lib/query-keys';
 
 const dateFormatter = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' });
 
@@ -78,7 +77,9 @@ export function SessionsCard() {
             >
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">{session.userAgent ?? 'Appareil inconnu'}</span>
+                  <span className="line-clamp-1 break-all text-sm font-medium">
+                    {session.userAgent ?? 'Appareil inconnu'}
+                  </span>
                   {session.current && <Badge variant="secondary">Session actuelle</Badge>}
                 </div>
                 <p className="text-muted-foreground text-xs">

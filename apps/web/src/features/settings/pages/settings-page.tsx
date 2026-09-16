@@ -20,8 +20,11 @@ export function SettingsPage() {
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Paramètres" description="Gérez votre compte, votre sécurité et vos préférences." />
       <Tabs defaultValue="account">
-        {/* overflow-x-auto : la liste ne doit jamais forcer la page entière à défiler horizontalement sur mobile. */}
-        <TabsList className="w-full justify-start overflow-x-auto">
+        {/* overflow-x-auto : la liste ne doit jamais forcer la page entière à défiler horizontalement
+            sur mobile. h-auto : la hauteur fixe par défaut coupe le texte des onglets quand ils
+            passent sur deux lignes avant de défiler. Barre de défilement masquée (mais le défilement
+            tactile/à la molette reste possible) : elle n'apporte rien sur une liste d'onglets courte. */}
+        <TabsList className="h-auto w-full justify-start overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsTrigger value="account">Compte</TabsTrigger>
           <TabsTrigger value="security">Sécurité</TabsTrigger>
           <TabsTrigger value="appearance">Apparence</TabsTrigger>

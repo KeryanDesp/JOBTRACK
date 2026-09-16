@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loginSchema, registerSchema } from './auth';
+import { changePasswordSchema, loginSchema, registerSchema } from './auth';
 
 describe('registerSchema', () => {
   const valid = {
@@ -36,6 +36,16 @@ describe('loginSchema', () => {
 
   it('refuse un mot de passe de connexion de plus de 128 caracteres', () => {
     const result = loginSchema.safeParse({ email: 'a@b.com', password: 'x'.repeat(129) });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('changePasswordSchema', () => {
+  it('refuse un nouveau mot de passe identique a l_actuel', () => {
+    const result = changePasswordSchema.safeParse({
+      currentPassword: 'mot-de-passe-actuel-2026',
+      newPassword: 'mot-de-passe-actuel-2026',
+    });
     expect(result.success).toBe(false);
   });
 });

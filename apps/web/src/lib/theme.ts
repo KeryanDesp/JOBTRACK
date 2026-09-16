@@ -1,5 +1,21 @@
+import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react';
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
+
+export interface ThemeOption {
+  mode: ThemeMode;
+  label: string;
+  Icon: LucideIcon;
+}
+
+// Partagé par `ThemeToggle` (en-tête) et `AppearanceCard` (paramètres) : les deux
+// sélecteurs de thème doivent toujours proposer les mêmes trois choix, dans le même ordre.
+export const THEME_OPTIONS: readonly ThemeOption[] = [
+  { mode: 'light', label: 'Clair', Icon: Sun },
+  { mode: 'dark', label: 'Sombre', Icon: Moon },
+  { mode: 'system', label: 'Système', Icon: Monitor },
+];
 
 /** Doit rester identique à la clé lue par le script inline de index.html. */
 export const THEME_STORAGE_KEY = 'jobtrack-theme';

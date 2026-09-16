@@ -462,6 +462,64 @@ describe('Changement de mot de passe', () => {
     expect(response.json<{ code: string }>().code).toBe('CSRF_MISMATCH');
   });
 
+  it('refuse un nouveau mot de passe identique a l_actuel', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: USER.password, newPassword: USER.password },
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json<{ code: string; details?: Record<string, string> }>();
+    expect(body.code).toBe('VALIDATION_ERROR');
+    expect(body.details?.newPassword).toBeTruthy();
+  });
+
+  it('refuse un nouveau mot de passe trop court', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: USER.password, newPassword: 'court' },
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('VALIDATION_ERROR');
+  });
+
+  it('renvoie un 503 explicite si la fermeture des autres sessions echoue', async () => {
+    const { cookieHeader, csrf } = await registerUser();
+    // Le mot de passe est déjà changé en base à ce stade (voir AuthService.changePassword) :
+    // une panne Redis à l'étape suivante doit remonter un 503 explicite, jamais un succès muet.
+    const spy = vi
+      .spyOn(app.get(SessionService), 'destroyAllForUser')
+      .mockRejectedValueOnce(new Error('redis indisponible'));
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/auth/password',
+      payload: { currentPassword: USER.password, newPassword: 'nouveau-mot-de-passe-2026' },
+      headers: { cookie: cookieHeader, 'x-csrf-token': csrf },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json<{ code: string }>().code).toBe('SERVICE_UNAVAILABLE');
+    spy.mockRestore();
+
+    // Le nouveau mot de passe fonctionne malgré l'échec de la fermeture des autres sessions.
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: USER.email, password: 'nouveau-mot-de-passe-2026' },
+    });
+    expect(login.statusCode).toBe(200);
+  });
+
   it('change le mot de passe et deconnecte les autres appareils', async () => {
     // Appareil A : session ouverte à l'inscription.
     const deviceA = await registerUser();
@@ -506,6 +564,16 @@ describe('Changement de mot de passe', () => {
       payload: { email: USER.email, password: USER.password },
     });
     expect(oldLogin.statusCode).toBe(401);
+
+    // La session de l'appareil A n'a pas changé d'identifiant (seuls les autres appareils
+    // ont été fermés) : son jeton CSRF d'origine, émis à l'inscription, doit donc encore
+    // être accepté pour une mutation sur cette même session.
+    const logoutA = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/logout',
+      headers: { cookie: deviceA.cookieHeader, 'x-csrf-token': deviceA.csrf },
+    });
+    expect(logoutA.statusCode).toBe(204);
   });
 });
 

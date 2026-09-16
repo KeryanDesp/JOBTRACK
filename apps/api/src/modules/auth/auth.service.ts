@@ -1,9 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, Logger, UnauthorizedException,
+} from '@nestjs/common';
 import type { RegisterInput, SessionUser } from '@jobtrack/shared';
 import { OAuthProvider, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma.service';
 import type { GoogleProfile } from './google.service';
 import { PasswordService } from './password.service';
+import { SessionService } from './session.service';
 
 const EMAIL_TAKEN = { code: 'EMAIL_TAKEN', message: 'Un compte existe déjà avec cette adresse email.' };
 const INVALID_CREDENTIALS = { code: 'INVALID_CREDENTIALS', message: 'Identifiants invalides.' };
@@ -30,6 +33,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
+    private readonly sessions: SessionService,
   ) {}
 
   async register(input: RegisterInput): Promise<SessionUser> {
@@ -94,11 +98,17 @@ export class AuthService {
   }
 
   /**
-   * Change le mot de passe après vérification de l'actuel. `AuthGuard` garantit déjà
-   * l'existence de l'utilisateur pour cette requête ; `findUniqueOrThrow` reste défensif
-   * face à une suppression de compte survenue entre-temps.
+   * Change le mot de passe après vérification de l'actuel, puis ferme toutes les sessions
+   * sauf `keepSessionId` (l'appelant). `AuthGuard` garantit déjà l'existence de
+   * l'utilisateur pour cette requête ; `findUniqueOrThrow` reste défensif face à une
+   * suppression de compte survenue entre-temps.
    */
-  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    keepSessionId: string,
+  ): Promise<void> {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
 
     if (!user.passwordHash) {
@@ -108,6 +118,9 @@ export class AuthService {
 
     const valid = await this.passwords.verify(user.passwordHash, currentPassword);
     if (!valid) {
+      // Signal utile : la session est valide mais le mot de passe fourni est faux
+      // (piste d'une session volée dont l'attaquant ne connaît pas le mot de passe).
+      this.logger.warn(`Mot de passe actuel invalide pour l'utilisateur ${userId}`);
       // 400, pas 401 : la session en cours reste valide, seul le mot de passe fourni est faux.
       throw new BadRequestException(INVALID_CURRENT_PASSWORD);
     }
@@ -116,6 +129,26 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
     // Trace d'audit (warn : survit à un niveau de journal réduit). Identifiant seulement.
     this.logger.warn(`Mot de passe modifié pour l'utilisateur ${userId}`);
+
+    try {
+      await this.sessions.destroyAllForUser(userId, keepSessionId);
+    } catch (error) {
+      // Même traitement que PasswordResetFlow.completeReset : le mot de passe est déjà
+      // changé (jamais annulé après coup), donc un Redis en panne ici doit remonter un
+      // 503 explicite plutôt qu'un succès muet qui laisserait d'autres appareils connectés.
+      this.logger.error(
+        `Fermeture des autres sessions après changement de mot de passe impossible (${userId})`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new HttpException(
+        {
+          code: 'SERVICE_UNAVAILABLE',
+          message:
+            'Votre mot de passe a été changé, mais vos autres appareils n’ont pas pu être déconnectés. Déconnectez-les depuis vos paramètres.',
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 
   /**

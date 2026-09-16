@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useLogout } from '@/features/auth/hooks/use-logout';
 import { useSession } from '@/features/auth/hooks/use-session';
 import { AppBottomNav } from './app-bottom-nav';
@@ -25,8 +26,14 @@ function UserMenu() {
   const session = useSession();
   const logout = useLogout();
 
-  // Session pas encore chargée, ou visiteur (ne devrait pas arriver ici, la route est
-  // protégée) : pas d'avatar tant qu'on n'a rien à y afficher.
+  // Taille alignée sur `Avatar` (size-8 par défaut) : sans ce squelette, l'en-tête
+  // « sautait » d'un pixel/layout au moment où l'avatar apparaissait.
+  if (session.isPending) {
+    return <Skeleton className="size-8 rounded-full" />;
+  }
+
+  // Visiteur (ne devrait pas arriver ici, la route est protégée) : pas d'avatar tant
+  // qu'on n'a rien à y afficher.
   if (!session.data) return null;
   const { firstName, lastName } = session.data;
 

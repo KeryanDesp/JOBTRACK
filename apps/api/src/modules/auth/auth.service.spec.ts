@@ -1,13 +1,21 @@
 import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import argon2 from 'argon2';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RedisService } from '../../common/redis.service';
 import { PrismaService } from '../../common/prisma.service';
 import { ARGON2_OPTIONS } from './argon2.options';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { SessionService } from './session.service';
 
 const prisma = new PrismaService();
-const service = new AuthService(prisma, new PasswordService());
+const redis = new RedisService();
+const sessions = new SessionService(redis);
+const service = new AuthService(prisma, new PasswordService(), sessions);
+
+// Id de session arbitraire pour les tests qui n'ouvrent pas de vraie session :
+// changePassword() ne fait que l'exclure d'un SREM sur un index vide, sans jamais y lire.
+const NO_SESSION = 'aucune-session-de-test';
 
 // Suffixe par processus : deux workers vitest ne doivent pas partager le meme email.
 const INPUT = {
@@ -42,6 +50,7 @@ afterAll(async () => {
   await prisma.user.deleteMany({ where: { email: GOOGLE_EMAIL } });
   await clearGoogleOAuthUsers();
   await prisma.$disconnect();
+  await redis.onModuleDestroy();
 });
 
 describe('AuthService', () => {
@@ -70,7 +79,7 @@ describe('AuthService', () => {
     // `findUnique` l'ait vue. Le 409 doit venir du mappage de P2002.
     // Instance dediee : on ne mocke jamais le client partage par les autres tests.
     const racePrisma = new PrismaService();
-    const raceService = new AuthService(racePrisma, new PasswordService());
+    const raceService = new AuthService(racePrisma, new PasswordService(), sessions);
     try {
       await racePrisma.user.create({ data: { email: INPUT.email, passwordHash: 'x' } });
       vi.spyOn(racePrisma.user, 'findUnique').mockResolvedValueOnce(null);
@@ -254,7 +263,7 @@ describe('AuthService', () => {
     const registered = await service.register(INPUT);
 
     const error: unknown = await service
-      .changePassword(registered.id, 'mauvais-mot-de-passe-actuel', 'nouveau-mot-de-passe-2026')
+      .changePassword(registered.id, 'mauvais-mot-de-passe-actuel', 'nouveau-mot-de-passe-2026', NO_SESSION)
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(BadRequestException);
@@ -263,10 +272,30 @@ describe('AuthService', () => {
     });
   });
 
+  it('refuse un compte sans mot de passe', async () => {
+    // Compte créé via le flux Google (findOrCreateFromGoogle), pas une insertion directe :
+    // c'est le vrai chemin par lequel un utilisateur se retrouve sans mot de passe local.
+    const user = await service.findOrCreateFromGoogle({
+      providerAccountId: GOOGLE_OAUTH_SUB,
+      email: GOOGLE_OAUTH_EMAIL,
+      firstName: 'Personne',
+      lastName: 'Exemple',
+    });
+
+    const error: unknown = await service
+      .changePassword(user.id, 'peu-importe', 'nouveau-mot-de-passe-2026', NO_SESSION)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toMatchObject({
+      code: 'NO_PASSWORD_SET',
+    });
+  });
+
   it('change le mot de passe : le nouveau valide, l_ancien est refuse', async () => {
     const registered = await service.register(INPUT);
 
-    await service.changePassword(registered.id, INPUT.password, 'nouveau-mot-de-passe-2026');
+    await service.changePassword(registered.id, INPUT.password, 'nouveau-mot-de-passe-2026', NO_SESSION);
 
     await expect(
       service.validateCredentials(INPUT.email, 'nouveau-mot-de-passe-2026'),

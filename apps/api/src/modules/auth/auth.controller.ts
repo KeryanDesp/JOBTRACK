@@ -166,15 +166,18 @@ export class AuthController {
 
   @Patch('password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @RateLimit({ limit: 10, windowSeconds: 3600, by: 'ip' })
+  // RateLimitGuard s'exécute avant AuthGuard (voir rate-limit.guard.ts) : une requête
+  // anonyme ou non authentifiée consomme déjà le même budget qu'une requête authentifiée,
+  // d'où une limite plus large que les routes publiques de connexion/réinitialisation.
+  @RateLimit({ limit: 30, windowSeconds: 3600, by: 'ip' })
   async changePassword(
     @Body(new ZodValidationPipe(changePasswordSchema)) body: ChangePasswordInput,
     @CurrentUser() user: SessionUser,
     @Req() request: AuthenticatedRequest,
   ): Promise<void> {
-    await this.auth.changePassword(user.id, body.currentPassword, body.newPassword);
-    // La session en cours reste ouverte : seuls les autres appareils doivent être déconnectés.
-    await this.sessions.destroyAllForUser(user.id, request.session.id);
+    // La fermeture des autres sessions (garde la session en cours) est faite par le service :
+    // elle doit se produire même si un Redis en panne doit remonter un 503 explicite.
+    await this.auth.changePassword(user.id, body.currentPassword, body.newPassword, request.session.id);
   }
 
   @Get('sessions')
