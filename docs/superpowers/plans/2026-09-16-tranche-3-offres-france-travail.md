@@ -112,6 +112,9 @@
 - [ ] Recette des critères (spec §11) par le coordinateur, dont la recherche réelle avec les identifiants de l'utilisateur dès qu'ils sont dans `.env`.
 - [ ] Commit : `test: offres end-to-end`.
 
+### Task 1 — amendement après vérification (`2a7758c`, approuvé)
+Conforme à la spec §3 (7 modèles, 3 enums, `INTERIM`, uniques, index, cascades). `INTERIM` ajouté aussi au contrat partagé (`contractTypes` des préférences) et au formulaire des préférences web (« Intérim »). Migration `20260916203158_jobs_sources_saved_jobs_communes` appliquée via le script racine `pnpm db:migrate` (le `.env` racine n'est pas vu par `prisma` lancé depuis `apps/api`). `JobSearchSync` et `Commune` sans `createdAt/updatedAt`, comme `JobPreferences`. Compteurs inchangés (shared 89, api 138 + 77, web 88).
+
 ---
 
 ## Limites assumées
