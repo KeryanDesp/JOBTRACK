@@ -2,14 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTRACT_TYPE_LABELS,
   EXPERIENCE_LEVEL_LABELS,
+  JOB_REQUIREMENT_KIND_LABELS,
+  JOB_SEARCH_PARAM_KEYS,
   JOB_SOURCE_KINDS,
   JOB_SOURCE_LABELS,
-  JOB_TAB_VALUES,
-  JOB_SORT_VALUES,
+  JOB_TABS,
+  JOB_SORT_OPTIONS,
+  PUBLISHED_WITHIN_DAYS_VALUES,
   PUBLISHED_WITHIN_OPTIONS,
   REMOTE_MODE_LABELS,
+  jobRequirementKindSchema,
   jobSearchQuerySchema,
+  jobSortSchema,
+  jobTabSchema,
   parseJobSearchParams,
+  toJobSearchParams,
 } from './jobs';
 import { contractTypeSchema, experienceLevelSchema, remoteModeSchema } from './profile';
 
@@ -45,31 +52,65 @@ describe('jobSearchQuerySchema — defauts', () => {
     expect(result.pageSize).toBe(20);
     expect(result.refresh).toBe(false);
   });
+
+  it('reste stable en re-validant sa propre sortie (round trip)', () => {
+    const defaults = jobSearchQuerySchema.parse({});
+    expect(jobSearchQuerySchema.parse(defaults)).toEqual(defaults);
+  });
+
+  it('accepte des champs numeriques valant zero', () => {
+    const result = jobSearchQuerySchema.safeParse({ page: 2, distance: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.page).toBe(2);
+      expect(result.data.distance).toBe(0);
+    }
+  });
 });
 
 describe('jobSearchQuerySchema — champs tableau', () => {
-  it('regroupe les cles repetees en tableau', () => {
+  it('regroupe les cles repetees en tableau (cle courte "contrat")', () => {
     const params = new URLSearchParams();
-    params.append('contractTypes', 'CDI');
-    params.append('contractTypes', 'CDD');
+    params.append('contrat', 'CDI');
+    params.append('contrat', 'CDD');
     const result = parseJobSearchParams(params);
     expect(result.contractTypes).toEqual(['CDI', 'CDD']);
   });
 
   it('accepte des valeurs separees par des virgules', () => {
-    const params = new URLSearchParams({ contractTypes: 'CDI,CDD' });
+    const params = new URLSearchParams({ contrat: 'CDI,CDD' });
     const result = parseJobSearchParams(params);
     expect(result.contractTypes).toEqual(['CDI', 'CDD']);
   });
 
   it('dedoublonne les valeurs repetees', () => {
-    const params = new URLSearchParams({ contractTypes: 'CDI,CDI,CDD' });
+    const params = new URLSearchParams({ contrat: 'CDI,CDI,CDD' });
     const result = parseJobSearchParams(params);
     expect(result.contractTypes).toEqual(['CDI', 'CDD']);
   });
 
-  it('dedoublonne les communes', () => {
-    const params = new URLSearchParams({ communes: '75001,75001,69001' });
+  it('accepte le mode de teletravail via la cle courte "remote"', () => {
+    const params = new URLSearchParams({ remote: 'HYBRID,REMOTE,HYBRID' });
+    const result = parseJobSearchParams(params);
+    expect(result.remoteModes).toEqual(['HYBRID', 'REMOTE']);
+  });
+
+  it('accepte le niveau d experience via la cle courte "exp"', () => {
+    const params = new URLSearchParams();
+    params.append('exp', 'JUNIOR');
+    params.append('exp', 'SENIOR');
+    const result = parseJobSearchParams(params);
+    expect(result.experienceLevels).toEqual(['JUNIOR', 'SENIOR']);
+  });
+
+  it('accepte les sources via la cle courte "source"', () => {
+    const params = new URLSearchParams({ source: 'FRANCE_TRAVAIL,FRANCE_TRAVAIL' });
+    const result = parseJobSearchParams(params);
+    expect(result.sources).toEqual(['FRANCE_TRAVAIL']);
+  });
+
+  it('dedoublonne les communes (cle courte "lieu")', () => {
+    const params = new URLSearchParams({ lieu: '75001,75001,69001' });
     const result = parseJobSearchParams(params);
     expect(result.communes).toEqual(['75001', '69001']);
   });
@@ -81,17 +122,14 @@ describe('jobSearchQuerySchema — champs tableau', () => {
   });
 });
 
-describe('jobSearchQuerySchema — validation et repli sur defaut', () => {
+describe('jobSearchQuerySchema — validation', () => {
+  it('rejette une recherche libre trop longue', () => {
+    expect(jobSearchQuerySchema.safeParse({ q: 'a'.repeat(121) }).success).toBe(false);
+  });
+
   it('rejette un code commune invalide en safeParse', () => {
     const result = jobSearchQuerySchema.safeParse({ communes: 'abcde' });
     expect(result.success).toBe(false);
-  });
-
-  it('retombe sur les defauts complets quand une commune est invalide', () => {
-    const params = new URLSearchParams({ communes: 'abcde', q: 'developpeur' });
-    const result = parseJobSearchParams(params);
-    expect(result.communes).toEqual([]);
-    expect(result.q).toBe('');
   });
 
   it('rejette plus de 3 communes', () => {
@@ -121,10 +159,24 @@ describe('jobSearchQuerySchema — validation et repli sur defaut', () => {
   });
 
   it('accepte les valeurs autorisees de publishedWithinDays', () => {
-    for (const value of [1, 3, 7, 14, 31]) {
+    for (const value of PUBLISHED_WITHIN_DAYS_VALUES) {
       const result = jobSearchQuerySchema.safeParse({ publishedWithinDays: String(value) });
       expect(result.success).toBe(true);
     }
+  });
+});
+
+describe('jobSearchQuerySchema — reprise sur chaine vide', () => {
+  it('applique le defaut quand distance est une chaine vide', () => {
+    expect(jobSearchQuerySchema.parse({ distance: '' }).distance).toBe(10);
+  });
+
+  it('applique le defaut quand sort est une chaine vide', () => {
+    expect(jobSearchQuerySchema.parse({ sort: '' }).sort).toBe('recent');
+  });
+
+  it('applique le defaut quand page est une chaine vide', () => {
+    expect(jobSearchQuerySchema.parse({ page: '' }).page).toBe(1);
   });
 });
 
@@ -151,6 +203,64 @@ describe('jobSearchQuerySchema — cles inconnues', () => {
     expect(result).not.toHaveProperty('inconnue');
     expect(result.q).toBe('dev');
   });
+
+  it('ignore une cle courte d URL inconnue', () => {
+    const params = new URLSearchParams({ inconnue: 'valeur', q: 'dev' });
+    const result = parseJobSearchParams(params);
+    expect(result.q).toBe('dev');
+  });
+});
+
+describe('parseJobSearchParams — repli champ par champ', () => {
+  it('conserve les champs valides et retombe sur le defaut du seul champ invalide', () => {
+    const params = new URLSearchParams({ q: 'developpeur', page: '0' });
+    const result = parseJobSearchParams(params);
+    expect(result.q).toBe('developpeur');
+    expect(result.page).toBe(1);
+  });
+
+  it('corrige plusieurs champs invalides en une seule reprise', () => {
+    const params = new URLSearchParams({ q: 'developpeur', lieu: 'abcde', page: '0' });
+    const result = parseJobSearchParams(params);
+    expect(result.q).toBe('developpeur');
+    expect(result.communes).toEqual([]);
+    expect(result.page).toBe(1);
+  });
+});
+
+describe('toJobSearchParams', () => {
+  it('omet les valeurs par defaut', () => {
+    const params = toJobSearchParams(jobSearchQuerySchema.parse({}));
+    expect(params.toString()).toBe('');
+  });
+
+  it('ecrit les cles courtes et joint les tableaux par des virgules', () => {
+    const query = jobSearchQuerySchema.parse({
+      q: 'developpeur',
+      communes: ['75001', '69001'],
+      contractTypes: ['CDI', 'CDD'],
+      page: 2,
+    });
+    const params = toJobSearchParams(query);
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.q)).toBe('developpeur');
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.communes)).toBe('75001,69001');
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.contractTypes)).toBe('CDI,CDD');
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.page)).toBe('2');
+    expect(params.has(JOB_SEARCH_PARAM_KEYS.distance)).toBe(false);
+  });
+
+  it('fait un aller-retour stable avec parseJobSearchParams', () => {
+    const original = new URLSearchParams({
+      q: 'developpeur',
+      lieu: '75001,69001',
+      rayon: '20',
+      contrat: 'CDI,CDD',
+      page: '2',
+    });
+    const query = parseJobSearchParams(original);
+    const reparsed = parseJobSearchParams(toJobSearchParams(query));
+    expect(reparsed).toEqual(query);
+  });
 });
 
 describe('libelles francais', () => {
@@ -170,14 +280,21 @@ describe('libelles francais', () => {
     expect(Object.keys(JOB_SOURCE_LABELS).sort()).toEqual([...JOB_SOURCE_KINDS].sort());
   });
 
+  it('couvre chaque valeur de JobRequirementKind', () => {
+    expect(Object.keys(JOB_REQUIREMENT_KIND_LABELS).sort()).toEqual([...jobRequirementKindSchema.options].sort());
+  });
+
   it('propose une option par valeur de publishedWithinDays', () => {
     expect(PUBLISHED_WITHIN_OPTIONS.map((option) => option.value).sort((a, b) => a - b)).toEqual([
-      1, 3, 7, 14, 31,
+      ...PUBLISHED_WITHIN_DAYS_VALUES,
     ]);
   });
 
-  it('couvre chaque valeur de tri et d onglet', () => {
-    expect(JOB_SORT_VALUES).toEqual(['recent', 'salary']);
-    expect(JOB_TAB_VALUES).toEqual(['all', 'new']);
+  it('propose une option de tri par valeur de JobSort', () => {
+    expect(JOB_SORT_OPTIONS.map((option) => option.value).sort()).toEqual([...jobSortSchema.options].sort());
+  });
+
+  it('propose un onglet par valeur de JobTab', () => {
+    expect(JOB_TABS.map((option) => option.value).sort()).toEqual([...jobTabSchema.options].sort());
   });
 });

@@ -92,9 +92,9 @@ export const profileSchema = z
   })
   .transform(omitUndefinedValues);
 
-// Enumerations partagees avec `jobs.ts` (contrat de recherche et DTO des
-// offres) : exportees ici (une seule fois) pour que les deux fichiers valident
-// exactement les memes valeurs sans dupliquer la liste des libelles bruts.
+// Énumérations partagées avec `jobs.ts` (contrat de recherche et DTO des
+// offres) : exportées ici (une seule fois) pour que les deux fichiers valident
+// exactement les mêmes valeurs sans dupliquer la liste des libellés bruts.
 export const contractTypeSchema = z.enum([
   'CDI',
   'CDD',
