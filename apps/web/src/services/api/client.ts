@@ -9,6 +9,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly details?: Record<string, string>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -18,6 +19,7 @@ export class ApiError extends Error {
 interface ErrorBody {
   message?: unknown;
   code?: unknown;
+  details?: unknown;
 }
 
 async function readErrorBody(response: Response): Promise<ErrorBody> {
@@ -27,6 +29,20 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
     // Réponse non-JSON (proxy, passerelle) : on ne montre jamais le HTML brut.
     return {};
   }
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Object.values(value).every((entry) => typeof entry === 'string')
+  );
+}
+
+const MUTATING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+export function readCsrfCookie(): string | null {
+  return /(?:^|;\s*)jt_csrf=([^;]+)/.exec(document.cookie)?.[1] ?? null;
 }
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -39,6 +55,12 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   // navigateur poser lui-même `multipart/form-data` avec sa frontière.
   if (!headers.has('Content-Type') && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
+  }
+
+  if (MUTATING.has((init.method ?? 'GET').toUpperCase())) {
+    // Jeton lié à la session : le serveur compare cet en-tête à un HMAC de l'identifiant de session.
+    const csrf = readCsrfCookie();
+    if (csrf) headers.set('x-csrf-token', csrf);
   }
 
   try {
@@ -56,7 +78,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     const body = await readErrorBody(response);
     const message = typeof body.message === 'string' ? body.message : GENERIC_MESSAGE;
     const code = typeof body.code === 'string' ? body.code : undefined;
-    throw new ApiError(message, response.status, code);
+    const details = isStringRecord(body.details) ? body.details : undefined;
+    throw new ApiError(message, response.status, code, details);
   }
 
   if (response.status === 204) return undefined as T;
