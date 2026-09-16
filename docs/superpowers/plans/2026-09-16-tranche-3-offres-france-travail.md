@@ -115,6 +115,12 @@
 ### Task 1 — amendement après vérification (`2a7758c`, approuvé)
 Conforme à la spec §3 (7 modèles, 3 enums, `INTERIM`, uniques, index, cascades). `INTERIM` ajouté aussi au contrat partagé (`contractTypes` des préférences) et au formulaire des préférences web (« Intérim »). Migration `20260916203158_jobs_sources_saved_jobs_communes` appliquée via le script racine `pnpm db:migrate` (le `.env` racine n'est pas vu par `prisma` lancé depuis `apps/api`). `JobSearchSync` et `Commune` sans `createdAt/updatedAt`, comme `JobPreferences`. Compteurs inchangés (shared 89, api 138 + 77, web 88).
 
+### Task 2 — amendement après revue (`729566f` + correctif `d1ff134`)
+Conforme champ par champ. Correctifs : les champs numériques acceptent aussi des nombres (une `JobSearchQuery` se re-parse par son propre schéma ; `0` survit aux valeurs par défaut) ; `JobDetailDto` remplace `skills`/`sources` du résumé par les listes détaillées (plus de `sourceDetails`/`skillDetails`) ; `parseJobSearchParams` retente une fois en retirant seulement les champs invalides (un lien tronqué garde `q`) ; **clés d'URL courtes** portées par le contrat (`JOB_SEARCH_PARAM_KEYS`, `toJobSearchParams`) — le web n'a plus de table de correspondance à maintenir ; `JOB_REQUIREMENT_KINDS` + libellés ; schémas de tri/onglet exportés ; enums `contractType/remoteMode/experienceLevel` extraits de `profile.ts` (additif). shared 89 → 135 (dont 14 de `env.test.ts` de la tâche 3).
+
+### Task 3 — note d'exécution (`ebee020`, revue sécurité en cours)
+Client `fetch` natif : jeton en Redis (`jobs:ft:token`, TTL `expires_in − 60`, un seul renouvellement en vol), 8 appels/s via `RateLimiterService`, délai 10 s, une nouvelle tentative sur 5xx/429/réseau, 401 → invalidation + un renouvellement, 400 → seul `codeErreur` remonte ; JSON malformé → résultat vide + avertissement. Connecteur : `sort=1`, `publieeDepuis=31`, deux pages max, borne 1149. `JOB_SOURCE_CONNECTORS` = tableau (vide sans identifiants), `JobsModule` importé. Fixtures fictives (8 + 3 offres, 14 communes dont 2 invalides). api 138 → 162.
+
 ---
 
 ## Limites assumées
