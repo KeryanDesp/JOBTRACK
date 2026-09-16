@@ -18,8 +18,8 @@ coverage/
 playwright-report/
 test-results/
 
-# Documents personnels utilisés comme fixtures locales — jamais versionnés
-fixtures/private/
+# Documents personnels utilisés comme fixtures locales — jamais versionnés (à toute profondeur)
+**/fixtures/private/
 
 # Cache de dépendances Vite
 .vite/
