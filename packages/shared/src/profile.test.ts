@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { experienceSchema, jobPreferencesSchema, profileSchema, reorderSchema } from './profile';
+import { experienceSchema, jobPreferencesSchema, profileSchema, projectSchema, reorderSchema } from './profile';
 
 describe('experienceSchema', () => {
   const base = { company: 'Acme', role: 'Dev', startDate: '2023-09-01' };
@@ -39,10 +39,25 @@ describe('profileSchema', () => {
     expect(profileSchema.safeParse({ firstName: 'A', lastName: 'B', phone: '' }).success).toBe(true);
   });
 
-  it('transforme un nombre vide en undefined, jamais en 0', () => {
-    const parsed = profileSchema.parse({ firstName: 'A', lastName: 'B', yearsExperience: '' });
-    expect(parsed.yearsExperience).toBeUndefined();
-    expect('yearsExperience' in parsed).toBe(false);
+  it('transforme un nombre vide en null (effacable), jamais en 0, et laisse une cle absente inchangee', () => {
+    const cleared = profileSchema.parse({ firstName: 'A', lastName: 'B', yearsExperience: '' });
+    expect(cleared.yearsExperience).toBeNull();
+    const untouched = profileSchema.parse({ firstName: 'A', lastName: 'B' });
+    expect('yearsExperience' in untouched).toBe(false);
+  });
+
+  it('convertit une chaine de chiffres en nombre', () => {
+    expect(profileSchema.parse({ firstName: 'A', lastName: 'B', yearsExperience: '12' }).yearsExperience).toBe(12);
+  });
+
+  it('accepte zero', () => {
+    expect(profileSchema.parse({ firstName: 'A', lastName: 'B', yearsExperience: 0 }).yearsExperience).toBe(0);
+  });
+
+  it('refuse null, un booleen ou un tableau : plus de coercion implicite (z.coerce transformait true/false/[] en 1/0)', () => {
+    expect(profileSchema.safeParse({ firstName: 'A', lastName: 'B', yearsExperience: null }).success).toBe(false);
+    expect(profileSchema.safeParse({ firstName: 'A', lastName: 'B', yearsExperience: true }).success).toBe(false);
+    expect(profileSchema.safeParse({ firstName: 'A', lastName: 'B', yearsExperience: [] }).success).toBe(false);
   });
 
   it('transforme un texte vide en null et laisse une cle absente inchangee', () => {
@@ -50,6 +65,22 @@ describe('profileSchema', () => {
     expect(cleared.phone).toBeNull();
     const untouched = profileSchema.parse({ firstName: 'A', lastName: 'B' });
     expect('phone' in untouched).toBe(false);
+  });
+});
+
+describe('optionalUrl (via projectSchema.url)', () => {
+  it('refuse un protocole non http(s), meme syntaxiquement valide pour new URL()', () => {
+    const result = projectSchema.safeParse({ name: 'X', url: 'javascript:alert(1)' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepte une url http(s)', () => {
+    expect(projectSchema.parse({ name: 'X', url: 'https://x.y' }).url).toBe('https://x.y');
+  });
+
+  it('efface un champ url vide et laisse une cle absente inchangee', () => {
+    expect(projectSchema.parse({ name: 'X', url: '' }).url).toBeNull();
+    expect(projectSchema.parse({ name: 'X' }).url).toBeUndefined();
   });
 });
 
@@ -61,9 +92,22 @@ describe('jobPreferencesSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('applique 25 km par defaut au rayon, y compris pour un champ vide', () => {
-    expect(jobPreferencesSchema.parse(base).searchRadiusKm).toBe(25);
-    expect(jobPreferencesSchema.parse({ ...base, searchRadiusKm: '' }).searchRadiusKm).toBe(25);
+  // Anciennement : « applique 25 km par defaut au rayon, y compris pour un champ vide »
+  // (Task 2). Decision inversee ici : un PATCH partiel ne doit jamais reinitialiser une
+  // valeur deja enregistree. Le defaut (25, comme 'EUR' pour la devise) ne vit plus que
+  // dans la colonne Prisma (`@default`), jamais dans ce schema.
+  it('ne force plus 25 km par defaut : une cle absente reste absente, inchangee', () => {
+    const parsed = jobPreferencesSchema.parse(base);
+    expect('searchRadiusKm' in parsed).toBe(false);
+  });
+
+  it('une chaine vide efface desormais le rayon (comme les autres champs numeriques), sans retomber sur 25', () => {
+    expect(jobPreferencesSchema.parse({ ...base, searchRadiusKm: '' }).searchRadiusKm).toBeNull();
+  });
+
+  it('ne force plus EUR par defaut sur la devise : une cle absente reste absente, inchangee', () => {
+    const parsed = jobPreferencesSchema.parse(base);
+    expect('currency' in parsed).toBe(false);
   });
 });
 
@@ -71,5 +115,22 @@ describe('reorderSchema', () => {
   it('refuse une liste vide ou des identifiants non cuid', () => {
     expect(reorderSchema.safeParse({ ids: [] }).success).toBe(false);
     expect(reorderSchema.safeParse({ ids: ['pas-un-cuid'] }).success).toBe(false);
+  });
+
+  it('refuse plus de 100 identifiants', () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `c${i.toString().padStart(24, '0')}`);
+    expect(reorderSchema.safeParse({ ids }).success).toBe(false);
+  });
+
+  it('accepte jusqu_a 100 identifiants uniques', () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `c${i.toString().padStart(24, '0')}`);
+    expect(reorderSchema.safeParse({ ids }).success).toBe(true);
+  });
+
+  it('refuse des identifiants en double', () => {
+    const id = 'c123456789012345678901234';
+    const result = reorderSchema.safeParse({ ids: [id, id] });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toBe('Identifiants en double.');
   });
 });

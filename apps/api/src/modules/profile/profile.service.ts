@@ -34,7 +34,13 @@ export class ProfileService {
 
   async updatePreferences(userId: string, input: JobPreferencesInput): Promise<JobPreferences> {
     const profileId = await this.resolveProfileId(userId);
-    return this.prisma.jobPreferences.upsert({ where: { profileId }, create: { profileId, ...input }, update: input });
+    // `searchRadiusKm` est un entier NOT NULL en base (défaut 25) : contrairement aux autres
+    // champs numériques du schéma partagé, cette colonne n'a pas de valeur « effacée ». Une
+    // chaîne vide validée par optionalNumber (générique à tous les champs numériques) produit
+    // tout de même `null` ; on la traite comme une absence de changement, pas comme une erreur.
+    const { searchRadiusKm, ...rest } = input;
+    const data = { ...rest, searchRadiusKm: searchRadiusKm ?? undefined };
+    return this.prisma.jobPreferences.upsert({ where: { profileId }, create: { ...data, profileId }, update: data });
   }
 
   private notFound(): NotFoundException {

@@ -128,7 +128,8 @@ export class ProfileCollectionService {
         });
         updated += count;
       }
-      // Un identifiant étranger, inconnu ou dupliqué : on annule tout.
+      // Un identifiant étranger ou inconnu : on annule tout (les doublons sont désormais
+      // rejetés en amont par reorderSchema, avec un 400).
       if (updated !== ids.length) throw this.notFound();
     });
   }

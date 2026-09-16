@@ -173,38 +173,31 @@ describe('Profil et préférences', () => {
       method: 'PATCH',
       url: '/api/v1/profile',
       headers: as(alice),
-      payload: { firstName: 'Alice', lastName: 'Modifiée', city: 'Metz' },
+      payload: { firstName: 'Alice', lastName: 'Modifiée', city: 'Metz', title: 'Ingénieure' },
     });
     expect(update.statusCode).toBe(200);
+    const updatedBody = update.json<{ city: string | null; title: string | null }>();
+    expect(updatedBody.city).toBe('Metz');
+    expect(updatedBody.title).toBe('Ingénieure');
 
     const bobProfile = await app.inject({ method: 'GET', url: '/api/v1/profile', headers: as(bob) });
     expect(bobProfile.json<{ firstName: string }>().firstName).toBe('A');
 
-    const aliceProfile = await app.inject({ method: 'GET', url: '/api/v1/profile', headers: as(alice) });
-    expect(aliceProfile.json<{ city: string | null }>().city).toBe('Metz');
-
     // Le schéma partagé (packages/shared/src/profile.ts, optionalText) traduit une chaîne vide
     // en `null` côté validé : c'est cette valeur, et non un `null` JSON brut (rejeté par le
-    // schéma, qui n'accepte que '' ou une chaîne), qui efface la colonne côté Prisma.
-    const clearCity = await app.inject({
+    // schéma, qui n'accepte que '' ou une chaîne), qui efface la colonne côté Prisma. `title`
+    // n'est volontairement pas renvoyé ici : une clé absente ne doit pas l'effacer — si
+    // l'omission était traitée comme une effacement, cette assertion échouerait.
+    const clearCityOnly = await app.inject({
       method: 'PATCH',
       url: '/api/v1/profile',
       headers: as(alice),
       payload: { firstName: 'Alice', lastName: 'Modifiée', city: '' },
     });
-    expect(clearCity.statusCode).toBe(200);
-    expect(clearCity.json<{ city: string | null }>().city).toBeNull();
-
-    const withoutTitle = await app.inject({
-      method: 'PATCH',
-      url: '/api/v1/profile',
-      headers: as(alice),
-      payload: { firstName: 'Alice', lastName: 'Modifiée' },
-    });
-    expect(withoutTitle.statusCode).toBe(200);
-    expect(withoutTitle.json<{ title: string | null; city: string | null }>().title).toBeNull();
-    // Clé absente : n'écrit pas, donc `city` reste tel que laissé par l'étape précédente.
-    expect(withoutTitle.json<{ city: string | null }>().city).toBeNull();
+    expect(clearCityOnly.statusCode).toBe(200);
+    const cleared = clearCityOnly.json<{ city: string | null; title: string | null }>();
+    expect(cleared.city).toBeNull();
+    expect(cleared.title).toBe('Ingénieure');
   });
 
   it('gere le cycle complet d_une collection avec reordonnancement', async () => {
@@ -242,11 +235,15 @@ describe('Profil et préférences', () => {
     const afterReorder = await app.inject({ method: 'GET', url: '/api/v1/profile/experiences', headers: as(alice) });
     expect(afterReorder.json<{ id: string }[]>().map((row) => row.id)).toEqual(reversed);
 
+    // Permutation reelle (pas seulement une substitution sur place) : si la transaction
+    // n'annulait pas vraiment ses ecritures partielles, reversed[0] et reversed[2]
+    // se retrouveraient echanges malgre l'echec — l'assertion suivante ne serait plus
+    // vacueusement vraie.
     const withForeignId = await app.inject({
       method: 'PATCH',
       url: '/api/v1/profile/experiences/reorder',
       headers: as(alice),
-      payload: { ids: [reversed[0], bobId, reversed[2]] },
+      payload: { ids: [reversed[2], bobId, reversed[0]] },
     });
     expect(withForeignId.statusCode).toBe(404);
 
@@ -364,6 +361,45 @@ describe('Profil et préférences', () => {
     expect(updated.contractTypes).toEqual(['CDI']);
     expect(updated.searchRadiusKm).toBe(50);
 
+    // PATCH partiel : omettre `currency`/`searchRadiusKm` (tout en renvoyant les tableaux
+    // obligatoires) ne doit plus les réinitialiser à 'EUR'/25 — ils doivent survivre à la
+    // valeur déjà enregistrée ci-dessus (schéma partagé corrigé : plus de `.default('EUR')`
+    // ni de `?? 25`).
+    const partial = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/profile/preferences',
+      headers: as(alice),
+      payload: {
+        desiredRoles: ['Dev'],
+        desiredCategories: [],
+        locations: ['Metz'],
+        remoteModes: ['HYBRID'],
+        contractTypes: ['CDI'],
+      },
+    });
+    expect(partial.statusCode).toBe(200);
+    const partialBody = partial.json<{ currency: string; searchRadiusKm: number }>();
+    expect(partialBody.currency).toBe('EUR');
+    expect(partialBody.searchRadiusKm).toBe(50);
+
+    // `salaryMin: ''` efface désormais le champ (optionalNumber corrigé), au lieu de le
+    // laisser inchangé.
+    const clearedSalaryMin = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/profile/preferences',
+      headers: as(alice),
+      payload: {
+        desiredRoles: ['Dev'],
+        desiredCategories: [],
+        locations: ['Metz'],
+        remoteModes: ['HYBRID'],
+        contractTypes: ['CDI'],
+        salaryMin: '',
+      },
+    });
+    expect(clearedSalaryMin.statusCode).toBe(200);
+    expect(clearedSalaryMin.json<{ salaryMin: number | null }>().salaryMin).toBeNull();
+
     const invalid = await app.inject({
       method: 'PATCH',
       url: '/api/v1/profile/preferences',
@@ -394,5 +430,75 @@ describe('Profil et préférences', () => {
     });
     expect(noCsrf.statusCode).toBe(403);
     expect(noCsrf.json<{ code: string }>().code).toBe('CSRF_MISMATCH');
+  });
+
+  const COLLECTIONS: { path: string; payload: Record<string, unknown> }[] = [
+    { path: 'experiences', payload: { company: 'Acme', role: 'Dev', startDate: '2024-01-01', isCurrent: true } },
+    { path: 'educations', payload: { school: 'Université', degree: 'Master', startDate: '2020-09-01', endDate: '2023-06-30' } },
+    { path: 'skills', payload: { name: 'TypeScript' } },
+    { path: 'languages', payload: { name: 'Anglais', level: 'B2' } },
+    { path: 'certifications', payload: { name: 'AWS', issuer: 'Amazon', issuedAt: '2024-05-01' } },
+    { path: 'projects', payload: { name: 'JobTrack' } },
+  ];
+
+  it.each(COLLECTIONS)('isole $path entre deux utilisateurs', async ({ path, payload }) => {
+    const alice = await signUp(ALICE_EMAIL);
+    const bob = await signUp(BOB_EMAIL);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/profile/${path}`,
+      headers: as(alice),
+      payload,
+    });
+    expect(created.statusCode).toBe(201);
+    const { id } = created.json<{ id: string }>();
+
+    const bobList = await app.inject({ method: 'GET', url: `/api/v1/profile/${path}`, headers: as(bob) });
+    expect(bobList.statusCode).toBe(200);
+    expect(bobList.json()).toEqual([]);
+
+    const bobUpdate = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/profile/${path}/${id}`,
+      headers: as(bob),
+      payload,
+    });
+    expect(bobUpdate.statusCode).toBe(404);
+
+    const bobDelete = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/profile/${path}/${id}`,
+      headers: as(bob),
+    });
+    expect(bobDelete.statusCode).toBe(404);
+
+    const bobReorder = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/profile/${path}/reorder`,
+      headers: as(bob),
+      payload: { ids: [id] },
+    });
+    expect(bobReorder.statusCode).toBe(404);
+  });
+
+  it('refuse un reordonnancement avec des identifiants en double', async () => {
+    const alice = await signUp(ALICE_EMAIL);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/profile/experiences',
+      headers: as(alice),
+      payload: { company: 'Acme', role: 'Dev', startDate: '2024-01-01', isCurrent: true },
+    });
+    const { id } = created.json<{ id: string }>();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/profile/experiences/reorder',
+      headers: as(alice),
+      payload: { ids: [id, id] },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('VALIDATION_ERROR');
   });
 });

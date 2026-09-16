@@ -14,23 +14,44 @@ const optionalText = (max: number) =>
 
 /**
  * URL optionnelle de formulaire : mêmes règles que optionalText (`''` → `null`,
- * absente → `undefined`), mais avec validation d'URL sur la branche non vide.
+ * absente → `undefined`), avec validation d'URL et un schéma restreint à http(s) sur
+ * la branche non vide — un `javascript:` ou `data:` bien formé pour `new URL()` mais
+ * dangereux une fois affiché en lien cliquable ne doit jamais être accepté.
  */
 const optionalUrl = z
-  .union([z.literal(''), z.string().url('URL invalide.')])
+  .union([
+    z.literal(''),
+    z
+      .string()
+      .max(2000, 'Maximum 2000 caractères.')
+      .url('URL invalide.')
+      .refine((value) => /^https?:$/.test(new URL(value).protocol), 'URL invalide.'),
+  ])
   .optional()
   .transform((value) => (value === '' ? null : value));
 
 /**
- * Nombre optionnel saisi dans un formulaire. Un champ vide arrive en `''` :
- * il doit devenir `undefined`, pas `0`. Pas de z.preprocess, pour que z.input
- * reste typé côté React Hook Form.
+ * Nombre optionnel saisi dans un formulaire. `''` signifie « effacer » et devient
+ * `null` (colonne nullable), comme optionalText ; une clé absente reste `undefined`
+ * (inchangée). Seuls un nombre ou une chaîne de chiffres sont acceptés : pas de
+ * `z.coerce.number()`, dont la coercion implicite transformerait `true`/`false`/`[]`
+ * en 1/0 sans qu'aucune saisie utilisateur ne produise jamais ces valeurs. Pas de
+ * `z.preprocess` non plus, pour que `z.input` reste `'' | number | string`,
+ * exploitable côté React Hook Form.
  */
 const optionalNumber = (max: number) =>
   z
-    .union([z.literal(''), z.coerce.number().int().min(0, 'Valeur invalide.').max(max, `Maximum ${max}.`)])
+    .union([
+      z.literal(''),
+      z.number().int().min(0, 'Valeur invalide.').max(max, `Maximum ${max}.`),
+      z
+        .string()
+        .regex(/^\d+$/, 'Valeur invalide.')
+        .transform(Number)
+        .pipe(z.number().int().min(0, 'Valeur invalide.').max(max, `Maximum ${max}.`)),
+    ])
     .optional()
-    .transform((value) => (value === '' ? undefined : value));
+    .transform((value) => (value === '' ? null : value));
 
 /**
  * Zod ajoute au résultat une clé dont la valeur transformée vaut `undefined`
@@ -68,13 +89,18 @@ export const profileSchema = z
 
 export const jobPreferencesSchema = z
   .object({
-    desiredRoles: z.array(z.string().trim().min(1)).max(10),
-    desiredCategories: z.array(z.string().trim().min(1)).max(10),
+    desiredRoles: z.array(z.string().trim().min(1).max(80)).max(10),
+    desiredCategories: z.array(z.string().trim().min(1).max(80)).max(10),
     salaryMin: optionalNumber(1_000_000),
     salaryMax: optionalNumber(1_000_000),
-    currency: z.string().length(3).default('EUR'),
-    locations: z.array(z.string().trim().min(1)).max(10),
-    searchRadiusKm: optionalNumber(500).transform((value) => value ?? 25),
+    // Pas de `.default('EUR')` : la colonne Prisma porte déjà ce défaut à la création,
+    // et un défaut ici réinjecterait 'EUR' à chaque PATCH omettant `currency`, effaçant
+    // silencieusement une devise déjà enregistrée.
+    currency: z.string().length(3).optional(),
+    locations: z.array(z.string().trim().min(1).max(80)).max(10),
+    // Idem : `?? 25` forçait 25 dès que la clé était omise, réinitialisant un rayon
+    // déjà enregistré à chaque PATCH partiel. Le défaut (25) ne vit plus qu'en base.
+    searchRadiusKm: optionalNumber(500),
     remoteModes: z.array(z.enum(['ONSITE', 'HYBRID', 'REMOTE'])),
     contractTypes: z.array(
       z.enum(['CDI', 'CDD', 'INTERNSHIP', 'APPRENTICESHIP', 'FREELANCE', 'PART_TIME']),
@@ -82,10 +108,17 @@ export const jobPreferencesSchema = z
     availability: optionalText(80),
     experienceLevel: z.enum(['STUDENT', 'JUNIOR', 'MID', 'SENIOR', 'LEAD']).optional(),
   })
-  .refine((value) => value.salaryMin === undefined || value.salaryMax === undefined || value.salaryMin <= value.salaryMax, {
-    message: 'Le salaire minimum doit être inférieur au maximum.',
-    path: ['salaryMax'],
-  })
+  // `null` (champ effacé) compte comme « rien à comparer », au même titre que `undefined`
+  // (champ omis) : optionalNumber peut désormais produire les deux.
+  .refine(
+    (value) =>
+      value.salaryMin === undefined ||
+      value.salaryMin === null ||
+      value.salaryMax === undefined ||
+      value.salaryMax === null ||
+      value.salaryMin <= value.salaryMax,
+    { message: 'Le salaire minimum doit être inférieur au maximum.', path: ['salaryMax'] },
+  )
   .transform(omitUndefinedValues);
 
 export const experienceSchema = z
@@ -142,11 +175,15 @@ export const projectSchema = z.object({
   name: z.string().trim().min(1, 'Ce champ est obligatoire.').max(120),
   description: optionalText(2000),
   url: optionalUrl,
-  technologies: z.array(z.string().trim().min(1)).max(20).default([]),
+  technologies: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
 });
 
 export const reorderSchema = z.object({
-  ids: z.array(z.string().cuid()).min(1),
+  ids: z
+    .array(z.string().cuid())
+    .min(1)
+    .max(100)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'Identifiants en double.' }),
 });
 
 export type ProfileInput = z.infer<typeof profileSchema>;
