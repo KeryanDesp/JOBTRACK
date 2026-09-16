@@ -101,6 +101,18 @@
 - [ ] Recette des critères (spec §10) par le coordinateur, dont l'extraction réelle sur `fixtures/cv-demo.pdf` avec la clé de l'utilisateur.
 - [ ] Commit : `test: parcours d onboarding end-to-end`.
 
+### Task 1 — amendement après revue (`cbbd72a`, approuvé)
+Conforme mot pour mot. Notes appliquées ensuite : `CvImport.extracted` (`Json?`) se lit par `cvExtractionSchema.safeParse`, jamais par cast, et s'efface par `Prisma.DbNull` ; côté web, `completeOnboarding()` doit mettre à jour la session en cache (`useSetSession`) pour faire disparaître la bannière sans rechargement. Compteurs : api 93 unitaires, 50 e2e.
+
+### Task 2 — amendement après revue (`c72cc8c` + correctif `2b2f98e`)
+Critique corrigé : un brouillon extrait ne repassait pas `cvApplySchema` (les helpers stricts du profil refusaient `null`). `profile.ts` **exporte** désormais `optionalText`/`optionalUrl`/`optionalNumber`/`omitUndefinedValues`, et `optionalText`/`optionalUrl` acceptent `null` en entrée (`'' | null` → `null`, clé absente inchangée — sémantique PATCH intacte) ; test d'aller-retour sur les six blocs. Aussi : accents restaurés dans les messages, refinements de dates sur formation/certification, `draftUrl` borné à 2000, listes de préférences filtrées au lieu d'échouer, `return z.NEVER` après `addIssue` (types de sortie justes), années plausibles (1900 … N+1), `3/2021` accepté, `.default` sur toutes les clés de `cvApplySchema`, types `*Draft` exportés. **`cvExtractionWireSchema`** : miroir plat (nullable, sans transform/défaut/refine, `.strict()`) destiné à `output_config.format` — l'API fait `parse` avec le schéma fil puis normalise avec `cvExtractionSchema`. Shared : 41 → 86 tests.
+
+### Task 3 — amendement après revue (`a0131ed` + correctif `369caba`)
+`@fastify/multipart@8.3.1` (ligne Fastify 4), `@anthropic-ai/sdk@0.126.0` (entrée `minimumReleaseAgeExclude` dans `pnpm-workspace.yaml`, commentée : la version est plus récente que le délai de sécurité pnpm), `mammoth@1.12.3`. Blocage corrigé : `STORAGE_DIR` relatif était résolu depuis `process.cwd()` (= `apps/api` sous `nest --watch`) → `apps/api/storage/` non ignoré ; désormais résolu depuis la **racine du monorepo** (dossier contenant `pnpm-workspace.yaml`), et `.gitignore` couvre `/storage/` **et** `/apps/api/storage/` (le motif nu `storage/` aurait masqué `src/common/storage/`). `DiskFileStorage implements FileStorage`, suppression idempotente, fichier temporaire nettoyé si `rename` échoue ; `DiskFileStorage` fourni par `useFactory` (Nest ne peut pas injecter un paramètre `string`). `RateLimiterService` (Lua, 503 fermé) partagé par `RateLimitGuard` et `UserRateLimitGuard` ; la garde utilisateur refuse proprement (`NOT_AUTHENTICATED`) si posée sur une route publique. api : 104 unitaires.
+
+### Task 4 — note d'exécution (`bd0c165`, revue en cours)
+`zodOutputFormat` (`@anthropic-ai/sdk` 0.126) appelle `z.toJSONSchema` de **zod v4** : un schéma zod v3 plante (`.def` absent). Le schéma « fil » `cvExtractionWireSchema` est donc construit avec `import { z } from 'zod/v4'` (sous-chemin du même paquet `zod@3.25`, aucune dépendance ajoutée) ; `cvExtractionSchema` (v3, normalisation) reste inchangé. api : 111 unitaires.
+
 ---
 
 ## Limites assumées
