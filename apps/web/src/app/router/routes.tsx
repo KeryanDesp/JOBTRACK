@@ -7,6 +7,7 @@ import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { LandingPage } from '@/features/landing/landing-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
+import { OnboardingPage } from '@/features/onboarding/pages/onboarding-page';
 import { ProfilePage } from '@/features/profile/pages/profile-page';
 import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { AppLayout } from '../layouts/app-layout';
@@ -21,6 +22,10 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute />,
     children: [
+      // Hors `AppLayout` (pas de sidebar/navigation pendant l'accueil) mais toujours
+      // sous `ProtectedRoute` : un visiteur non connecté ne doit pas y accéder.
+      { path: '/onboarding', element: <OnboardingPage /> },
+      { path: '/onboarding/:step', element: <OnboardingPage /> },
       {
         element: <AppLayout />,
         // Les autres écrans n'ont pas encore leur implémentation : ils restent sur

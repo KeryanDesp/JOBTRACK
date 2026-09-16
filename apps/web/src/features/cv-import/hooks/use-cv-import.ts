@@ -25,11 +25,17 @@ export function useCvCapabilities() {
   });
 }
 
-/** Brouillon d'un import (revue, retenter après échec). */
-export function useCvImport(id: string) {
+/**
+ * Brouillon d'un import (revue, retenter après échec). `id` accepte `null` —
+ * l'étape « Préférences » de l'accueil n'a pas toujours d'import en cours
+ * (saisie manuelle, étape passée) : `enabled: false` désactive alors la
+ * requête plutôt que d'appeler `fetchCvImport` avec un identifiant invalide.
+ */
+export function useCvImport(id: string | null) {
   return useQuery({
-    queryKey: cvImportKeys.detail(id),
-    queryFn: () => fetchCvImport(id),
+    queryKey: cvImportKeys.detail(id ?? 'none'),
+    queryFn: () => fetchCvImport(id as string),
+    enabled: id !== null,
   });
 }
 
