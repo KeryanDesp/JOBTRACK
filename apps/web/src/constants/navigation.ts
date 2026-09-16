@@ -29,7 +29,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/resume', label: 'Mon CV', icon: FileText, available: false, primary: true },
   { to: '/automation', label: 'Automatisation', icon: Zap, available: false, primary: false },
   { to: '/analytics', label: 'Statistiques', icon: BarChart3, available: false, primary: false },
-  { to: '/favorites', label: 'Favoris', icon: Heart, available: false, primary: false },
+  { to: '/favorites', label: 'Favoris', icon: Heart, available: true, primary: false },
   { to: '/alerts', label: 'Alertes', icon: Bell, available: false, primary: false },
   { to: '/profile', label: 'Mon profil', icon: User, available: true, primary: false },
   { to: '/settings', label: 'Paramètres', icon: Settings, available: true, primary: false },

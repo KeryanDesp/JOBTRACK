@@ -6,6 +6,8 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { ImportCvPage } from '@/features/cv-import/pages/import-cv-page';
 import { LandingPage } from '@/features/landing/landing-page';
+import { FavoritesPage } from '@/features/jobs/pages/favorites-page';
+import { JobDetailPage } from '@/features/jobs/pages/job-detail-page';
 import { JobsPage } from '@/features/jobs/pages/jobs-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
@@ -37,10 +39,14 @@ export const router = createBrowserRouter([
           // Sous `AppLayout` comme `/profile`, mais absente de `NAV_ITEMS` (pas d'entrée de
           // navigation propre : on y accède depuis le bouton « Importer un CV » du profil).
           { path: '/profile/import', element: <ImportCvPage /> },
+          // Sous `AppLayout` comme `/jobs`, mais absente de `NAV_ITEMS` (pas d'entrée de
+          // navigation propre : on y accède depuis une carte d'offre).
+          { path: '/jobs/:id', element: <JobDetailPage /> },
           ...NAV_ITEMS.map((item) => {
             if (item.to === '/profile') return { path: item.to, element: <ProfilePage /> };
             if (item.to === '/settings') return { path: item.to, element: <SettingsPage /> };
             if (item.to === '/jobs') return { path: item.to, element: <JobsPage /> };
+            if (item.to === '/favorites') return { path: item.to, element: <FavoritesPage /> };
             return { path: item.to, element: <ComingSoonPage label={item.label} /> };
           }),
         ],
