@@ -9,21 +9,24 @@ import { emptyToNull } from '@/lib/forms';
 import { formatMonthYear } from '@/lib/dates';
 import type { CollectionItem } from '@/services/api/profile';
 
+/** `expiresAt` reste une chaîne côté formulaire (voir `experiences-section.tsx`). */
+type CertificationFormValues = Omit<CertificationFormInput, 'expiresAt'> & { expiresAt: string };
+
 // `expiresAt` (nullable, sans branche `''`) a besoin de `null` ; `credentialUrl`
 // (URL optionnelle) accepte déjà `''` nativement, comme les champs texte optionnels.
-function normalize(raw: unknown): unknown {
-  return emptyToNull(raw as Record<string, unknown>, ['expiresAt']);
+function normalize(raw: CertificationFormValues): unknown {
+  return emptyToNull(raw, ['expiresAt']);
 }
 
-const DEFAULT_VALUES = {
+const DEFAULT_VALUES: CertificationFormValues = {
   name: '',
   issuer: '',
   issuedAt: '',
   expiresAt: '',
   credentialUrl: '',
-} as unknown as CertificationFormInput;
+};
 
-function toFormValues(item: CollectionItem<'certifications'>): CertificationFormInput {
+function toFormValues(item: CollectionItem<'certifications'>): CertificationFormValues {
   return {
     name: item.name,
     issuer: item.issuer,
@@ -33,7 +36,7 @@ function toFormValues(item: CollectionItem<'certifications'>): CertificationForm
   };
 }
 
-function CertificationFields({ form }: { form: UseFormReturn<CertificationFormInput> }) {
+function CertificationFields({ form }: { form: UseFormReturn<CertificationFormValues> }) {
   const {
     register,
     formState: { errors },
@@ -44,33 +47,61 @@ function CertificationFields({ form }: { form: UseFormReturn<CertificationFormIn
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="cert-name">Nom</Label>
-          <Input id="cert-name" aria-invalid={errors.name ? true : undefined} {...register('name')} />
-          <FormFieldError message={errors.name?.message} />
+          <Input
+            id="cert-name"
+            aria-invalid={errors.name ? true : undefined}
+            aria-describedby={errors.name ? 'cert-name-error' : undefined}
+            {...register('name')}
+          />
+          <FormFieldError id="cert-name-error" message={errors.name?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="cert-issuer">Organisme</Label>
-          <Input id="cert-issuer" aria-invalid={errors.issuer ? true : undefined} {...register('issuer')} />
-          <FormFieldError message={errors.issuer?.message} />
+          <Input
+            id="cert-issuer"
+            aria-invalid={errors.issuer ? true : undefined}
+            aria-describedby={errors.issuer ? 'cert-issuer-error' : undefined}
+            {...register('issuer')}
+          />
+          <FormFieldError id="cert-issuer-error" message={errors.issuer?.message} />
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="cert-issued">Date d'obtention</Label>
-          <Input id="cert-issued" type="date" aria-invalid={errors.issuedAt ? true : undefined} {...register('issuedAt')} />
-          <FormFieldError message={errors.issuedAt?.message} />
+          <Input
+            id="cert-issued"
+            type="date"
+            aria-invalid={errors.issuedAt ? true : undefined}
+            aria-describedby={errors.issuedAt ? 'cert-issued-error' : undefined}
+            {...register('issuedAt')}
+          />
+          <FormFieldError id="cert-issued-error" message={errors.issuedAt?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="cert-expires">Date d'expiration</Label>
-          <Input id="cert-expires" type="date" aria-invalid={errors.expiresAt ? true : undefined} {...register('expiresAt')} />
-          <FormFieldError message={errors.expiresAt?.message} />
+          <Input
+            id="cert-expires"
+            type="date"
+            aria-invalid={errors.expiresAt ? true : undefined}
+            aria-describedby={errors.expiresAt ? 'cert-expires-error' : undefined}
+            {...register('expiresAt')}
+          />
+          <FormFieldError id="cert-expires-error" message={errors.expiresAt?.message} />
         </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="cert-url">Lien du justificatif</Label>
-        <Input id="cert-url" type="url" aria-invalid={errors.credentialUrl ? true : undefined} {...register('credentialUrl')} />
-        <FormFieldError message={errors.credentialUrl?.message} />
+        <Input
+          id="cert-url"
+          type="url"
+          aria-invalid={errors.credentialUrl ? true : undefined}
+          aria-describedby={errors.credentialUrl ? 'cert-url-error' : undefined}
+          {...register('credentialUrl')}
+        />
+        <FormFieldError id="cert-url-error" message={errors.credentialUrl?.message} />
       </div>
     </div>
   );

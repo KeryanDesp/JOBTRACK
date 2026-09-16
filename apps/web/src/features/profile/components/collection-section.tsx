@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, type LucideIcon, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import type { DefaultValues, Path, Resolver, UseFormReturn } from 'react-hook-form';
+import type { DefaultValues, FieldValues, Path, UseFormReturn } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import type { ZodType, ZodTypeDef } from 'zod';
@@ -27,7 +27,7 @@ import {
   type CollectionOutputs,
 } from '@/services/api/profile';
 
-interface CollectionSectionProps<N extends CollectionName> {
+interface CollectionSectionProps<N extends CollectionName, TValues extends FieldValues> {
   name: N;
   title: string;
   description: string;
@@ -38,13 +38,13 @@ interface CollectionSectionProps<N extends CollectionName> {
   deleteLabel: string;
   /** Le schéma zod partagé de `@jobtrack/shared` — jamais un doublon ad hoc. */
   schema: ZodType<CollectionOutputs[N], ZodTypeDef, unknown>;
-  defaultValues: CollectionInputs[N];
-  /** Adapte les valeurs brutes du formulaire à ce que `schema` accepte en entrée (voir `lib/forms.ts`). */
-  normalize: (raw: unknown) => unknown;
+  defaultValues: TValues;
+  /** Adapte les valeurs brutes du formulaire (`TValues`, ce qu'un champ HTML produit) à ce que `schema` accepte en entrée. */
+  normalize: (raw: TValues) => unknown;
   /** Pré-remplit le formulaire d'édition depuis l'item de l'API (`null` → `''`, tableaux → chaîne jointe). */
-  toFormValues: (item: CollectionItem<N>) => CollectionInputs[N];
+  toFormValues: (item: CollectionItem<N>) => TValues;
   renderSummary: (item: CollectionItem<N>) => ReactNode;
-  renderFields: (form: UseFormReturn<CollectionInputs[N]>) => ReactNode;
+  renderFields: (form: UseFormReturn<TValues>) => ReactNode;
 }
 
 type DialogState<N extends CollectionName> = { mode: 'create' } | { mode: 'edit'; item: CollectionItem<N> } | null;
@@ -54,11 +54,12 @@ type DialogState<N extends CollectionName> = { mode: 'create' } | { mode: 'edit'
  * compétences, langues, certifications, projets) : liste avec chargement /
  * vide / erreur, ajout et édition via une boîte de dialogue partagée,
  * suppression avec confirmation, réordonnancement par boutons (pas de
- * glisser-déposer). Typée par `N` : aucune coercion `Record<string, unknown>`
- * ni érasure de schéma, chaque instanciation (`name="experiences"`, etc.)
- * garde les types précis de `@/services/api/profile`.
+ * glisser-déposer). Typée par `N` (la collection) et `TValues` (les valeurs
+ * de formulaire réellement produites par les champs HTML de cette
+ * collection, inférées depuis `defaultValues`) : aucune coercion
+ * `Record<string, unknown>` ni érasure de schéma à la frontière publique.
  */
-export function CollectionSection<N extends CollectionName>({
+export function CollectionSection<N extends CollectionName, TValues extends FieldValues>({
   name,
   title,
   description,
@@ -72,7 +73,7 @@ export function CollectionSection<N extends CollectionName>({
   toFormValues,
   renderSummary,
   renderFields,
-}: CollectionSectionProps<N>) {
+}: CollectionSectionProps<N, TValues>) {
   const queryClient = useQueryClient();
   const queryKey = ['profile', name] as const;
   const query = useQuery({ queryKey, queryFn: () => fetchCollection(name) });
@@ -81,15 +82,16 @@ export function CollectionSection<N extends CollectionName>({
   const [pendingDelete, setPendingDelete] = useState<CollectionItem<N> | null>(null);
   const [formAlert, setFormAlert] = useState<string>();
 
-  // `CollectionInputs[N]` avec `N` encore générique ici (pas une collection
-  // littérale) : TypeScript ne distribue pas l'accès indexé sur l'union des six
-  // formes et réduit l'intersection à `never` dès qu'un champ (ex. `level`,
-  // skill vs langue) diffère entre elles. Ces deux casts sont le seul endroit
-  // qui contourne cette limitation ; la frontière publique du composant
-  // (props, `renderFields`) reste typée précisément par `N`.
-  const form = useForm<CollectionInputs[N], unknown, CollectionInputs[N]>({
-    resolver: zodResolverWith(schema, normalize) as unknown as Resolver<CollectionInputs[N], unknown, CollectionInputs[N]>,
-    defaultValues: defaultValues as DefaultValues<CollectionInputs[N]>,
+  const form = useForm<TValues, unknown, CollectionOutputs[N]>({
+    // `raw` est ici nécessairement les valeurs actuelles du formulaire (`TValues`) : React
+    // Hook Form appelle le résolveur avec son propre état interne, que le type public de
+    // `zodResolverWith` n'exprime que comme `unknown` (voir `lib/forms.ts`) puisqu'il ne
+    // connaît pas la forme concrète attendue par chaque section.
+    resolver: zodResolverWith<TValues, CollectionOutputs[N]>(schema, (raw) => normalize(raw as TValues)),
+    // Seul cast restant : `defaultValues` (une valeur `TValues` concrète) vers le type
+    // `DefaultValues<TValues>` de React Hook Form (une version « deep partial » de
+    // `TValues`) — une valeur complète satisfait toujours une version partielle d'elle-même.
+    defaultValues: defaultValues as DefaultValues<TValues>,
   });
 
   function openCreate() {
@@ -113,7 +115,7 @@ export function CollectionSection<N extends CollectionName>({
       void queryClient.invalidateQueries({ queryKey });
     },
     onError: (error: unknown) => {
-      const fields = Object.keys(form.getValues()) as Path<CollectionInputs[N]>[];
+      const fields = Object.keys(form.getValues()) as Path<TValues>[];
       if (applyFieldErrors(error, form.setError, fields)) {
         setFormAlert(undefined);
         return;
@@ -177,6 +179,11 @@ export function CollectionSection<N extends CollectionName>({
     saveMutation.mutate(body);
   }
 
+  // Pendant une suppression, « Modifier »/« Supprimer » sont désactivés sur toutes les
+  // lignes (pas seulement celle visée) : éviter d'ouvrir une édition ou une seconde
+  // suppression sur une liste dont l'ordre/le contenu est en train de changer côté serveur.
+  const rowMutationPending = deleteMutation.isPending;
+
   return (
     <>
       <Card>
@@ -223,7 +230,7 @@ export function CollectionSection<N extends CollectionName>({
                         variant="ghost"
                         size="icon-sm"
                         aria-label="Monter"
-                        disabled={index === 0}
+                        disabled={index === 0 || reorderMutation.isPending}
                         onClick={() => move(query.data, index, -1)}
                       >
                         <ChevronUp />
@@ -232,18 +239,25 @@ export function CollectionSection<N extends CollectionName>({
                         variant="ghost"
                         size="icon-sm"
                         aria-label="Descendre"
-                        disabled={index === query.data.length - 1}
+                        disabled={index === query.data.length - 1 || reorderMutation.isPending}
                         onClick={() => move(query.data, index, 1)}
                       >
                         <ChevronDown />
                       </Button>
-                      <Button variant="ghost" size="icon-sm" aria-label="Modifier" onClick={() => openEdit(item)}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Modifier"
+                        disabled={rowMutationPending}
+                        onClick={() => openEdit(item)}
+                      >
                         <Pencil />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         aria-label={deleteLabel}
+                        disabled={rowMutationPending}
                         onClick={() => setPendingDelete(item)}
                       >
                         <Trash2 />
@@ -257,13 +271,17 @@ export function CollectionSection<N extends CollectionName>({
       </Card>
 
       <Dialog open={dialogState !== null} onOpenChange={(open) => !open && setDialogState(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{dialogState?.mode === 'edit' ? 'Modifier' : addLabel}</DialogTitle>
           </DialogHeader>
           <form className="space-y-4" onSubmit={(event) => void form.handleSubmit(onSubmit)(event)} noValidate>
             <ServerErrorAlert message={formAlert} />
-            {renderFields(form)}
+            {/* `renderFields` n'utilise jamais `handleSubmit` (seul membre dont le type dépend
+                du 3ᵉ paramètre générique `CollectionOutputs[N]` de `form`) : caster vers
+                `UseFormReturn<TValues>` (défaut `TTransformedValues = TValues`) n'efface donc
+                rien d'observable pour `register`/`watch`/`setValue`/`control`/`formState`. */}
+            {renderFields(form as unknown as UseFormReturn<TValues>)}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogState(null)}>
                 Annuler
@@ -277,7 +295,7 @@ export function CollectionSection<N extends CollectionName>({
       </Dialog>
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Supprimer cet élément ?</DialogTitle>
             <DialogDescription>Cette action est irréversible.</DialogDescription>

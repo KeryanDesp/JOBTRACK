@@ -1,7 +1,7 @@
-import { jobPreferencesSchema, type JobPreferencesFormInput } from '@jobtrack/shared';
+import { jobPreferencesSchema, type JobPreferencesFormInput, type JobPreferencesInput } from '@jobtrack/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Controller, useForm, type Resolver } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { ErrorState } from '@/components/shared/error-state';
 import { Button } from '@/components/ui/button';
@@ -15,9 +15,19 @@ import { FormFieldError } from '@/features/auth/components/form-field-error';
 import { ServerErrorAlert } from '@/features/auth/components/server-error-alert';
 import { applyFieldErrors, topLevelMessage } from '@/features/auth/lib/form-errors';
 import { joinTags, splitTags, zodResolverWith } from '@/lib/forms';
-import { fetchPreferences, updatePreferences, type ContractType, type PreferencesDto, type RemoteMode } from '@/services/api/profile';
+import {
+  fetchPreferences,
+  updatePreferences,
+  type ContractType,
+  type ExperienceLevel,
+  type PreferencesDto,
+  type RemoteMode,
+} from '@/services/api/profile';
 
 const PREFERENCES_QUERY_KEY = ['profile', 'preferences'] as const;
+
+/** Sentinelle d'affichage pour « aucun niveau choisi » : jamais stockée dans le formulaire. */
+const UNSET = 'UNSET' as const;
 
 const REMOTE_MODE_OPTIONS: { value: RemoteMode; label: string }[] = [
   { value: 'ONSITE', label: 'Sur site' },
@@ -34,7 +44,7 @@ const CONTRACT_TYPE_OPTIONS: { value: ContractType; label: string }[] = [
   { value: 'PART_TIME', label: 'Temps partiel' },
 ];
 
-const EXPERIENCE_LEVEL_LABELS: Record<string, string> = {
+const EXPERIENCE_LEVEL_LABELS: Record<ExperienceLevel, string> = {
   STUDENT: 'Étudiant',
   JUNIOR: 'Junior',
   MID: 'Confirmé',
@@ -55,22 +65,32 @@ const FIELDS = [
   'experienceLevel',
 ] as const;
 
+/**
+ * Les trois champs « tags » restent des chaînes séparées par des virgules côté
+ * formulaire (voir `sections/experiences-section.tsx` pour le même principe
+ * appliqué à une date). `remoteModes`/`contractTypes` sont déjà des tableaux
+ * (cases à cocher) ; `experienceLevel` reste optionnel comme dans le schéma —
+ * la sentinelle `UNSET` n'existe qu'au niveau de l'affichage du `Select`.
+ */
+type PreferencesFormValues = Omit<JobPreferencesFormInput, 'desiredRoles' | 'desiredCategories' | 'locations'> & {
+  desiredRoles: string;
+  desiredCategories: string;
+  locations: string;
+};
+
 function toggle(list: readonly string[], value: string): string[] {
   return list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value];
 }
 
-// Les trois champs « tags » sont saisis en texte séparé par des virgules côté
-// formulaire ; le schéma partagé attend des tableaux. `remoteModes`/`contractTypes`
-// sont déjà des tableaux (cases à cocher) et n'ont pas besoin de conversion.
-function normalize(raw: unknown): unknown {
-  let value = raw as Record<string, unknown>;
+function normalize(raw: PreferencesFormValues): unknown {
+  let value = raw as unknown as Record<string, unknown>;
   value = splitTags(value, 'desiredRoles');
   value = splitTags(value, 'desiredCategories');
   value = splitTags(value, 'locations');
   return value;
 }
 
-function toFormValues(preferences: PreferencesDto): JobPreferencesFormInput {
+function toFormValues(preferences: PreferencesDto): PreferencesFormValues {
   return {
     desiredRoles: joinTags(preferences.desiredRoles),
     desiredCategories: joinTags(preferences.desiredCategories),
@@ -81,11 +101,11 @@ function toFormValues(preferences: PreferencesDto): JobPreferencesFormInput {
     remoteModes: preferences.remoteModes,
     contractTypes: preferences.contractTypes,
     availability: preferences.availability ?? '',
-    experienceLevel: preferences.experienceLevel ?? 'JUNIOR',
-  } as unknown as JobPreferencesFormInput;
+    experienceLevel: preferences.experienceLevel ?? undefined,
+  };
 }
 
-const DEFAULT_VALUES = {
+const DEFAULT_VALUES: PreferencesFormValues = {
   desiredRoles: '',
   desiredCategories: '',
   salaryMin: '',
@@ -95,18 +115,17 @@ const DEFAULT_VALUES = {
   remoteModes: [],
   contractTypes: [],
   availability: '',
-  experienceLevel: 'JUNIOR',
-} as unknown as JobPreferencesFormInput;
+};
 
 export function PreferencesCard() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: PREFERENCES_QUERY_KEY, queryFn: fetchPreferences });
   const [formAlert, setFormAlert] = useState<string>();
 
-  const form = useForm<JobPreferencesFormInput>({
-    // Cast justifié comme dans `personal-info-card.tsx` : les cinq tableaux sont des clés
-    // obligatoires de `JobPreferencesFormInput`, qu'un `Record<string, any>` ne garantit pas.
-    resolver: zodResolverWith(jobPreferencesSchema, normalize) as unknown as Resolver<JobPreferencesFormInput>,
+  const form = useForm<PreferencesFormValues, unknown, JobPreferencesInput>({
+    resolver: zodResolverWith<PreferencesFormValues, JobPreferencesInput>(jobPreferencesSchema, (raw) =>
+      normalize(raw as PreferencesFormValues),
+    ),
     defaultValues: DEFAULT_VALUES,
   });
 
@@ -122,7 +141,7 @@ export function PreferencesCard() {
       form.reset(toFormValues(updated));
     },
     onError: (error: unknown) => {
-      if (applyFieldErrors<JobPreferencesFormInput>(error, form.setError, FIELDS)) {
+      if (applyFieldErrors<PreferencesFormValues>(error, form.setError, FIELDS)) {
         setFormAlert(undefined);
         return;
       }
@@ -133,6 +152,8 @@ export function PreferencesCard() {
   function onSubmit(): void {
     mutation.mutate(normalize(form.getValues()) as JobPreferencesFormInput);
   }
+
+  const errors = form.formState.errors;
 
   if (query.isPending) {
     return (
@@ -174,23 +195,49 @@ export function PreferencesCard() {
 
           <div className="space-y-2">
             <Label htmlFor="desiredRoles">Postes recherchés</Label>
-            <Input id="desiredRoles" {...form.register('desiredRoles')} />
-            <p className="text-muted-foreground text-sm">Séparez par des virgules.</p>
+            <Input
+              id="desiredRoles"
+              aria-invalid={errors.desiredRoles ? true : undefined}
+              aria-describedby={errors.desiredRoles ? 'desiredRoles-hint desiredRoles-error' : 'desiredRoles-hint'}
+              {...form.register('desiredRoles')}
+            />
+            <p id="desiredRoles-hint" className="text-muted-foreground text-sm">
+              Séparez par des virgules.
+            </p>
+            <FormFieldError id="desiredRoles-error" message={errors.desiredRoles?.message} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="desiredCategories">Catégories recherchées</Label>
-            <Input id="desiredCategories" {...form.register('desiredCategories')} />
-            <p className="text-muted-foreground text-sm">Séparez par des virgules.</p>
+            <Input
+              id="desiredCategories"
+              aria-invalid={errors.desiredCategories ? true : undefined}
+              aria-describedby={
+                errors.desiredCategories ? 'desiredCategories-hint desiredCategories-error' : 'desiredCategories-hint'
+              }
+              {...form.register('desiredCategories')}
+            />
+            <p id="desiredCategories-hint" className="text-muted-foreground text-sm">
+              Séparez par des virgules.
+            </p>
+            <FormFieldError id="desiredCategories-error" message={errors.desiredCategories?.message} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="salaryMin">Salaire minimum</Label>
               <div className="flex items-center gap-2">
-                <Input id="salaryMin" type="number" min={0} {...form.register('salaryMin')} />
+                <Input
+                  id="salaryMin"
+                  type="number"
+                  min={0}
+                  aria-invalid={errors.salaryMin ? true : undefined}
+                  aria-describedby={errors.salaryMin ? 'salaryMin-error' : undefined}
+                  {...form.register('salaryMin')}
+                />
                 <span className="text-muted-foreground text-sm">€</span>
               </div>
+              <FormFieldError id="salaryMin-error" message={errors.salaryMin?.message} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="salaryMax">Salaire maximum</Label>
@@ -199,12 +246,13 @@ export function PreferencesCard() {
                   id="salaryMax"
                   type="number"
                   min={0}
-                  aria-invalid={form.formState.errors.salaryMax ? true : undefined}
+                  aria-invalid={errors.salaryMax ? true : undefined}
+                  aria-describedby={errors.salaryMax ? 'salaryMax-error' : undefined}
                   {...form.register('salaryMax')}
                 />
                 <span className="text-muted-foreground text-sm">€</span>
               </div>
-              <FormFieldError message={form.formState.errors.salaryMax?.message} />
+              <FormFieldError id="salaryMax-error" message={errors.salaryMax?.message} />
             </div>
           </div>
 
@@ -215,22 +263,38 @@ export function PreferencesCard() {
 
           <div className="space-y-2">
             <Label htmlFor="locations">Lieux recherchés</Label>
-            <Input id="locations" {...form.register('locations')} />
-            <p className="text-muted-foreground text-sm">Séparez par des virgules.</p>
+            <Input
+              id="locations"
+              aria-invalid={errors.locations ? true : undefined}
+              aria-describedby={errors.locations ? 'locations-hint locations-error' : 'locations-hint'}
+              {...form.register('locations')}
+            />
+            <p id="locations-hint" className="text-muted-foreground text-sm">
+              Séparez par des virgules.
+            </p>
+            <FormFieldError id="locations-error" message={errors.locations?.message} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="searchRadiusKm">Rayon de recherche (km)</Label>
-            <Input id="searchRadiusKm" type="number" min={0} {...form.register('searchRadiusKm')} />
+            <Input
+              id="searchRadiusKm"
+              type="number"
+              min={0}
+              aria-invalid={errors.searchRadiusKm ? true : undefined}
+              aria-describedby={errors.searchRadiusKm ? 'searchRadiusKm-error' : undefined}
+              {...form.register('searchRadiusKm')}
+            />
+            <FormFieldError id="searchRadiusKm-error" message={errors.searchRadiusKm?.message} />
           </div>
 
           <div className="space-y-2">
-            <Label>Modes de travail</Label>
+            <Label id="remoteModes-label">Modes de travail</Label>
             <Controller
               control={form.control}
               name="remoteModes"
               render={({ field }) => (
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-4" aria-labelledby="remoteModes-label">
                   {REMOTE_MODE_OPTIONS.map((option) => {
                     const selected = (field.value as string[] | undefined) ?? [];
                     return (
@@ -246,15 +310,16 @@ export function PreferencesCard() {
                 </div>
               )}
             />
+            <FormFieldError message={errors.remoteModes?.message} />
           </div>
 
           <div className="space-y-2">
-            <Label>Types de contrat</Label>
+            <Label id="contractTypes-label">Types de contrat</Label>
             <Controller
               control={form.control}
               name="contractTypes"
               render={({ field }) => (
-                <div className="flex flex-wrap gap-4">
+                <div className="flex flex-wrap gap-4" aria-labelledby="contractTypes-label">
                   {CONTRACT_TYPE_OPTIONS.map((option) => {
                     const selected = (field.value as string[] | undefined) ?? [];
                     return (
@@ -270,19 +335,36 @@ export function PreferencesCard() {
                 </div>
               )}
             />
+            <FormFieldError message={errors.contractTypes?.message} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="experienceLevel">Niveau d'expérience</Label>
+            {/*
+              Choisir « Non précisé » retire la clé du corps envoyé (`undefined` disparaît au
+              `JSON.stringify`), donc n'écrit jamais rien côté serveur. Effacer un niveau déjà
+              enregistré nécessiterait que `jobPreferencesSchema.experienceLevel` accepte aussi
+              `null` (comme `endDate` ailleurs) : hors périmètre ici, ça changerait le schéma
+              partagé — pour l'instant, un niveau déjà posé ne peut qu'être remplacé, pas effacé.
+            */}
             <Controller
               control={form.control}
               name="experienceLevel"
               render={({ field }) => (
-                <Select value={field.value ?? 'JUNIOR'} onValueChange={field.onChange}>
-                  <SelectTrigger id="experienceLevel" className="w-full">
+                <Select
+                  value={field.value ?? UNSET}
+                  onValueChange={(value) => field.onChange(value === UNSET ? undefined : value)}
+                >
+                  <SelectTrigger
+                    id="experienceLevel"
+                    className="w-full"
+                    aria-invalid={errors.experienceLevel ? true : undefined}
+                    aria-describedby={errors.experienceLevel ? 'experienceLevel-error' : undefined}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={UNSET}>Non précisé</SelectItem>
                     {Object.entries(EXPERIENCE_LEVEL_LABELS).map(([value, label]) => (
                       <SelectItem key={value} value={value}>
                         {label}
@@ -292,11 +374,19 @@ export function PreferencesCard() {
                 </Select>
               )}
             />
+            <FormFieldError id="experienceLevel-error" message={errors.experienceLevel?.message} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="availability">Disponibilité</Label>
-            <Input id="availability" placeholder="Ex. Disponible immédiatement" {...form.register('availability')} />
+            <Input
+              id="availability"
+              placeholder="Ex. Disponible immédiatement"
+              aria-invalid={errors.availability ? true : undefined}
+              aria-describedby={errors.availability ? 'availability-error' : undefined}
+              {...form.register('availability')}
+            />
+            <FormFieldError id="availability-error" message={errors.availability?.message} />
           </div>
         </CardContent>
         <CardFooter>

@@ -1,13 +1,16 @@
 import { skillSchema, type SkillFormInput } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as ProfileApi from '@/services/api/profile';
 import { ApiError } from '@/services/api/client';
 import { CollectionSection } from './collection-section';
 
 const fetchCollection = vi.hoisted(() => vi.fn());
+const reorderCollection = vi.hoisted(() => vi.fn());
 vi.mock('@/services/api/profile', async () => {
   const actual = await vi.importActual<typeof ProfileApi>('@/services/api/profile');
   return {
@@ -16,17 +19,20 @@ vi.mock('@/services/api/profile', async () => {
     createItem: vi.fn(),
     updateItem: vi.fn(),
     deleteItem: vi.fn(),
-    reorderCollection: vi.fn(),
+    reorderCollection,
   };
 });
 
-afterEach(() => fetchCollection.mockReset());
+afterEach(() => {
+  fetchCollection.mockReset();
+  reorderCollection.mockReset();
+});
 
 const defaultValues: SkillFormInput = { name: '', category: 'TECHNICAL', level: 'INTERMEDIATE' };
 
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <CollectionSection
         name="skills"
@@ -72,5 +78,33 @@ describe('CollectionSection', () => {
 
     expect(await screen.findByText('Impossible de charger vos compétences.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Réessayer' })).toBeInTheDocument();
+  });
+
+  it('descend le premier element et annule (avec toast) si le serveur refuse', async () => {
+    const user = userEvent.setup();
+    const errorToast = vi.spyOn(toast, 'error').mockImplementation(() => '');
+    fetchCollection.mockResolvedValue([
+      { id: 's1', sortOrder: 0, name: 'React', category: 'TECHNICAL', level: 'ADVANCED' },
+      { id: 's2', sortOrder: 1, name: 'Anglais courant', category: 'SOFT', level: 'EXPERT' },
+    ]);
+    reorderCollection.mockRejectedValue(new ApiError('Connexion au serveur impossible.', 0));
+    const { container } = renderSection();
+
+    await screen.findByText('React');
+    const [firstDescendre] = screen.getAllByRole('button', { name: 'Descendre' });
+    if (!firstDescendre) throw new Error('Bouton "Descendre" introuvable.');
+    await user.click(firstDescendre);
+
+    await waitFor(() => {
+      expect(reorderCollection).toHaveBeenCalledWith('skills', { ids: ['s2', 's1'] });
+    });
+
+    await waitFor(() => {
+      const names = [...container.querySelectorAll('li')].map((item) => item.textContent);
+      expect(names[0]).toContain('React');
+    });
+    expect(errorToast).toHaveBeenCalled();
+
+    errorToast.mockRestore();
   });
 });

@@ -1,7 +1,6 @@
-import { profileSchema, type ProfileFormInput } from '@jobtrack/shared';
+import { profileSchema, type ProfileFormInput, type ProfileInput } from '@jobtrack/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import type { Resolver } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { ErrorState } from '@/components/shared/error-state';
@@ -43,12 +42,8 @@ export function PersonalInfoCard() {
   const query = useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchProfile });
   const [formAlert, setFormAlert] = useState<string>();
 
-  const form = useForm<ProfileFormInput>({
-    // `firstName`/`lastName` sont des clés obligatoires de `ProfileFormInput` : le type de
-    // retour générique de `zodResolverWith` (`Resolver<FieldValues>`, un `Record<string,
-    // any>`) ne garantit la présence d'aucune clé précise, d'où ce cast — la validation
-    // réelle reste celle de `profileSchema`.
-    resolver: zodResolverWith(profileSchema, (raw) => raw) as unknown as Resolver<ProfileFormInput>,
+  const form = useForm<ProfileFormInput, unknown, ProfileInput>({
+    resolver: zodResolverWith<ProfileFormInput, ProfileInput>(profileSchema, (raw) => raw),
     defaultValues: { firstName: '', lastName: '', phone: '', city: '', country: '' },
   });
 
@@ -125,9 +120,10 @@ export function PersonalInfoCard() {
                 id="firstName"
                 autoComplete="given-name"
                 aria-invalid={form.formState.errors.firstName ? true : undefined}
+                aria-describedby={form.formState.errors.firstName ? 'firstName-error' : undefined}
                 {...form.register('firstName')}
               />
-              <FormFieldError message={form.formState.errors.firstName?.message} />
+              <FormFieldError id="firstName-error" message={form.formState.errors.firstName?.message} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lastName">Nom</Label>
@@ -135,25 +131,48 @@ export function PersonalInfoCard() {
                 id="lastName"
                 autoComplete="family-name"
                 aria-invalid={form.formState.errors.lastName ? true : undefined}
+                aria-describedby={form.formState.errors.lastName ? 'lastName-error' : undefined}
                 {...form.register('lastName')}
               />
-              <FormFieldError message={form.formState.errors.lastName?.message} />
+              <FormFieldError id="lastName-error" message={form.formState.errors.lastName?.message} />
             </div>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="phone">Téléphone</Label>
-            <Input id="phone" type="tel" autoComplete="tel" {...form.register('phone')} />
+            <Input
+              id="phone"
+              type="tel"
+              autoComplete="tel"
+              aria-invalid={form.formState.errors.phone ? true : undefined}
+              aria-describedby={form.formState.errors.phone ? 'phone-error' : undefined}
+              {...form.register('phone')}
+            />
+            <FormFieldError id="phone-error" message={form.formState.errors.phone?.message} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="city">Ville</Label>
-              <Input id="city" autoComplete="address-level2" {...form.register('city')} />
+              <Input
+                id="city"
+                autoComplete="address-level2"
+                aria-invalid={form.formState.errors.city ? true : undefined}
+                aria-describedby={form.formState.errors.city ? 'city-error' : undefined}
+                {...form.register('city')}
+              />
+              <FormFieldError id="city-error" message={form.formState.errors.city?.message} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="country">Pays</Label>
-              <Input id="country" autoComplete="country-name" {...form.register('country')} />
+              <Input
+                id="country"
+                autoComplete="country-name"
+                aria-invalid={form.formState.errors.country ? true : undefined}
+                aria-describedby={form.formState.errors.country ? 'country-error' : undefined}
+                {...form.register('country')}
+              />
+              <FormFieldError id="country-error" message={form.formState.errors.country?.message} />
             </div>
           </div>
         </CardContent>

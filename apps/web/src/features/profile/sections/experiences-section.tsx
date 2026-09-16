@@ -11,17 +11,23 @@ import { emptyToNull } from '@/lib/forms';
 import { formatMonthYear } from '@/lib/dates';
 import type { CollectionItem } from '@/services/api/profile';
 
+/**
+ * Valeurs telles que les champs HTML de ce formulaire les produisent
+ * réellement : `endDate` reste une chaîne (un `<input type="date">` vide
+ * renvoie `''`, jamais `null`), contrairement à `ExperienceFormInput` dont le
+ * type reflète ce que le schéma accepte (`string | null | undefined`).
+ */
+type ExperienceFormValues = Omit<ExperienceFormInput, 'endDate'> & { endDate: string };
+
 // `endDate` (nullable, sans branche `''`) a besoin de `null` ; `location` et
 // `description` (texte optionnel) acceptent déjà `''` nativement et n'ont pas
 // besoin d'être convertis (les y convertir enverrait `null`, rejeté par le
 // schéma partagé, cf. `lib/forms.ts`).
-function normalize(raw: unknown): unknown {
-  return emptyToNull(raw as Record<string, unknown>, ['endDate']);
+function normalize(raw: ExperienceFormValues): unknown {
+  return emptyToNull(raw, ['endDate']);
 }
 
-// `''` côté champ date HTML : le type d'entrée du schéma exclut `''` sur
-// `endDate` mais un `<input type="date">` non renseigné ne connaît que ça.
-const DEFAULT_VALUES = {
+const DEFAULT_VALUES: ExperienceFormValues = {
   company: '',
   role: '',
   location: '',
@@ -29,9 +35,9 @@ const DEFAULT_VALUES = {
   endDate: '',
   isCurrent: false,
   description: '',
-} as unknown as ExperienceFormInput;
+};
 
-function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormInput {
+function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormValues {
   return {
     company: item.company,
     role: item.role,
@@ -43,7 +49,7 @@ function toFormValues(item: CollectionItem<'experiences'>): ExperienceFormInput 
   };
 }
 
-function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormInput> }) {
+function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormValues> }) {
   const {
     register,
     watch,
@@ -57,26 +63,48 @@ function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormInput> }
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="exp-company">Entreprise</Label>
-          <Input id="exp-company" aria-invalid={errors.company ? true : undefined} {...register('company')} />
-          <FormFieldError message={errors.company?.message} />
+          <Input
+            id="exp-company"
+            aria-invalid={errors.company ? true : undefined}
+            aria-describedby={errors.company ? 'exp-company-error' : undefined}
+            {...register('company')}
+          />
+          <FormFieldError id="exp-company-error" message={errors.company?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="exp-role">Poste</Label>
-          <Input id="exp-role" aria-invalid={errors.role ? true : undefined} {...register('role')} />
-          <FormFieldError message={errors.role?.message} />
+          <Input
+            id="exp-role"
+            aria-invalid={errors.role ? true : undefined}
+            aria-describedby={errors.role ? 'exp-role-error' : undefined}
+            {...register('role')}
+          />
+          <FormFieldError id="exp-role-error" message={errors.role?.message} />
         </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="exp-location">Lieu</Label>
-        <Input id="exp-location" {...register('location')} />
+        <Input
+          id="exp-location"
+          aria-invalid={errors.location ? true : undefined}
+          aria-describedby={errors.location ? 'exp-location-error' : undefined}
+          {...register('location')}
+        />
+        <FormFieldError id="exp-location-error" message={errors.location?.message} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="exp-start">Date de début</Label>
-          <Input id="exp-start" type="date" aria-invalid={errors.startDate ? true : undefined} {...register('startDate')} />
-          <FormFieldError message={errors.startDate?.message} />
+          <Input
+            id="exp-start"
+            type="date"
+            aria-invalid={errors.startDate ? true : undefined}
+            aria-describedby={errors.startDate ? 'exp-start-error' : undefined}
+            {...register('startDate')}
+          />
+          <FormFieldError id="exp-start-error" message={errors.startDate?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="exp-end">Date de fin</Label>
@@ -85,9 +113,10 @@ function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormInput> }
             type="date"
             disabled={isCurrent}
             aria-invalid={errors.endDate ? true : undefined}
+            aria-describedby={errors.endDate ? 'exp-end-error' : undefined}
             {...register('endDate')}
           />
-          <FormFieldError message={errors.endDate?.message} />
+          <FormFieldError id="exp-end-error" message={errors.endDate?.message} />
         </div>
       </div>
 
@@ -107,7 +136,14 @@ function ExperienceFields({ form }: { form: UseFormReturn<ExperienceFormInput> }
 
       <div className="space-y-2">
         <Label htmlFor="exp-description">Description</Label>
-        <Textarea id="exp-description" rows={3} {...register('description')} />
+        <Textarea
+          id="exp-description"
+          rows={3}
+          aria-invalid={errors.description ? true : undefined}
+          aria-describedby={errors.description ? 'exp-description-error' : undefined}
+          {...register('description')}
+        />
+        <FormFieldError id="exp-description-error" message={errors.description?.message} />
       </div>
     </div>
   );

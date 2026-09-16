@@ -39,8 +39,13 @@ function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="skill-name">Nom</Label>
-        <Input id="skill-name" aria-invalid={errors.name ? true : undefined} {...register('name')} />
-        <FormFieldError message={errors.name?.message} />
+        <Input
+          id="skill-name"
+          aria-invalid={errors.name ? true : undefined}
+          aria-describedby={errors.name ? 'skill-name-error' : undefined}
+          {...register('name')}
+        />
+        <FormFieldError id="skill-name-error" message={errors.name?.message} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -51,7 +56,12 @@ function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
             name="category"
             render={({ field }) => (
               <Select value={field.value ?? 'TECHNICAL'} onValueChange={field.onChange}>
-                <SelectTrigger id="skill-category" className="w-full">
+                <SelectTrigger
+                  id="skill-category"
+                  className="w-full"
+                  aria-invalid={errors.category ? true : undefined}
+                  aria-describedby={errors.category ? 'skill-category-error' : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -64,6 +74,7 @@ function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
               </Select>
             )}
           />
+          <FormFieldError id="skill-category-error" message={errors.category?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="skill-level">Niveau</Label>
@@ -72,7 +83,12 @@ function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
             name="level"
             render={({ field }) => (
               <Select value={field.value ?? 'INTERMEDIATE'} onValueChange={field.onChange}>
-                <SelectTrigger id="skill-level" className="w-full">
+                <SelectTrigger
+                  id="skill-level"
+                  className="w-full"
+                  aria-invalid={errors.level ? true : undefined}
+                  aria-describedby={errors.level ? 'skill-level-error' : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -85,6 +101,7 @@ function SkillFields({ form }: { form: UseFormReturn<SkillFormInput> }) {
               </Select>
             )}
           />
+          <FormFieldError id="skill-level-error" message={errors.level?.message} />
         </div>
       </div>
     </div>

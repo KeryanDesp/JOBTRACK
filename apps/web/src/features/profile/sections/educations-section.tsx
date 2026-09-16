@@ -10,20 +10,23 @@ import { emptyToNull } from '@/lib/forms';
 import { formatMonthYear } from '@/lib/dates';
 import type { CollectionItem } from '@/services/api/profile';
 
-function normalize(raw: unknown): unknown {
-  return emptyToNull(raw as Record<string, unknown>, ['endDate']);
+/** `endDate` reste une chaîne côté formulaire (voir `experiences-section.tsx`). */
+type EducationFormValues = Omit<EducationFormInput, 'endDate'> & { endDate: string };
+
+function normalize(raw: EducationFormValues): unknown {
+  return emptyToNull(raw, ['endDate']);
 }
 
-const DEFAULT_VALUES = {
+const DEFAULT_VALUES: EducationFormValues = {
   school: '',
   degree: '',
   field: '',
   startDate: '',
   endDate: '',
   description: '',
-} as unknown as EducationFormInput;
+};
 
-function toFormValues(item: CollectionItem<'educations'>): EducationFormInput {
+function toFormValues(item: CollectionItem<'educations'>): EducationFormValues {
   return {
     school: item.school,
     degree: item.degree,
@@ -34,7 +37,7 @@ function toFormValues(item: CollectionItem<'educations'>): EducationFormInput {
   };
 }
 
-function EducationFields({ form }: { form: UseFormReturn<EducationFormInput> }) {
+function EducationFields({ form }: { form: UseFormReturn<EducationFormValues> }) {
   const {
     register,
     formState: { errors },
@@ -45,37 +48,72 @@ function EducationFields({ form }: { form: UseFormReturn<EducationFormInput> }) 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="edu-school">Établissement</Label>
-          <Input id="edu-school" aria-invalid={errors.school ? true : undefined} {...register('school')} />
-          <FormFieldError message={errors.school?.message} />
+          <Input
+            id="edu-school"
+            aria-invalid={errors.school ? true : undefined}
+            aria-describedby={errors.school ? 'edu-school-error' : undefined}
+            {...register('school')}
+          />
+          <FormFieldError id="edu-school-error" message={errors.school?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="edu-degree">Diplôme</Label>
-          <Input id="edu-degree" aria-invalid={errors.degree ? true : undefined} {...register('degree')} />
-          <FormFieldError message={errors.degree?.message} />
+          <Input
+            id="edu-degree"
+            aria-invalid={errors.degree ? true : undefined}
+            aria-describedby={errors.degree ? 'edu-degree-error' : undefined}
+            {...register('degree')}
+          />
+          <FormFieldError id="edu-degree-error" message={errors.degree?.message} />
         </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="edu-field">Domaine</Label>
-        <Input id="edu-field" {...register('field')} />
+        <Input
+          id="edu-field"
+          aria-invalid={errors.field ? true : undefined}
+          aria-describedby={errors.field ? 'edu-field-error' : undefined}
+          {...register('field')}
+        />
+        <FormFieldError id="edu-field-error" message={errors.field?.message} />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
           <Label htmlFor="edu-start">Date de début</Label>
-          <Input id="edu-start" type="date" aria-invalid={errors.startDate ? true : undefined} {...register('startDate')} />
-          <FormFieldError message={errors.startDate?.message} />
+          <Input
+            id="edu-start"
+            type="date"
+            aria-invalid={errors.startDate ? true : undefined}
+            aria-describedby={errors.startDate ? 'edu-start-error' : undefined}
+            {...register('startDate')}
+          />
+          <FormFieldError id="edu-start-error" message={errors.startDate?.message} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="edu-end">Date de fin</Label>
-          <Input id="edu-end" type="date" aria-invalid={errors.endDate ? true : undefined} {...register('endDate')} />
-          <FormFieldError message={errors.endDate?.message} />
+          <Input
+            id="edu-end"
+            type="date"
+            aria-invalid={errors.endDate ? true : undefined}
+            aria-describedby={errors.endDate ? 'edu-end-error' : undefined}
+            {...register('endDate')}
+          />
+          <FormFieldError id="edu-end-error" message={errors.endDate?.message} />
         </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="edu-description">Description</Label>
-        <Textarea id="edu-description" rows={3} {...register('description')} />
+        <Textarea
+          id="edu-description"
+          rows={3}
+          aria-invalid={errors.description ? true : undefined}
+          aria-describedby={errors.description ? 'edu-description-error' : undefined}
+          {...register('description')}
+        />
+        <FormFieldError id="edu-description-error" message={errors.description?.message} />
       </div>
     </div>
   );

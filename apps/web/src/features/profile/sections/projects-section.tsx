@@ -9,29 +9,36 @@ import { FormFieldError } from '@/features/auth/components/form-field-error';
 import { joinTags, splitTags } from '@/lib/forms';
 import type { CollectionItem } from '@/services/api/profile';
 
+/**
+ * `technologies` reste une chaîne (les tags séparés par des virgules tels
+ * que le champ HTML les produit), contrairement à `ProjectFormInput` dont le
+ * type reflète ce que le schéma accepte (`string[]`).
+ */
+type ProjectFormValues = Omit<ProjectFormInput, 'technologies'> & { technologies: string };
+
 // `technologies` : chaîne de tags séparés par des virgules côté formulaire,
 // tableau côté schéma. `url`/`description` (optionnels) acceptent déjà `''`.
-function normalize(raw: unknown): unknown {
-  return splitTags(raw as Record<string, unknown>, 'technologies');
+function normalize(raw: ProjectFormValues): unknown {
+  return splitTags(raw, 'technologies');
 }
 
-const DEFAULT_VALUES = {
+const DEFAULT_VALUES: ProjectFormValues = {
   name: '',
   description: '',
   url: '',
   technologies: '',
-} as unknown as ProjectFormInput;
+};
 
-function toFormValues(item: CollectionItem<'projects'>): ProjectFormInput {
+function toFormValues(item: CollectionItem<'projects'>): ProjectFormValues {
   return {
     name: item.name,
     description: item.description ?? '',
     url: item.url ?? '',
     technologies: joinTags(item.technologies),
-  } as unknown as ProjectFormInput;
+  };
 }
 
-function ProjectFields({ form }: { form: UseFormReturn<ProjectFormInput> }) {
+function ProjectFields({ form }: { form: UseFormReturn<ProjectFormValues> }) {
   const {
     register,
     formState: { errors },
@@ -41,25 +48,51 @@ function ProjectFields({ form }: { form: UseFormReturn<ProjectFormInput> }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="proj-name">Nom</Label>
-        <Input id="proj-name" aria-invalid={errors.name ? true : undefined} {...register('name')} />
-        <FormFieldError message={errors.name?.message} />
+        <Input
+          id="proj-name"
+          aria-invalid={errors.name ? true : undefined}
+          aria-describedby={errors.name ? 'proj-name-error' : undefined}
+          {...register('name')}
+        />
+        <FormFieldError id="proj-name-error" message={errors.name?.message} />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="proj-description">Description</Label>
-        <Textarea id="proj-description" rows={3} {...register('description')} />
+        <Textarea
+          id="proj-description"
+          rows={3}
+          aria-invalid={errors.description ? true : undefined}
+          aria-describedby={errors.description ? 'proj-description-error' : undefined}
+          {...register('description')}
+        />
+        <FormFieldError id="proj-description-error" message={errors.description?.message} />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="proj-url">Lien</Label>
-        <Input id="proj-url" type="url" aria-invalid={errors.url ? true : undefined} {...register('url')} />
-        <FormFieldError message={errors.url?.message} />
+        <Input
+          id="proj-url"
+          type="url"
+          aria-invalid={errors.url ? true : undefined}
+          aria-describedby={errors.url ? 'proj-url-error' : undefined}
+          {...register('url')}
+        />
+        <FormFieldError id="proj-url-error" message={errors.url?.message} />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="proj-technologies">Technologies</Label>
-        <Input id="proj-technologies" {...register('technologies')} />
-        <p className="text-muted-foreground text-sm">Séparez par des virgules.</p>
+        <Input
+          id="proj-technologies"
+          aria-invalid={errors.technologies ? true : undefined}
+          aria-describedby={errors.technologies ? 'proj-technologies-hint proj-technologies-error' : 'proj-technologies-hint'}
+          {...register('technologies')}
+        />
+        <p id="proj-technologies-hint" className="text-muted-foreground text-sm">
+          Séparez par des virgules.
+        </p>
+        <FormFieldError id="proj-technologies-error" message={errors.technologies?.message} />
       </div>
     </div>
   );

@@ -35,8 +35,13 @@ function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="lang-name">Langue</Label>
-        <Input id="lang-name" aria-invalid={errors.name ? true : undefined} {...register('name')} />
-        <FormFieldError message={errors.name?.message} />
+        <Input
+          id="lang-name"
+          aria-invalid={errors.name ? true : undefined}
+          aria-describedby={errors.name ? 'lang-name-error' : undefined}
+          {...register('name')}
+        />
+        <FormFieldError id="lang-name-error" message={errors.name?.message} />
       </div>
       <div className="space-y-2">
         <Label htmlFor="lang-level">Niveau</Label>
@@ -45,7 +50,12 @@ function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
           name="level"
           render={({ field }) => (
             <Select value={field.value} onValueChange={field.onChange}>
-              <SelectTrigger id="lang-level" className="w-full">
+              <SelectTrigger
+                id="lang-level"
+                className="w-full"
+                aria-invalid={errors.level ? true : undefined}
+                aria-describedby={errors.level ? 'lang-level-error' : undefined}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -58,6 +68,7 @@ function LanguageFields({ form }: { form: UseFormReturn<LanguageFormInput> }) {
             </Select>
           )}
         />
+        <FormFieldError id="lang-level-error" message={errors.level?.message} />
       </div>
     </div>
   );

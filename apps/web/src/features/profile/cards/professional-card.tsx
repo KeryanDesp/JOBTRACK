@@ -1,4 +1,4 @@
-import { profileSchema, type ProfileFormInput } from '@jobtrack/shared';
+import { profileSchema, type ProfileFormInput, type ProfileInput } from '@jobtrack/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -36,13 +36,14 @@ export function ProfessionalCard() {
   const query = useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchProfile });
   const [formAlert, setFormAlert] = useState<string>();
 
-  const form = useForm<ProfessionalFormInput>({
+  const form = useForm<ProfessionalFormInput, unknown, ProfileInput>({
     // `firstName`/`lastName` sont obligatoires dans `profileSchema` mais cette carte ne les
     // affiche pas : on les complète depuis le profil déjà chargé pour que la validation du
-    // schéma partagé passe, sans jamais les envoyer (le corps réellement soumis, construit
-    // depuis `form.getValues()`, ne contient que les trois champs de cette carte — PATCH
-    // laisse alors `firstName`/`lastName` absents, donc inchangés côté serveur).
-    resolver: zodResolverWith(profileSchema, (raw) => ({
+    // schéma partagé passe. Le corps réellement envoyé (voir `onSubmit`) les réinclut aussi
+    // — PATCH avec la même valeur qu'en base est idempotent — plutôt que de les omettre : le
+    // serveur exige ces deux clés (`profileSchema` les valide toujours), les omettre ferait
+    // échouer chaque enregistrement avec une 400 `VALIDATION_ERROR`.
+    resolver: zodResolverWith<ProfessionalFormInput, ProfileInput>(profileSchema, (raw) => ({
       ...(raw as Record<string, unknown>),
       firstName: query.data?.firstName ?? '',
       lastName: query.data?.lastName ?? '',
@@ -71,7 +72,10 @@ export function ProfessionalCard() {
   });
 
   function onSubmit(): void {
-    mutation.mutate(form.getValues() as ProfileFormInput);
+    if (!query.data) return;
+    // `firstName`/`lastName` réinjectés depuis le profil chargé : le serveur les exige
+    // (voir le commentaire sur le résolveur ci-dessus), et cette carte ne les édite jamais.
+    mutation.mutate({ ...form.getValues(), firstName: query.data.firstName, lastName: query.data.lastName });
   }
 
   const summaryLength = (form.watch('summary') ?? '').length;
@@ -114,15 +118,30 @@ export function ProfessionalCard() {
           <ServerErrorAlert message={formAlert} />
           <div className="space-y-2">
             <Label htmlFor="title">Titre</Label>
-            <Input id="title" placeholder="Ex. Développeuse full-stack" {...form.register('title')} />
+            <Input
+              id="title"
+              placeholder="Ex. Développeuse full-stack"
+              aria-invalid={form.formState.errors.title ? true : undefined}
+              aria-describedby={form.formState.errors.title ? 'title-error' : undefined}
+              {...form.register('title')}
+            />
+            <FormFieldError id="title-error" message={form.formState.errors.title?.message} />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="summary">Résumé</Label>
-            <Textarea id="summary" rows={5} maxLength={SUMMARY_MAX} {...form.register('summary')} />
-            <p className="text-muted-foreground text-right text-xs">
+            <Textarea
+              id="summary"
+              rows={5}
+              maxLength={SUMMARY_MAX}
+              aria-invalid={form.formState.errors.summary ? true : undefined}
+              aria-describedby={form.formState.errors.summary ? 'summary-counter summary-error' : 'summary-counter'}
+              {...form.register('summary')}
+            />
+            <p id="summary-counter" className="text-muted-foreground text-right text-xs">
               {summaryLength}/{SUMMARY_MAX}
             </p>
+            <FormFieldError id="summary-error" message={form.formState.errors.summary?.message} />
           </div>
 
           <div className="space-y-2">
@@ -132,9 +151,10 @@ export function ProfessionalCard() {
               type="number"
               min={0}
               aria-invalid={form.formState.errors.yearsExperience ? true : undefined}
+              aria-describedby={form.formState.errors.yearsExperience ? 'yearsExperience-error' : undefined}
               {...form.register('yearsExperience')}
             />
-            <FormFieldError message={form.formState.errors.yearsExperience?.message} />
+            <FormFieldError id="yearsExperience-error" message={form.formState.errors.yearsExperience?.message} />
           </div>
         </CardContent>
         <CardFooter>
