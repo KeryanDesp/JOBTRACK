@@ -108,7 +108,7 @@ export const jobPreferencesSchema = z
     searchRadiusKm: optionalNumber(500),
     remoteModes: z.array(z.enum(['ONSITE', 'HYBRID', 'REMOTE'])),
     contractTypes: z.array(
-      z.enum(['CDI', 'CDD', 'INTERNSHIP', 'APPRENTICESHIP', 'FREELANCE', 'PART_TIME']),
+      z.enum(['CDI', 'CDD', 'INTERIM', 'INTERNSHIP', 'APPRENTICESHIP', 'FREELANCE', 'PART_TIME']),
     ),
     availability: optionalText(80),
     experienceLevel: z.enum(['STUDENT', 'JUNIOR', 'MID', 'SENIOR', 'LEAD']).optional(),

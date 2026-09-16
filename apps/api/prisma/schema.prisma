@@ -19,6 +19,7 @@ model User {
   profile       Profile?
   oauthAccounts OAuthAccount[]
   cvImports     CvImport[]
+  savedJobs     SavedJob[]
 }
 
 enum OAuthProvider {
@@ -183,6 +184,7 @@ enum RemoteMode {
 enum ContractType {
   CDI
   CDD
+  INTERIM
   INTERNSHIP
   APPRENTICESHIP
   FREELANCE
@@ -242,4 +244,149 @@ model CvImport {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+enum JobSourceKind {
+  FRANCE_TRAVAIL
+}
+
+enum JobRequirementKind {
+  EDUCATION
+  LANGUAGE
+}
+
+enum JobSyncStatus {
+  OK
+  PARTIAL
+  FAILED
+}
+
+model Job {
+  id                 String           @id @default(cuid())
+  fingerprint        String           @unique
+  title              String
+  company            String?
+  companyDescription String?
+  companyUrl         String?
+  companyLogoUrl     String?
+  description        String
+  locationLabel      String?
+  communeCode        String?
+  postalCode         String?
+  departmentCode     String?
+  latitude           Float?
+  longitude          Float?
+  contractType       ContractType?
+  contractLabel      String?
+  contractNature     String?
+  remoteMode         RemoteMode?
+  remoteModeInferred Boolean          @default(false)
+  experienceLevel    ExperienceLevel?
+  experienceLabel    String?
+  experienceRequired Boolean?
+  salaryMinAnnual    Int?
+  salaryMaxAnnual    Int?
+  salaryLabel        String?
+  currency           String           @default("EUR")
+  workingTimeLabel   String?
+  isFullTime         Boolean?
+  isApprenticeship   Boolean          @default(false)
+  positionsCount     Int?
+  accessibleTh       Boolean?
+  sectorLabel        String?
+  romeCode           String?
+  romeLabel          String?
+  qualificationLabel String?
+  publishedAt        DateTime
+  sourceUpdatedAt    DateTime?
+  firstSeenAt        DateTime         @default(now())
+  lastSeenAt         DateTime         @default(now())
+  expiredAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  sources      JobSource[]
+  skills       JobSkill[]
+  requirements JobRequirement[]
+  savedBy      SavedJob[]
+
+  @@index([publishedAt])
+  @@index([lastSeenAt])
+  @@index([contractType, publishedAt])
+  @@index([departmentCode, publishedAt])
+}
+
+model JobSource {
+  id              String        @id @default(cuid())
+  jobId           String
+  source          JobSourceKind
+  externalId      String
+  url             String
+  applyUrl        String?
+  publishedAt     DateTime
+  sourceUpdatedAt DateTime?
+  lastSeenAt      DateTime      @default(now())
+  partnerName     String?
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([jobId])
+}
+
+model JobSkill {
+  id       String  @id @default(cuid())
+  jobId    String
+  name     String
+  required Boolean
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, name])
+  @@index([jobId])
+}
+
+model JobRequirement {
+  id       String             @id @default(cuid())
+  jobId    String
+  kind     JobRequirementKind
+  label    String
+  required Boolean
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model SavedJob {
+  id        String   @id @default(cuid())
+  userId    String
+  jobId     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@index([jobId])
+}
+
+model JobSearchSync {
+  id           String        @id @default(cuid())
+  queryHash    String        @unique
+  queryJson    Json
+  lastSyncedAt DateTime      @default(now())
+  lastStatus   JobSyncStatus
+  lastError    String?
+  resultCount  Int
+}
+
+model Commune {
+  code           String  @id
+  name           String
+  nameNormalized String
+  postalCode     String?
+  departmentCode String
+
+  @@index([nameNormalized])
 }

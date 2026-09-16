@@ -37,6 +37,7 @@ const REMOTE_MODE_OPTIONS: { value: RemoteMode; label: string }[] = [
 const CONTRACT_TYPE_OPTIONS: { value: ContractType; label: string }[] = [
   { value: 'CDI', label: 'CDI' },
   { value: 'CDD', label: 'CDD' },
+  { value: 'INTERIM', label: 'Intérim' },
   { value: 'INTERNSHIP', label: 'Stage' },
   { value: 'APPRENTICESHIP', label: 'Alternance' },
   { value: 'FREELANCE', label: 'Freelance' },
