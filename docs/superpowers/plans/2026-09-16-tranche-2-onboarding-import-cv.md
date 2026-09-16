@@ -137,6 +137,20 @@ Vérifié par le coordinateur avec une ligne `EXTRACTED` semée en base (pas de 
 ### Task 9 — amendement après exécution (`80ca79f`)
 `apps/web/e2e/onboarding.spec.ts` : parcours manuel complet (inscription → Bienvenue → CV → Préférences → Terminé → profil sans bannière, `onboardingCompleted` vrai, préférence persistée) et passage depuis la première étape (dialogue, profil, `/onboarding` toujours accessible, sans « Précédent ») ; branche sur `GET /cv-imports/capabilities` pour rester vert avec ou sans clé. Le test d'inscription de `auth.spec.ts` attendait `/profile` : depuis la tâche 7 l'inscription mène à `/onboarding` → il l'affirme puis va sur `/profile` (son objet est le CRUD du profil). Playwright 12 → 16 (2 tests × 2 projets), nettoyage des comptes `@playwright.local` confirmé.
 
+### Revue finale de branche et recette (2026-09-16)
+Revue finale : **fusionnable**, sans point critique ni important. Mineurs corrigés dans `5431a5b` : le journal d'un refus de permission Anthropic n'inclut plus l'objet d'erreur (corps de réponse) ; le motif de clé de stockage accepte `-` dans le premier segment (indépendant de `cuid()` vs `uuid()`) ; la dropzone dérive « 10 Mo maximum » de `capabilities.maxSizeBytes`. Mineurs reportés : index `(userId, status)` sur `CvImport` (le préfixe `userId` suffit aux volumes actuels) ; `GET /cv-imports` sans consommateur web (socle de l'historique des imports, spec §9) ; alerte serveur dans le dialogue « Passer » et l'étape « Terminé » si l'appel de fin échoue (la bannière du profil réapparaît, donc récupérable) ; `useCompleteOnboarding` à déplacer vers `features/onboarding/hooks` ; quatre types `*FormValues` exportés sans consommateur externe ; casts `normalize(...) as XxxFormInput` non commentés ; rappel « entre les balises » envoyé aussi sur le chemin PDF (sans balises) ; nettoyage du disque à la suppression de compte (aucune route de suppression de compte n'existe encore — à porter dans la tranche qui l'ajoutera).
+
+Recette des critères (spec §10), par le coordinateur dans le navigateur intégré :
+1. **OK** — inscription → `/onboarding` ; passage possible (dialogue) ; compte ayant terminé la configuration → `/profile` sans bannière à la connexion ; `/onboarding` reste accessible sans y être forcé.
+2. **En attente** — extraction réelle sur `fixtures/cv-demo.pdf` : `ANTHROPIC_API_KEY` absente de `.env` ; le chemin est prouvé avec un client factice (e2e) et l'interface a été exercée jusqu'au 503 avec une clé factice refusée par Anthropic.
+3. **OK** — ligne `EXTRACTED` semée : rien n'est écrit avant « Appliquer » ; l'élément décoché n'est pas créé ; l'édition par dialogue est propagée ; l'ajout se fait en fin de liste et les préférences sont fusionnées sans doublon (e2e).
+4. **OK** — sans clé : alerte explicite sur l'étape CV et sur `/profile/import`, chemin manuel complet ; 503 `AI_NOT_CONFIGURED` avant toute écriture (e2e).
+5. **OK** — `.txt` refusé côté client avec le message attendu ; côté serveur : magic bytes, répertoire central DOCX, taille (413), erreur d'extraction inattendue → `FAILED` jamais 500 (e2e).
+6. **OK** — lecture, application, suppression et retry d'un import d'autrui → 404 (e2e).
+7. **OK** — shared 89, api 138 unitaires + 77 e2e, web 88 + 16 Playwright ; lint et typecheck 4/4 ; aucun `any`.
+
+Note de clôture : 9/9 tâches, chaque tâche revue (deux revues pour le module d'import) et corrigée ; vérification visuelle de chaque chemin d'écriture par le coordinateur. À valider par l'utilisateur au moment opportun : extraction synchrone (jusqu'à ~90 s), stockage disque local, 3 imports par heure, modèle `claude-opus-5`, `PENDING` réputé obsolète après 15 min.
+
 ---
 
 ## Limites assumées
