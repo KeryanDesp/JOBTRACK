@@ -23,3 +23,6 @@ fixtures/private/
 
 # Cache de dépendances Vite
 .vite/
+
+# Configuration locale de l outil (launch.json)
+.claude/
