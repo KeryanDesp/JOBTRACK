@@ -1,4 +1,11 @@
 import { z } from 'zod';
+// `zod/v4` (sous-module fourni par zod >= 3.25, distinct de l'API classique
+// ci-dessus) : seul noyau que `zodOutputFormat` du SDK Anthropic sait convertir
+// en JSON Schema (`z.toJSONSchema`) — un schema construit avec l'API classique
+// leve `Cannot read properties of undefined (reading 'def')` a l'execution.
+// Reserve au schema « fil » (`cvExtractionWireSchema`) ci-dessous ; le reste du
+// fichier (dont `cvExtractionSchema`) reste sur l'API classique.
+import { z as zWire } from 'zod/v4';
 import {
   certificationSchema,
   educationSchema,
@@ -354,96 +361,96 @@ export type CvExtraction = z.output<typeof cvExtractionSchema>;
 // enumerations reelles.
 // ---------------------------------------------------------------------------
 
-const identityWireSchema = z
+const identityWireSchema = zWire
   .object({
-    firstName: z.string().nullable(),
-    lastName: z.string().nullable(),
-    phone: z.string().nullable(),
-    city: z.string().nullable(),
-    country: z.string().nullable(),
-    title: z.string().nullable(),
-    summary: z.string().nullable(),
+    firstName: zWire.string().nullable(),
+    lastName: zWire.string().nullable(),
+    phone: zWire.string().nullable(),
+    city: zWire.string().nullable(),
+    country: zWire.string().nullable(),
+    title: zWire.string().nullable(),
+    summary: zWire.string().nullable(),
   })
   .strict();
 
-const experienceWireSchema = z
+const experienceWireSchema = zWire
   .object({
-    company: z.string(),
-    role: z.string(),
-    location: z.string().nullable(),
-    startDate: z.string().nullable(),
-    endDate: z.string().nullable(),
-    isCurrent: z.boolean().nullable(),
-    description: z.string().nullable(),
+    company: zWire.string(),
+    role: zWire.string(),
+    location: zWire.string().nullable(),
+    startDate: zWire.string().nullable(),
+    endDate: zWire.string().nullable(),
+    isCurrent: zWire.boolean().nullable(),
+    description: zWire.string().nullable(),
   })
   .strict();
 
-const educationWireSchema = z
+const educationWireSchema = zWire
   .object({
-    school: z.string(),
-    degree: z.string(),
-    field: z.string().nullable(),
-    startDate: z.string().nullable(),
-    endDate: z.string().nullable(),
-    description: z.string().nullable(),
+    school: zWire.string(),
+    degree: zWire.string(),
+    field: zWire.string().nullable(),
+    startDate: zWire.string().nullable(),
+    endDate: zWire.string().nullable(),
+    description: zWire.string().nullable(),
   })
   .strict();
 
-const skillWireSchema = z
+const skillWireSchema = zWire
   .object({
-    name: z.string(),
-    category: z.string().nullable(),
-    level: z.string().nullable(),
+    name: zWire.string(),
+    category: zWire.string().nullable(),
+    level: zWire.string().nullable(),
   })
   .strict();
 
-const languageWireSchema = z
+const languageWireSchema = zWire
   .object({
-    name: z.string(),
-    level: z.string().nullable(),
+    name: zWire.string(),
+    level: zWire.string().nullable(),
   })
   .strict();
 
-const certificationWireSchema = z
+const certificationWireSchema = zWire
   .object({
-    name: z.string(),
-    issuer: z.string(),
-    issuedAt: z.string().nullable(),
-    expiresAt: z.string().nullable(),
-    credentialUrl: z.string().nullable(),
+    name: zWire.string(),
+    issuer: zWire.string(),
+    issuedAt: zWire.string().nullable(),
+    expiresAt: zWire.string().nullable(),
+    credentialUrl: zWire.string().nullable(),
   })
   .strict();
 
-const projectWireSchema = z
+const projectWireSchema = zWire
   .object({
-    name: z.string(),
-    description: z.string().nullable(),
-    url: z.string().nullable(),
-    technologies: z.array(z.string()),
+    name: zWire.string(),
+    description: zWire.string().nullable(),
+    url: zWire.string().nullable(),
+    technologies: zWire.array(zWire.string()),
   })
   .strict();
 
-const preferencesWireSchema = z
+const preferencesWireSchema = zWire
   .object({
-    desiredRoles: z.array(z.string()),
-    locations: z.array(z.string()),
+    desiredRoles: zWire.array(zWire.string()),
+    locations: zWire.array(zWire.string()),
   })
   .strict();
 
-export const cvExtractionWireSchema = z
+export const cvExtractionWireSchema = zWire
   .object({
     identity: identityWireSchema,
-    experiences: z.array(experienceWireSchema),
-    educations: z.array(educationWireSchema),
-    skills: z.array(skillWireSchema),
-    languages: z.array(languageWireSchema),
-    certifications: z.array(certificationWireSchema),
-    projects: z.array(projectWireSchema),
+    experiences: zWire.array(experienceWireSchema),
+    educations: zWire.array(educationWireSchema),
+    skills: zWire.array(skillWireSchema),
+    languages: zWire.array(languageWireSchema),
+    certifications: zWire.array(certificationWireSchema),
+    projects: zWire.array(projectWireSchema),
     preferences: preferencesWireSchema,
   })
   .strict();
 
-export type CvExtractionWire = z.infer<typeof cvExtractionWireSchema>;
+export type CvExtractionWire = zWire.infer<typeof cvExtractionWireSchema>;
 
 // ---------------------------------------------------------------------------
 // Application : contenu valide par l'utilisateur, ecrit en base via les
