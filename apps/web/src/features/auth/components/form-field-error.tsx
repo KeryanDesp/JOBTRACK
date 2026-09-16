@@ -1,4 +1,6 @@
 interface FormFieldErrorProps {
+  /** Relié au champ via `aria-describedby` : sans `id`, un lecteur d'écran ne l'associe pas au champ. */
+  id?: string;
   message?: string;
 }
 
@@ -8,11 +10,11 @@ interface FormFieldErrorProps {
  * plutôt que de `Controller`). `role="alert"` fait annoncer le message par le
  * lecteur d'écran dès son apparition, sans exiger de focus.
  */
-export function FormFieldError({ message }: FormFieldErrorProps) {
+export function FormFieldError({ id, message }: FormFieldErrorProps) {
   if (!message) return null;
 
   return (
-    <p className="text-destructive text-sm" role="alert">
+    <p id={id} className="text-destructive text-sm" role="alert">
       {message}
     </p>
   );

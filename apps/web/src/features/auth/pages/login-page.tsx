@@ -1,6 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, type LoginFormInput } from '@jobtrack/shared';
 import { useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -9,11 +10,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { login } from '@/services/api/auth';
-import { ApiError } from '@/services/api/client';
 import { AuthLayout } from '../components/auth-layout';
 import { FormFieldError } from '../components/form-field-error';
 import { GoogleButton } from '../components/google-button';
+import { ServerErrorAlert } from '../components/server-error-alert';
 import { useSetSession } from '../hooks/use-session';
+import { applyFieldErrors, topLevelMessage } from '../lib/form-errors';
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   google: 'La connexion Google a échoué. Veuillez réessayer.',
@@ -22,25 +24,22 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   google_cancelled: 'Connexion Google annulée.',
 };
 
-/**
- * Message à afficher dans l'alerte du formulaire : le message serveur tel
- * quel pour tout code autre que `VALIDATION_ERROR` (identifiants invalides,
- * limitation de débit, service indisponible…), ou `details.form` pour une
- * validation dont l'erreur ne cible aucun champ précis.
- */
-function getTopLevelMessage(error: unknown): string | null {
-  if (!(error instanceof ApiError)) return null;
-  if (error.code === 'VALIDATION_ERROR') return error.details?.form ?? null;
-  return error.message;
-}
-
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const setSession = useSetSession();
-  const from = (location.state as { from?: string } | null)?.from;
-  const googleErrorMessage = GOOGLE_ERROR_MESSAGES[searchParams.get('error') ?? ''];
+  const [fieldErrorsApplied, setFieldErrorsApplied] = useState(false);
+
+  const rawFrom = (location.state as { from?: string } | null)?.from;
+  // Jamais une URL absolue ou protocol-relative : pas de redirection ouverte.
+  const from = rawFrom?.startsWith('/') && !rawFrom.startsWith('//') ? rawFrom : undefined;
+
+  // Clé absente de la liste blanche (y compris les clés héritées de
+  // `Object.prototype`, comme `constructor` ou `toString`) → pas de message.
+  const errorKey = searchParams.get('error');
+  const googleErrorMessage =
+    errorKey && Object.hasOwn(GOOGLE_ERROR_MESSAGES, errorKey) ? GOOGLE_ERROR_MESSAGES[errorKey] : undefined;
 
   const {
     register,
@@ -56,17 +55,11 @@ export function LoginPage() {
       navigate(from ?? '/profile', { replace: true });
     },
     onError: (error: unknown) => {
-      if (!(error instanceof ApiError)) return;
-      if (error.code === 'VALIDATION_ERROR' && error.details) {
-        for (const [field, message] of Object.entries(error.details)) {
-          if (field === 'form') continue;
-          setError(field as keyof LoginFormInput, { message });
-        }
-      }
+      setFieldErrorsApplied(applyFieldErrors<LoginFormInput>(error, setError, ['email', 'password']));
     },
   });
 
-  const topLevelMessage = mutation.isError ? getTopLevelMessage(mutation.error) : null;
+  const alertMessage = mutation.isError && !fieldErrorsApplied ? topLevelMessage(mutation.error) : undefined;
 
   function onSubmit(values: LoginFormInput) {
     mutation.mutate(values);
@@ -95,11 +88,7 @@ export function LoginPage() {
 
       <div className="space-y-4">
         <form className="space-y-4" onSubmit={(event) => void handleSubmit(onSubmit)(event)} noValidate>
-          {topLevelMessage && (
-            <Alert variant="destructive">
-              <AlertDescription>{topLevelMessage}</AlertDescription>
-            </Alert>
-          )}
+          <ServerErrorAlert message={alertMessage} />
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
@@ -107,10 +96,11 @@ export function LoginPage() {
               id="email"
               type="email"
               autoComplete="email"
-              aria-invalid={!!errors.email}
+              aria-invalid={errors.email ? true : undefined}
+              aria-describedby={errors.email ? 'email-error' : undefined}
               {...register('email')}
             />
-            <FormFieldError message={errors.email?.message} />
+            <FormFieldError id="email-error" message={errors.email?.message} />
           </div>
 
           <div className="space-y-2">
@@ -124,10 +114,11 @@ export function LoginPage() {
               id="password"
               type="password"
               autoComplete="current-password"
-              aria-invalid={!!errors.password}
+              aria-invalid={errors.password ? true : undefined}
+              aria-describedby={errors.password ? 'password-error' : undefined}
               {...register('password')}
             />
-            <FormFieldError message={errors.password?.message} />
+            <FormFieldError id="password-error" message={errors.password?.message} />
           </div>
 
           <Button type="submit" className="w-full" disabled={isSubmitting || mutation.isPending}>

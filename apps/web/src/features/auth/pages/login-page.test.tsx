@@ -67,4 +67,12 @@ describe('LoginPage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Identifiants invalides.');
   });
+
+  it('affiche le message d_erreur google issu de l_url', () => {
+    renderPage('/login?error=google_link');
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Un compte existe déjà avec cette adresse. Connectez-vous par mot de passe pour le relier à Google.',
+    );
+  });
 });

@@ -1,6 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { forgotPasswordSchema, type ForgotPasswordFormInput } from '@jobtrack/shared';
 import { useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -8,20 +9,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { forgotPassword } from '@/services/api/auth';
-import { ApiError } from '@/services/api/client';
 import { AuthLayout } from '../components/auth-layout';
 import { FormFieldError } from '../components/form-field-error';
+import { ServerErrorAlert } from '../components/server-error-alert';
+import { applyFieldErrors, topLevelMessage } from '../lib/form-errors';
 
 const TITLE = 'Mot de passe oublié';
 const DESCRIPTION = 'Nous vous enverrons un lien de réinitialisation.';
 
-function getTopLevelMessage(error: unknown): string | null {
-  if (!(error instanceof ApiError)) return null;
-  if (error.code === 'VALIDATION_ERROR') return error.details?.form ?? null;
-  return error.message;
-}
-
 export function ForgotPasswordPage() {
+  const [fieldErrorsApplied, setFieldErrorsApplied] = useState(false);
+
   const {
     register,
     handleSubmit,
@@ -32,13 +30,7 @@ export function ForgotPasswordPage() {
   const mutation = useMutation({
     mutationFn: forgotPassword,
     onError: (error: unknown) => {
-      if (!(error instanceof ApiError)) return;
-      if (error.code === 'VALIDATION_ERROR' && error.details) {
-        for (const [field, message] of Object.entries(error.details)) {
-          if (field === 'form') continue;
-          setError(field as keyof ForgotPasswordFormInput, { message });
-        }
-      }
+      setFieldErrorsApplied(applyFieldErrors<ForgotPasswordFormInput>(error, setError, ['email']));
     },
   });
 
@@ -59,7 +51,7 @@ export function ForgotPasswordPage() {
     );
   }
 
-  const topLevelMessage = mutation.isError ? getTopLevelMessage(mutation.error) : null;
+  const alertMessage = mutation.isError && !fieldErrorsApplied ? topLevelMessage(mutation.error) : undefined;
 
   function onSubmit(values: ForgotPasswordFormInput) {
     mutation.mutate(values);
@@ -76,11 +68,7 @@ export function ForgotPasswordPage() {
       }
     >
       <form className="space-y-4" onSubmit={(event) => void handleSubmit(onSubmit)(event)} noValidate>
-        {topLevelMessage && (
-          <Alert variant="destructive">
-            <AlertDescription>{topLevelMessage}</AlertDescription>
-          </Alert>
-        )}
+        <ServerErrorAlert message={alertMessage} />
 
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
@@ -88,10 +76,11 @@ export function ForgotPasswordPage() {
             id="email"
             type="email"
             autoComplete="email"
-            aria-invalid={!!errors.email}
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={errors.email ? 'email-error' : undefined}
             {...register('email')}
           />
-          <FormFieldError message={errors.email?.message} />
+          <FormFieldError id="email-error" message={errors.email?.message} />
         </div>
 
         <Button type="submit" className="w-full" disabled={isSubmitting || mutation.isPending}>
