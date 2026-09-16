@@ -1,0 +1,2 @@
+Ceci n'est pas un CV : juste un fichier texte quelconque, utilise pour verifier
+que l'import de CV refuse tout type de fichier autre que PDF ou DOCX.
