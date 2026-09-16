@@ -18,6 +18,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       // Borne l'attente au démarrage : sans cela, un Redis qui absorbe les
       // paquets retarderait onModuleInit de 10 s (délai par défaut d'ioredis).
       connectTimeout: 2000,
+      // `connectTimeout` ne couvre que la poignée de main : un Redis qui répond au
+      // TCP puis reste muet (trou noir réseau) bloquerait sinon chaque commande,
+      // donc chaque connexion, indéfiniment.
+      commandTimeout: 2000,
     });
 
     // Sans écouteur, ioredis écrit chaque erreur de connexion sur la console.

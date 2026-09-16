@@ -51,6 +51,8 @@
 
 ## Task 1: Modèle de données
 
+> **Amendement après exécution.** (1) La CLI Prisma ne lit `.env` que dans `apps/api/` : les scripts racine `db:migrate`, `db:seed`, `db:studio` passent par `dotenv -e .env --` (`dotenv-cli` en devDependency racine). (2) `@types/node` est déclaré dans `apps/api` — sans lui, `prisma/seed.ts` (hors `src/`) perdait les types de `console`/`process` sous ESLint ; le script `lint` de l'API couvre `src prisma`. (3) `argon2` est natif : `pnpm approve-builds argon2` l'ajoute à `allowBuilds` (binaire précompilé disponible pour Node 26, pas de compilation). (4) Vérifier le seed par `psql` plutôt que par `prisma studio` (interactif). Migrations : `20260915182235_auth_and_profile`, puis `20260915183811_date_columns_and_email_lower_index` (revue qualité : `@db.Date` sur les six dates calendaires ; index unique manuel `User_email_lower_key` sur `lower(email)` — Prisma ne l'exprime pas mais ne le supprime pas non plus, vérifié). **Ne jamais ajouter `@@unique([profileId, sortOrder])`** : le réordonnancement par `$transaction` d'`updateMany` collisionnerait à la première permutation.
+
 **Files:**
 - Modify: `apps/api/prisma/schema.prisma`
 - Create: `apps/api/prisma/seed.ts`
@@ -130,8 +132,8 @@ model Experience {
   company     String
   role        String
   location    String?
-  startDate   DateTime
-  endDate     DateTime?
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
   isCurrent   Boolean   @default(false)
   description String?
   sortOrder   Int       @default(0)
@@ -147,8 +149,8 @@ model Education {
   school      String
   degree      String
   field       String?
-  startDate   DateTime
-  endDate     DateTime?
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
   description String?
   sortOrder   Int       @default(0)
 
@@ -211,8 +213,8 @@ model Certification {
   profileId     String
   name          String
   issuer        String
-  issuedAt      DateTime
-  expiresAt     DateTime?
+  issuedAt      DateTime  @db.Date
+  expiresAt     DateTime? @db.Date
   credentialUrl String?
   sortOrder     Int       @default(0)
 
@@ -399,8 +401,8 @@ Ajouter dans `apps/api/package.json` :
 Run: `pnpm install && pnpm db:seed`
 Expected: `Seed terminé — compte de démonstration : demo@jobtrack.local`.
 
-Run: `pnpm --filter @jobtrack/api exec prisma studio`
-Expected: la table `Profile` contient Camille Démo avec ses relations. Fermer Studio.
+Run: `PGPASSWORD=jobtrack psql -h 127.0.0.1 -p 5434 -U jobtrack -d jobtrack -tAc 'select u.email, p."firstName" from "User" u join "Profile" p on p."userId"=u.id'`
+Expected: `demo@jobtrack.local|Camille`. Relancer `pnpm db:seed` : idempotent, toujours une seule ligne.
 
 - [ ] **Step 5: Commit**
 
@@ -412,6 +414,10 @@ git commit -m "feat(api): modele de donnees utilisateur et profil"
 ---
 
 ## Task 2: Contrat Zod partagé
+
+> **Amendement après revue (code livré : `fd2605a` + correctif).** Le code ci-dessous est la version initiale ; la revue a imposé, tous reproduits avec zod 3.25 : (1) `optionalNumber(max)` — union `'' | coerce.number` puis `'' → undefined` : sinon un `<input type="number">` vide devenait **0** (`Number('') === 0`). (2) `optionalText(max)` — `'' | blanc → null` (effacer), clé absente **inchangée** (ne jamais mapper `undefined → null`, sinon une clé omise effacerait le champ) ; idem `url`/`credentialUrl`. (3) `experienceSchema` : `startDate ≤ endDate`, et `endDate` forcé à `null` si `isCurrent`. (4) `jobPreferencesSchema` : `salaryMin ≤ salaryMax` ; `searchRadiusKm` vaut 25 même pour `''`. (5) `loginSchema.password.max(128)` — sans borne, argon2 vérifierait une chaîne de 10 Mo. Aucun `z.preprocess` : `z.input` reste typé pour React Hook Form. 26 tests dans `packages/shared`. **Conséquence pour la tâche 11** : `PATCH /profile` doit passer l'objet validé tel quel à Prisma — `null` efface, clé absente n'écrit rien.
+
+> **Amendement.** `packages/shared` compte déjà 8 tests (`env.test.ts`) et exporte `./health` ; les helpers d'environnement utilisent `z.preprocess`, réservé aux schémas d'environnement — les schémas de formulaires ci-dessous n'en utilisent pas, pour préserver `z.input<>` côté React Hook Form.
 
 Ces schémas sont la source de vérité : le backend les utilise pour valider, le frontend pour valider les formulaires. Aucune règle de validation n'est écrite deux fois.
 
@@ -547,7 +553,9 @@ export interface ActiveSession {
 import { z } from 'zod';
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().or(z.literal(''));
-const isoDate = z.string().datetime({ offset: true }).or(z.string().date());
+// Date calendaire au format AAAA-MM-JJ uniquement : les colonnes sont en @db.Date,
+// et accepter un datetime avec fuseau réintroduirait l'ambiguïté « quel minuit ».
+const isoDate = z.string().date('Date invalide (AAAA-MM-JJ attendu).');
 
 export const profileSchema = z.object({
   firstName: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
@@ -641,18 +649,19 @@ export type ProjectInput = z.infer<typeof projectSchema>;
 export type ReorderInput = z.infer<typeof reorderSchema>;
 ```
 
-`packages/shared/src/index.ts` :
+`packages/shared/src/index.ts` — `./health` existe depuis la tranche 0 :
 
 ```ts
 export * from './auth';
 export * from './env';
+export * from './health';
 export * from './profile';
 ```
 
 - [ ] **Step 5: Lancer les tests et construire**
 
 Run: `pnpm --filter @jobtrack/shared test && pnpm --filter @jobtrack/shared build`
-Expected: PASS — 9 tests, et `dist/` régénéré.
+Expected: PASS — 13 tests (8 env + 5 auth), et `dist/` régénéré (`index.js`, `index.cjs`, `index.d.ts`).
 
 - [ ] **Step 6: Commit**
 
@@ -665,12 +674,16 @@ git commit -m "feat(shared): schemas zod d authentification et de profil"
 
 ## Task 3: Validation et format d'erreur unifié
 
+> **Amendement après revue (code livré : `5485cd7` + correctif).** Le code ci-dessous est la version initiale ; la revue a imposé, tous reproduits : (1) **`ZodValidationPipe<T extends ZodTypeAny>` renvoyant `z.output<T>`** — la signature `ZodSchema<T>` ne compile pas avec les schémas à transformation de la tâche 2 (entrée ≠ sortie) ; les contrôleurs écrivent `new ZodValidationPipe(profileSchema)` et reçoivent la sortie typée. (2) Une erreur levée par **Fastify** (413 corps trop volumineux, 415 type refusé) n'est pas une `HttpException` : le filtre honore son `statusCode` 4xx numérique au lieu d'en faire un 500 journalisé — vérifié avec un corps de 2 Mo. (3) `logger.error(message, stack)` à deux arguments, sinon Nest n'imprime jamais la pile ; 401/403/429 tracés en `warn`. (4) La clé des erreurs globales de formulaire est `form`, pas `_`. 17 tests API. Un JSON malformé donne bien 400 : Nest promeut le `SyntaxError` natif en `BadRequestException`.
+
+> **Amendement.** Le filtre se branche dans `configureApp` (`app.setup.ts`), pas dans `main.ts`. Point d'attention pour l'implémentation : les exceptions **intégrées** de Nest (route inconnue → `NotFoundException` avec `message: "Cannot GET /x"`, corps JSON malformé → `BadRequestException`) n'ont pas de `code` et portent un message en anglais ; le filtre doit leur substituer un message français par statut (404 → « Ressource introuvable. », 400 → « Requête invalide. », 405, 413, 415…) plutôt que d'exposer `exception.message`.
+
 Le cahier des charges interdit d'afficher un code HTTP nu à l'utilisateur. Le filtre écrit ici garantit que toute erreur sortant de l'API porte un message français lisible.
 
 **Files:**
 - Create: `apps/api/src/common/zod-validation.pipe.ts`, `apps/api/src/common/http-exception.filter.ts`
 - Test: `apps/api/src/common/zod-validation.pipe.spec.ts`
-- Modify: `apps/api/src/main.ts`
+- Modify: `apps/api/src/app.setup.ts`
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -826,7 +839,7 @@ en ajoutant l'import `import { HttpExceptionFilter } from './common/http-excepti
 - [ ] **Step 5: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test`
-Expected: PASS — 5 tests au total.
+Expected: PASS — 10 tests au total (8 existants + 2).
 
 - [ ] **Step 6: Commit**
 
@@ -839,7 +852,11 @@ git commit -m "feat(api): validation zod et format d erreur unifie"
 
 ## Task 4: Service de sessions
 
-Les sessions vivent dans Redis, pas en base : la révocation est alors immédiate et ne coûte pas une écriture Postgres à chaque requête. Ces tests s'exécutent contre le Redis de `docker compose`.
+> **Amendement après revue (code livré : `12f2f40` + correctif).** Deux bugs critiques prouvés sur Redis et corrigés : (1) `touch` ne prolongeait que la session, pas l'index `user_sessions:{userId}` — après 30 jours, une session active échappait à `list()` et à `destroyAllForUser()`, donc une réinitialisation de mot de passe ne la révoquait plus ; `touch` fait désormais `SADD` + `EXPIRE` sur l'index (le `SADD` recrée un index expiré, un `EXPIRE` seul serait un no-op). (2) Course `touch`/`destroy` : l'écriture est `SET … EX … XX`, et un résultat `null`/`0` renvoie « session absente » au lieu de ressusciter une session révoquée. Aussi : identifiant validé par `^[A-Za-z0-9_-]{43}$` avant tout accès Redis ; JSON corrompu supprimé (pas d'orpheline) ; `userAgent` tronqué à 256 ; `lastSeenAt` réécrit au plus une fois par minute (le TTL, lui, toujours prolongé) ; **`SESSION_TTL_SECONDS` exporté** — le cookie doit l'utiliser pour `maxAge` ; **`touch` renvoie `StoredSession` (avec `id`)**. 10 tests, `USER_ID` suffixé par `process.pid`. 27 tests API après cette tâche.
+
+> **Amendement.** Redis tourne via Homebrew sur 6379 (pas de `docker compose`). `RedisService` est paresseux depuis la tranche 0 (`lazyConnect: true`, connexion dans `onModuleInit`) : le test instancie le service directement sans appeler `onModuleInit`, ce qui fonctionne car ioredis se connecte à la première commande. Chaque test utilise un `USER_ID` propre pour ne pas entrer en collision avec des sessions réelles. 18 tests API attendus après cette tâche (13 + 5).
+
+Les sessions vivent dans Redis, pas en base : la révocation est alors immédiate et ne coûte pas une écriture Postgres à chaque requête. Ces tests s'exécutent contre le Redis local (Homebrew, 6379).
 
 **Files:**
 - Create: `apps/api/src/modules/auth/session.service.ts`
@@ -911,7 +928,7 @@ describe('SessionService', () => {
 
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
-Run: `docker compose up -d && pnpm --filter @jobtrack/api test session.service`
+Run: `pnpm --filter @jobtrack/api test session.service`
 Expected: FAIL — `Cannot find module './session.service'`.
 
 - [ ] **Step 3: Implémenter le service**
@@ -1036,8 +1053,13 @@ git commit -m "feat(api): service de sessions redis revocables"
 
 ## Task 5: Service de mots de passe
 
+> **Amendement après revue (code livré : `7e8dee4` + correctif `fecab74`).** Le code ci-dessous est la version initiale ; la revue sécurité a imposé : (1) **Le hachage factice ne doit jamais figer un échec** — `this.dummyHash ??= argon2.hash(...)` conservait une promesse rejetée pour toute la vie du processus (binding natif absent, allocation de 19 Mio refusée sous pression mémoire) ; `burnTime()` rejetait alors instantanément et redevenait un oracle d'énumération, visible aussi dans le code HTTP (500 vs 401). Désormais `getDummyHash()` remet le champ à `null` en cas de rejet, et `onModuleInit()` calcule le hachage au démarrage (une panne argon2 fait échouer le boot, pas la première connexion). (2) **`verify` ne masque plus les pannes** : seul un `TypeError` (digest illisible, levé par `@phc/format`) donne `false`, avec une trace `logger.error` ; toute autre erreur est propagée et devient une 500 tracée par le filtre, au lieu d'un 401 silencieux pour tous les comptes. (3) `ARGON2_OPTIONS` est déclaré `as const satisfies Options` — sans cela, une faute de frappe (`timecost`) passait `tsc` et argon2 appliquait sa valeur par défaut. (4) `needsRehash(hash)` ajouté : la connexion (tâche 8) re-hache à la volée après une hausse des paramètres — indispensable, car après une hausse les anciens digests se vérifient à l'ancien coût et `burnTime()` au nouveau. (5) Le test de chronométrage mesure le **régime établi** (un `burnTime()` d'échauffement avant la mesure) ; deux tests ajoutés (préfixe `$m=19456,t=2,p=1$`, `needsRehash` sur un digest à `memoryCost: 8192` — `timeCost: 1` est refusé par argon2, plancher 2). 7 tests, **34 tests API** après cette tâche. Point d'attention : `argon2.options.ts` doit rester sans import Nest ni `config/env`, le seed le charge hors conteneur.
+
+> **Amendement.** Le `DUMMY_HASH` inventé de la version initiale aurait été rejeté par argon2 avant tout calcul : `verify` lève, le `catch` renvoie `false` immédiatement, et `burnTime()` ne brûle aucun temps — l'énumération de comptes par chronométrage restait possible. Le hachage factice est désormais réel, calculé une fois à la première demande. Les options argon2 vivent dans `argon2.options.ts`, importées par le service **et** par le seed. Ajouter un cinquième test : `burnTime()` doit durer au moins autant qu'un `verify` réel (mesurer les deux, tolérance large — l'ordre de grandeur est ~20-60 ms, jamais < 5 ms).
+
 **Files:**
-- Create: `apps/api/src/modules/auth/password.service.ts`
+- Create: `apps/api/src/modules/auth/argon2.options.ts`, `apps/api/src/modules/auth/password.service.ts`
+- Modify: `apps/api/prisma/seed.ts`
 - Test: `apps/api/src/modules/auth/password.service.spec.ts`
 
 - [ ] **Step 1: Écrire le test qui échoue**
@@ -1081,28 +1103,38 @@ Expected: FAIL — module introuvable.
 
 - [ ] **Step 3: Implémenter le service**
 
-`apps/api/src/modules/auth/password.service.ts` :
+`apps/api/src/modules/auth/argon2.options.ts` — constante pure, sans décorateur, partagée avec le seed :
 
 ```ts
-import { Injectable } from '@nestjs/common';
 import argon2 from 'argon2';
 
-/** Paramètres recommandés par l'OWASP pour Argon2id. */
-const OPTIONS = {
+/** Paramètres recommandés par l'OWASP pour Argon2id. Source unique : le seed les importe aussi. */
+export const ARGON2_OPTIONS = {
   type: argon2.argon2id,
   memoryCost: 19456, // 19 MiB
   timeCost: 2,
   parallelism: 1,
 } as const;
+```
 
-/** Hachage réel servant à égaliser le temps de réponse quand le compte n'existe pas. */
-const DUMMY_HASH =
-  '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$2jJvVfUHkXqk3Q9pFn0QJz0hUxQDEtCNnA2vT3SfJ2M';
+`apps/api/src/modules/auth/password.service.ts` :
+
+```ts
+import { Injectable } from '@nestjs/common';
+import argon2 from 'argon2';
+import { ARGON2_OPTIONS } from './argon2.options';
 
 @Injectable()
 export class PasswordService {
+  /**
+   * Hachage factice réel, calculé une seule fois à la première demande.
+   * Une chaîne inventée serait rejetée par argon2 avant tout calcul, et
+   * burnTime() ne brûlerait alors aucun temps.
+   */
+  private dummyHash: Promise<string> | null = null;
+
   hash(plain: string): Promise<string> {
-    return argon2.hash(plain, OPTIONS);
+    return argon2.hash(plain, ARGON2_OPTIONS);
   }
 
   async verify(hash: string, plain: string): Promise<boolean> {
@@ -1120,26 +1152,33 @@ export class PasswordService {
    * en mesurant le temps de réponse.
    */
   async burnTime(): Promise<void> {
-    await this.verify(DUMMY_HASH, 'mot-de-passe-factice');
+    this.dummyHash ??= argon2.hash('mot-de-passe-factice', ARGON2_OPTIONS);
+    await argon2.verify(await this.dummyHash, 'autre-mot-de-passe');
   }
 }
 ```
 
+Dans `apps/api/prisma/seed.ts`, remplacer l'objet d'options inliné par `import { ARGON2_OPTIONS } from '../src/modules/auth/argon2.options';` et `argon2.hash('DemoJobTrack2026!', ARGON2_OPTIONS)`.
+
 - [ ] **Step 4: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test password.service`
-Expected: PASS — 4 tests.
+Expected: PASS — 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/modules/auth
+git add apps/api/src/modules/auth apps/api/prisma/seed.ts
 git commit -m "feat(api): hachage argon2id des mots de passe"
 ```
 
 ---
 
 ## Task 6: Service d'authentification et garde de session
+
+> **Amendement après revue (code livré : `d6f76d4` + correctif `57423ab`).** Le code ci-dessous est la version initiale ; la revue sécurité a imposé : (1) `request.cookies?.[SESSION_COOKIE]` — sans `@fastify/cookie` enregistré (application de test construite sans `configureApp`), `cookies` vaut `undefined` et la garde répondait 500 au lieu de 401. (2) **`needsRehash` branché dans `validateCredentials`** : après une vérification réussie, un hachage aux paramètres obsolètes est recalculé et réécrit — sinon, après une hausse des paramètres, `verify` (ancien coût) et `burnTime()` (coût actuel) redevenaient distinguables. (3) `@CurrentUser()` lève une `InternalServerErrorException` explicite quand `request.user` manque (décorateur posé sur une route `@Public()`) au lieu de renvoyer `undefined` typé `SessionUser`. (4) **`auth.guard.spec.ts`** (7 tests, contexte factice, sans Redis ni Postgres) : route publique sans appel à `touch`, cookie absent (y compris sans clé `cookies`), signature invalide et identifiant malformé rejetés **sans** consulter Redis, session inconnue, utilisateur supprimé → `destroy(session.id, session.userId)` vérifié sur ses arguments, chemin nominal. (5) `auth.service.spec.ts` passe à 10 tests : compte sans mot de passe (Google) rejeté avec un `getResponse()` **identique** à celui du mauvais mot de passe, re-hachage à la connexion (digest forcé à `memoryCost: 8192`), `findSessionUser` trouvé / `null`. **51 tests API** après cette tâche. Décisions notées, non appliquées : le `catch` P2002 couvre toute violation d'unicité du `create` imbriqué (Profile/JobPreferences ne peuvent pas collisionner en pratique ; ne pas filtrer sur `meta.target`, dont la forme diffère entre `@unique` et l'index d'expression) ; une requête Postgres par appel authentifié est un choix assumé (commenté dans la garde) ; les codes d'erreur (`NOT_AUTHENTICATED` de la garde vs `UNAUTHORIZED` du filtre) devront être unifiés côté front en tâche 13 — idéalement exportés depuis `@jobtrack/shared`. Pour la tâche 8 : le contrôle préalable de `register` répond avant le hachage (email pris = une requête SQL, email libre = ~40 ms d'argon2), donc limiter `POST /auth/register` par IP et assez strictement ; `forgot-password` doit rester générique (« si un compte existe… »). `package.json` déclare `test:e2e` sans `vitest.e2e.config.ts` : la tâche 8 le crée.
+
+> **Amendement.** (1) 40 tests API attendus (27 après la tâche 4 corrigée, +7 tâche 5 corrigée, +6 ici — le test de course P2002 compte). (2) **Course à l'inscription** : `findUnique` puis `create` ne suffit pas — deux inscriptions simultanées sur le même email passent le contrôle, et la seconde échoue sur la contrainte unique (Prisma `P2002`, ou l'index `User_email_lower_key`). Entourer le `create` d'un `try/catch` qui mappe `PrismaClientKnownRequestError` code `P2002` vers la même `ConflictException` `EMAIL_TAKEN` ; garder le `findUnique` préalable pour le cas courant. Ajouter un test qui insère l'email directement via Prisma puis appelle `register` sans passer par le contrôle — le 409 doit venir du `catch`. (3) `request.cookies` et `request.unsignCookie` n'existent sur `FastifyRequest` que si l'augmentation de types de `@fastify/cookie` est chargée : ajouter `import '@fastify/cookie';` en tête de `auth.guard.ts`. (4) **Valider la forme du cookie avant Redis** : la garde rejette tout identifiant ne correspondant pas à `^[A-Za-z0-9_-]{43}$` sans interroger Redis. (5) Exigences issues de la revue de la tâche 4 : la garde valide la forme du cookie avant d'appeler `touch` (rejet immédiat sans Redis), traite un `null` de `touch` comme « non authentifié », attache `request.session = touch(...)` (qui porte l'`id`) plutôt que de re-dériver l'id du cookie, et le cookie utilise `SESSION_TTL_SECONDS` pour `maxAge`. (6) `ID_PATTERN` de `session.service.ts` devient **exporté sous `SESSION_ID_PATTERN`** ; `PrismaService` reçoit `datasourceUrl: env.DATABASE_URL` (il ne chargeait pas le `.env`, seul `config/env` le fait) ; la requête porte `request.session` (le `StoredSession` renvoyé par `touch`, avec `id`) plutôt qu'un `sessionId` nu.
 
 **Files:**
 - Create: `apps/api/src/modules/auth/auth.service.ts`, `auth.guard.ts`
@@ -1412,7 +1451,7 @@ export class AuthGuard implements CanActivate {
 - [ ] **Step 5: Lancer les tests**
 
 Run: `pnpm --filter @jobtrack/api test`
-Expected: PASS — 14 tests au total.
+Expected: PASS — 37 tests au total.
 
 - [ ] **Step 6: Commit**
 
@@ -1424,6 +1463,10 @@ git commit -m "feat(api): service d authentification et garde de session"
 ---
 
 ## Task 7: Protections transverses — débit et CSRF
+
+> **Amendement après revue (code livré : `e074483` + correctif `8751853`).** Le code ci-dessous est la version initiale ; la revue sécurité a imposé : (1) **Compteur atomique** — `INCR` + `EXPIRE` conditionnel dans un seul script Lua (`redis.client.eval`) : plus de clé sans TTL si le processus meurt entre les deux commandes (un attaquant choisit l'email, donc la clé), plus de fenêtre prolongée par deux premiers appels concurrents. (2) **Fermé sans Redis, délibérément** : toute erreur ou réponse non numérique est journalisée en `error` et donne un **503 `SERVICE_UNAVAILABLE`** (« Service temporairement indisponible. Réessayez dans un instant. ») — le limiteur est *la* protection contre la force brute et les sessions vivent de toute façon dans Redis ; un 500 générique ou un passage silencieux (l'ancien `resultAt` renvoyait 0 sur un `exec()` nul → requête acceptée) sont exclus. `RedisService` reçoit `commandTimeout: 2000` (`connectTimeout` ne couvre que la poignée de main). (3) **Plusieurs règles par route** : `@RateLimit(options | options[])`, chaque règle évaluée ; `/auth/login` recevra `[{ ip, 30/15 min }, { ip+email, 5/15 min }]`. Un `warn` avec route + identité précède chaque 429. (4) **Jeton CSRF lié à la session** : `csrfTokenFor(sessionId) = HMAC-SHA256(SESSION_SECRET, sessionId)` en base64url ; la garde compare l'en-tête à `csrfTokenFor(request.session.id)` en temps constant et **ne lit jamais le cookie** — un cookie déposé par un sous-domaine compromis ne correspond à aucune session. Conséquence : ordre des gardes **débit → session → CSRF** (`request.session` doit exister), et le cookie `jt_csrf` posé à la connexion vaut `csrfTokenFor(sessionId)` avec le même `maxAge` que la session. (5) **`@NoCsrf()`** (`common/decorators/no-csrf.decorator.ts`) remplace le détournement de `@Public()` : « sans session » et « sans jeton » sont deux axes ; l'exemption devient un acte explicite (connexion, inscription, mot de passe oublié). (6) Liste blanche des méthodes sûres (`GET`/`HEAD`/`OPTIONS`) au lieu d'une liste noire (Nest enregistre aussi `SEARCH`). (7) Tests : 8 débit (fenêtre non prolongée, repli `anonyme`, liste de règles, 503 sur `eval` rejeté, décorateur lu par un vrai `Reflector` — la tautologie sur `RATE_LIMIT_KEY` est supprimée) + 7 CSRF (méthodes sûres, `@NoCsrf`, sans session, en-tête absent/longueur différente sans `RangeError`, même longueur différent, en-tête dupliqué, jeton exact). **66 tests API** après cette tâche. Reporté, à consigner : CSRF de connexion (un attaquant connecte silencieusement la victime sur *son* compte et récolte ses candidatures) — correctif standard : cookie CSRF pré-session émis au premier `GET` et exigé à la connexion ; remise à zéro du compteur `ip+email` après une connexion réussie ; message « Trop de tentatives » dupliqué entre la garde et le filtre.
+
+> **Amendement.** (1) 59 tests API attendus (51 après la tâche 6 corrigée, +4 débit, +4 CSRF — `csrf.guard.spec.ts` est ajouté : lecture ignorée, route publique ignorée, jeton absent/différent → 403, jeton recopié → passe). (2) `request.routerPath` est déprécié dans Fastify 4.28 (FSTDEP017) : utiliser `request.routeOptions.url`. (3) `INCR` puis `EXPIRE` non atomiques laissent un compteur éternel si le processus meurt entre les deux : `multi().incr(key).ttl(key).exec()`, puis `EXPIRE` seulement si le TTL est négatif. (4) L'email du corps brut est normalisé (`trim().toLowerCase()`, tronqué à 254) avant d'entrer dans la clé ; les compteurs de test sont préfixés par `process.pid`. (5) Comparaison cookie/en-tête CSRF en temps constant (`timingSafeEqual` après contrôle de longueur) ; `import '@fastify/cookie'` en tête de `csrf.guard.ts` pour `request.cookies`.
 
 **Files:**
 - Create: `apps/api/src/common/rate-limit.guard.ts`, `apps/api/src/common/csrf.guard.ts`
@@ -1647,6 +1690,10 @@ git commit -m "feat(api): limitation de debit redis et protection csrf"
 ---
 
 ## Task 8: Contrôleur d'authentification et cookies
+
+> **Amendement après revue (code livré : `07d4372` + correctif `559f6e9`, CI `ci:` suivant).** Vérifié à la main sur l'API réelle (3001) : inscription 201 avec `jt_session` HttpOnly + `jt_csrf`, `/auth/me` 200, déconnexion 403 sans jeton / 204 avec, puis 401. La revue sécurité a imposé : (1) **Cookies renouvelés par la garde** — `touch` renvoie `TouchedSession` (`refreshed: true` quand `lastSeenAt` est réécrit, une fois par minute) et `AuthGuard` réémet les deux cookies dans ce cas ou si `jt_csrf` ne correspond plus à la session : le `maxAge` du navigateur glisse comme le TTL Redis (sinon déconnexion silencieuse au jour 30), et un cookie CSRF perdu se répare seul ; les chemins de session à venir (réinitialisation, Google) ne peuvent plus l'oublier. `SESSION_COOKIE` vit dans `auth.cookies.ts` (cycle d'import garde ↔ cookies). Sur `logout`, `clearAuthCookies` s'exécute après et l'emporte. (2) `BASE` d'options de cookie partagé entre `setCookie` et `clearCookie` ; commentaire : `SameSite=Lax` exige que l'API et le SPA partagent le même domaine enregistrable. (3) Clé CSRF dérivée (`HMAC(SESSION_SECRET, 'csrf')`) : séparation d'avec la signature des cookies. (4) **503 unifié** (`common/service-unavailable.ts`) pour Redis indisponible dans les deux gardes ; `register` répond 503 « compte créé mais connexion échouée » si l'ouverture de session échoue après l'insertion. (5) **Compteur `ip+email` remis à zéro après une connexion réussie** (`rateLimitKey`/`ipEmailIdentity` exportés par la garde) ; `register` passe à 20/heure par IP (la garde s'exécute avant la validation : les soumissions invalides consomment aussi le quota). (6) CI : `pnpm typecheck` ajouté (le build n'inclut plus les specs, rien d'autre ne les vérifiait) ; `test:e2e` passe par turbo avec `^build` (shared est résolu via `dist/`) et `cache: false` ; **l'étape CI est limitée à `--filter=@jobtrack/api`** — `turbo run test:e2e` à la racine lancerait aussi Playwright (web), toujours hors CI. (7) e2e 14 : assertions par cookie (`jt_session` HttpOnly, `jt_csrf` non, `Max-Age=2592000`, pas de `Secure` en dev), mauvais mot de passe ≡ compte inconnu (corps 401 identiques), JSON malformé → 400 `BAD_REQUEST`, déconnexion → `Expires=Thu, 01 Jan 1970` sur les deux cookies. **69 tests unitaires, 14 e2e** après cette tâche.
+
+> **Amendement.** (1) `request.sessionId` n'existe pas : la garde attache `request.session` (`StoredSession`, avec `id`) — utiliser `request.session.id`. (2) `MAX_AGE_SECONDS` → `SESSION_TTL_SECONDS` de `session.service.ts`. (3) Le cookie `jt_csrf` vaut `csrfTokenFor(sessionId)` (tâche 7 corrigée), pas des octets aléatoires ; `register` et `login` portent `@Public()` **et** `@NoCsrf()` ; `login` porte deux règles de débit (`ip` 30/15 min, `ip+email` 5/15 min), `register` 10/heure par IP. (4) `ProfileModule` n'existe pas encore (tâche 11) : `AppModule` importe `CommonModule`, `AuthModule`, `HealthModule`. Ordre des `APP_GUARD` : `RateLimitGuard`, `AuthGuard`, `CsrfGuard`. (5) `nest build` compilait les `*.spec.ts` dans `dist/` (défaut hérité de la tranche 0) : ajouter `apps/api/tsconfig.build.json` (`exclude: src/**/*.spec.ts`). Les tests e2e vivent dans `src/**/*.e2e.spec.ts` (couverts par `lint`/`typecheck`, exclus du build et de la suite unitaire via `exclude` dans `vitest.config.ts`) ; `vitest.e2e.config.ts` les inclut avec `fileParallelism: false`. Script racine `test:e2e`. (6) **Hygiène des données** : email `e2e-${process.pid}@jobtrack.local`, nettoyage par `startsWith: 'e2e-'` — jamais `endsWith('@jobtrack.local')` (effacerait le seed et les comptes des tests unitaires) ; détruire aussi les sessions Redis des comptes e2e (`destroyAllForUser`) et les clés `ratelimit:*` dans `beforeEach` (les inscriptions répétées dépasseraient la limite par IP). (7) 11 tests e2e (+ `/health` public, + liste/révocation des sessions). (8) CI : `prisma migrate deploy` avant `pnpm test` (la suite unitaire touche désormais Postgres et Redis) et étape `pnpm test:e2e`. Suite unitaire inchangée : 66.
 
 **Files:**
 - Create: `apps/api/src/modules/auth/auth.controller.ts`, `auth.cookies.ts`, `auth.module.ts`
@@ -2093,6 +2140,10 @@ git commit -m "feat(api): endpoints d authentification, cookies de session et te
 
 ## Task 9: Mot de passe oublié et réinitialisation
 
+> **Amendement après revue (code livré : `227fe0f` + correctif `f57ba5d`).** Vérifié à la main sur l'API réelle : lien journalisé, réinitialisation 204, second usage 400, ancienne session 401, ancien mot de passe 401, nouveau 200. La revue sécurité a imposé : (1) **Émission atomique** — `SET pwreset_user:{id} … GET` réclame l'index, puis publie le jeton, puis révoque le perdant : un double-clic sur « Envoyer le lien » ne laisse plus deux jetons valides une heure (l'ancien `GETDEL` + `MULTI` laissait la course ouverte). L'index perdu par une émission intercalée entre `GETDEL` et le `DEL` de `consume` est accepté et commenté. (2) **Logique hors du contrôleur** : `PasswordResetFlow` (`requestReset`, `completeReset`) — `forgot-password` était le seul handler à toucher `PrismaService` directement ; le contrôleur garde décorateurs, pipe Zod et formes de réponse. Pas de contrôleur séparé : les routes restent sous `/auth` avec le même vocabulaire de gardes. (3) **Échec de `destroyAllForUser` après changement du mot de passe → 503 explicite** (« mot de passe changé, mais sessions non fermées »), pas un 500 muet qui laisserait l'utilisateur croire à un échec pendant que ses anciennes sessions vivent. (4) **Audit** : `warn` « Mot de passe réinitialisé pour l'utilisateur {id} » (identifiant seul, jamais l'email ni le jeton). (5) **Jeton jamais journalisé en production** : en `NODE_ENV=production`, seule une ligne sans jeton ; la branche de dev disparaît en tranche 7 avec l'envoi email. (6) **Compteur `ip+email` de connexion remis à zéro après réinitialisation** (contrôle de la boîte mail prouvé) — `LOGIN_ROUTE` dans `auth.routes.ts`, utilisé aussi par le handler de connexion pour que les deux clés ne divergent jamais ; e2e : 5 échecs puis réinitialisation → connexion 200 et non 429. (7) P2025 (compte supprimé entre `consume` et `update`) → même 400 `INVALID_RESET_TOKEN`. (8) Limiteur de `reset-password` à 10/h par IP (5 était trop serré derrière un NAT ; un jeton invalide ne coûte aucun argon2, la force brute sur 256 bits n'est pas la menace). (9) Tests : assertion « jamais en clair » par lectures directes (le `KEYS` + `includes` ne pouvait pas échouer) ; deux tests de concurrence (`Promise.all` sur `consume` et sur `issue`). **75 tests unitaires, 18 e2e** après cette tâche. Décisions consignées : sha256 sans HMAC suffisant pour un jeton de 256 bits aléatoires (à ne **pas** copier pour un code court type OTP) ; TTL 1 h conservé ; pas d'égalisation `burnTime` sur `forgot-password` — tant que `register` répond 409 `EMAIL_TAKEN`, l'oracle d'énumération explicite existe déjà, à revoir ensemble le jour où ce comportement change ; `emailVerifiedAt` **non** posé par la réinitialisation (rien ne prouve la boîte mail tant que le lien n'est pas envoyé ; à décider dans la tranche qui possède la vérification). Suivi : `clearRateLimits` des e2e efface aussi les compteurs du serveur de dev (même Redis, base 0) — préfixer ou utiliser `redis://localhost:6379/1` pour les tests.
+
+> **Amendement.** (1) Compteurs : 73 unitaires (69 + 4) et 17 e2e (14 + 3). (2) `consume` en **`GETDEL`** (Redis 8 ici, ≥ 6.2 requis) : lecture et invalidation atomiques, pas de double usage par deux requêtes simultanées ; forme du jeton vérifiée (`^[A-Za-z0-9_-]{43}$`) avant tout accès Redis. (3) Index `pwreset_user:{userId}` : émettre un nouveau jeton invalide le précédent (un lien oublié dans une boîte mail ne reste pas valable une heure). (4) `forgot-password` et `reset-password` portent `@Public()` **et** `@NoCsrf()` ; `forgot-password` a deux règles de débit (`ip` 10/h, `ip+email` 3/h), `reset-password` `ip` 5/h. (5) Un compte Google sans mot de passe peut s'en donner un par ce flux — voulu. (6) e2e : réponse 202 identique compte existant/inexistant ; jeton invalide → 400 `INVALID_RESET_TOKEN` ; flux complet (jeton émis directement via `PasswordResetService`, le lien n'étant que journalisé) : ancienne session 401, ancien mot de passe 401, nouveau 200, second usage 400. Nettoyage des clés `pwreset*` des comptes e2e.
+
 **Limite assumée de cette tranche :** aucun fournisseur d'email n'est branché. Le lien de réinitialisation est écrit dans les logs du serveur. L'envoi par email arrive avec les notifications (tranche 7). Le reste du flux — génération, expiration, usage unique — est complet et testé.
 
 **Files:**
@@ -2257,6 +2308,10 @@ git commit -m "feat(api): reinitialisation de mot de passe a usage unique"
 ---
 
 ## Task 10: Connexion Google
+
+> **Amendement après revue (code livré : `74a5f32` + correctif `cbb7139`).** Vérifié sur l'API réelle : `GET /auth/google` → 503 `GOOGLE_NOT_CONFIGURED` sans `GOOGLE_*`. La revue sécurité a relevé une faille **critique** dans la décision (4) ci-dessus et l'a corrigée : (1) **Pré-détournement de compte** — le rattachement automatique par email visait tout compte existant, y compris un compte **à mot de passe dont l'email n'a jamais été vérifié** ; `email_verified` prouve le côté Google, pas le côté JobTrack. Scénario : l'attaquant inscrit l'adresse de la victime ; la victime se connecte via Google ; sa session s'ouvre dans le compte de l'attaquant, qui en connaît le mot de passe. Désormais le rattachement automatique n'a lieu que si le compte existant n'a **pas de mot de passe** ou a `emailVerifiedAt` posé ; sinon `GOOGLE_LINK_REQUIRES_LOGIN` → redirection `/login?error=google_link` (« Connectez-vous par mot de passe pour le relier à Google ») ; un flux « relier depuis les paramètres » viendra avec la vérification d'email. Le rattachement pose `emailVerifiedAt` sur le compte existant (boîte prouvée par Google). (2) **PKCE (S256) + lecture de l'`id_token`** au lieu de l'appel userinfo (RFC 9700 §2.1.1 : PKCE ou `nonce` même pour un client confidentiel — protection contre l'injection de code) ; le jeton est obtenu directement de Google en TLS, la vérification de signature peut être omise (OIDC Core §3.1.3.7) mais `aud`, `iss` et `exp` sont contrôlés ; le `verifier` voyage dans le cookie signé avec le `state`. (3) **State à usage unique** côté serveur (`oauth_state_used:{sha256}` en Redis, `NX`, 10 min) : effacer le cookie n'empêche pas un rejeu par l'attaquant. (4) Limites de débit : `GET /auth/google` 20/15 min, callback 30/15 min par IP (chaque callback coûte un appel sortant vers Google). (5) Le callback ne renvoie **jamais** de JSON (`requireGoogle()` dans le `try`) ; `access_denied` (annulation) → `/login?error=google_cancelled` ; panne infra → `logger.error` avec pile, refus Google → `warn`. (6) `code`/`state` contrôlés `typeof === 'string'` (Fastify renvoie un tableau sur paramètre répété). (7) `WEB_ORIGIN` débarrassé de sa barre finale dans le schéma partagé (sinon `http://hôte//profile`). (8) Tests : google.service 5 (PKCE, `aud` erroné), auth.service 14, shared 27, e2e 27 (sans cookie, rejeu, rattachement vérifié, compte non vérifié → `google_link`, 503 sans configuration). **84 tests unitaires, 27 e2e** après cette tâche. Consigné : `SameSite=Lax` obligatoire sur le cookie de state (le retour de Google est une navigation cross-site ; `Strict` casserait le flux) ; le SPA doit appeler `GET /auth/google` avec `credentials: 'include'` sinon le cookie de state n'est jamais posé ; en production, envisager le préfixe `__Host-` sur ce cookie contre le dépôt par sous-domaine ; ajouter un `returnTo` un jour impose une liste blanche de chemins.
+
+> **Amendement.** (1) Compteurs : 81 unitaires (75 + 3 `google.service` + 3 `auth.service`) et 22 e2e (18 + 4). (2) **`GoogleService` reçoit sa configuration par injection** (`GOOGLE_CONFIG`, fabrique dans `AuthModule`) et vaut `null` quand `GOOGLE_*` est absent (cas local et CI) : `GET /auth/google` répond alors **503 `GOOGLE_NOT_CONFIGURED`** ; les tests unitaires n'ont jamais besoin de l'environnement et les e2e substituent le fournisseur (`overrideProvider(GoogleService)`) pour jouer le callback complet sans appeler Google. (3) **Seuls les emails vérifiés par Google sont acceptés** (`email_verified === true` dans userinfo) : sans cela, un compte Google non vérifié portant l'adresse d'autrui prendrait le contrôle du compte JobTrack par le rattachement. Email normalisé (`trim().toLowerCase()`). (4) Rattachement : `OAuthAccount(GOOGLE, sub)` → utilisateur ; sinon même email → rattacher ; sinon créer (`emailVerifiedAt` posé). P2002 (deux callbacks simultanés) → relancer la recherche une fois, jamais de 409 sur une navigation. (5) Le callback **redirige** toujours (`/profile` ou `/login?error=google`), y compris sur exception (une réponse JSON n'a aucun sens pour une navigation) ; state signé, httpOnly, 10 min, dans `auth.cookies.ts` (`OAUTH_STATE_COOKIE`, base d'options partagée) ; `toSessionUser` prend désormais l'objet Prisma. (6) `GET /auth/google` renvoie `{ url }` (décision produit à valider : le SPA navigue lui-même).
 
 Le flux est implémenté directement contre les endpoints Google plutôt que via Passport : trois appels HTTP suffisent, et l'intégration Passport avec l'adaptateur Fastify ajoute des frictions sans bénéfice ici.
 
@@ -2576,6 +2631,10 @@ git commit -m "feat(api): connexion google en authorization code flow"
 ---
 
 ## Task 11: Profil et préférences
+
+> **Amendement après revue (code livré : `4441981` + `5f21622` + correctif `b93b5b0`).** L'isolation est **prouvée** : chaque lecture/écriture part de `resolveProfileId(userId)`, les écritures sont des `updateMany`/`deleteMany` filtrés `{ id, profileId }` (contrôle de propriété et écriture en une seule instruction), 404 jamais 403, réordonnancement via le client `tx` avec annulation ; le mass assignment est fermé par le stripping `z.object` (aucun `.passthrough()`/`z.record()` dans le contrat) et par `ZodValidationPipe` qui renvoie la **sortie parsée**, pas le corps brut — détail porteur à ne jamais changer. La revue a imposé : (1) `reorderSchema` borné à 100 ids et sans doublons (un tableau de ~37 000 cuids tenait dans le `bodyLimit` de 1 Mio et bloquait une connexion 5 s jusqu'au P2028 ; des doublons passaient le contrôle `updated === ids.length`). (2) **Schémas partagés corrigés** : `jobPreferencesSchema` ne remet plus `EUR`/25 sur un PATCH qui omet `currency`/`searchRadiusKm` (les colonnes Prisma portent déjà ces défauts — la décision de la tâche 2 est inversée pour cette raison) ; `optionalNumber` : `''` → `null` (effaçable, comme `optionalText`) et `null`/booléen/tableau refusés (`z.coerce` transformait `null` en 0) ; `optionalUrl` limité à `http(s)` et 2000 caractères (`javascript:` était accepté par `.url()` — munition de XSS stockée dès qu'un lien sera rendu) ; éléments des tableaux de chaînes limités à 80. (3) e2e : les deux assertions creuses corrigées (payload de réordonnancement **permutant**, `title` posé puis omis), `it.each` d'isolation sur les **six** collections, doublons → 400, préférences conservées sans `currency`/`searchRadiusKm`, `salaryMin: ''` → `null`. **42 e2e** après cette tâche, unitaires inchangés (84). Notes pour le front (tâches 13-15) : `PATCH /profile/<collection>/:id` valide avec le schéma **complet** (envoyer l'objet entier, un champ omis reprend sa valeur par défaut) ; `PATCH /profile/preferences` exige les cinq tableaux (sémantique PUT) ; `GET /profile` renvoie la ligne Prisma (`userId`, `createdAt`, `updatedAt` en ISO complet) ; les dates des collections sont des chaînes `AAAA-MM-JJ`. Reporté : `select` par collection (ne plus exposer `profileId`/`userId`), `GET /profile/preferences` qui écrit (upsert) sur un GET, service générique typé par ligne (`CollectionRow` à signature d'index efface le contrat), intercepteur Prisma P2025 → 404, `clearRateLimits` global dans les e2e.
+
+> **Amendement (tâches 11 et 12 exécutées ensemble : le test d'isolation de la 11 a besoin des routes de la 12).** (1) Compteurs : unitaires inchangés (84), e2e 27 → 35 (`profile.e2e.spec.ts`, 8 tests). (2) **Dates** : le contrat API est `AAAA-MM-JJ` (`isoDate` partagé), les colonnes `@db.Date` sont des `Date` Prisma et Prisma refuse une chaîne date seule ; conversion centralisée dans le service de collection par liste `dateFields` (écriture `T00:00:00.000Z`, lecture `slice(0, 10)`). (3) **Réordonnancement** en transaction interactive avec le client `tx` (le délégué est résolu depuis le client transactionnel par nom — l'unique conversion de type du module vit dans le service, plus dans les contrôleurs) ; si la somme des `count` ≠ `ids.length` (id étranger, inconnu ou dupliqué) → 404 et annulation. (4) e2e sous `src/modules/profile/`, comptes `e2e-iso-${pid}-…`, nettoyage par `startsWith` (jamais `endsWith('@isolation.local')`), sessions Redis détruites avant suppression, compteurs de débit vidés. (5) `PATCH /profile` transmet l'objet validé tel quel (`null` efface, clé absente n'écrit rien) ; `avatarUrl` non modifiable ici. (6) Tests ajoutés au-delà du plan : cycle complet d'une collection avec réordonnancement et 404 sur id étranger, validation par champ, création dans les cinq autres collections, préférences (défauts `searchRadiusKm` 25 / `EUR`, `salaryMin > salaryMax` → 400), session et CSRF exigés.
 
 **Files:**
 - Create: `apps/api/src/modules/profile/profile.service.ts`, `profile.controller.ts`, `profile.module.ts`
@@ -3126,6 +3185,10 @@ git commit -m "feat(api): crud generique des six collections de profil"
 
 ## Task 13: Couche d'accès frontend et routes protégées
 
+> **Amendement après exécution (code livré : `3e54f6a` + correctif `e60c7b8`).** Le dépôt a été déplacé de `~/Desktop/1 Projet/JOBTRACK/JOBTRACK` vers **`~/dev/JOBTRACK`** avant cette tâche : le Bureau est synchronisé par iCloud Drive et, disque plein à 98 %, macOS évinçait les fichiers de `node_modules` vers le cloud — vitest web bloqué au démarrage des workers, eslint bloqué, agents figés. `node_modules` réinstallés depuis le store pnpm ; `.claude/` ignoré par git. Écarts au plan : (1) **Le jeton CSRF est lié à la session** (tâche 7) — le client recopie toujours le cookie `jt_csrf` dans `x-csrf-token` sur POST/PATCH/PUT/DELETE, le serveur le compare à un HMAC de l'identifiant de session ; la garde `AuthGuard` réémet le cookie s'il manque. (2) `ApiError` porte `details` (erreurs par champ de `VALIDATION_ERROR`) pour `form.setError`. (3) Couche de collections **typée** par le contrat partagé (`CollectionInputs`, `CollectionItem<N>`, `reorderCollection`) au lieu de `Record<string, unknown>` ; `ProfileDto`/`PreferencesDto` reflètent les lignes renvoyées par l'API (champs nullables en `null`, dates `AAAA-MM-JJ`). (4) `useSetSession(user | null)` remplace `useClearSession` (la connexion pose l'utilisateur sans refetch). (5) `ProtectedRoute` n'est pas encore branché dans `routes.tsx` (tâche 14). Tests web : 27 → 33 (4 client, 2 hook).
+
+> **Après revue (`e60c7b8`) :** (6) **Types d'entrée Zod pour les formulaires** — `z.infer` décrit la *sortie* (champs à défaut obligatoires, `null` là où le formulaire envoie `''`) ; `@jobtrack/shared` exporte désormais `XxxFormInput = z.input<typeof xxxSchema>` pour tous les schémas, utilisés par `useForm` et les corps de mutation ; `CollectionInputs` (entrée) et `CollectionOutputs` (sortie, base de `CollectionItem<N>`) sont distincts. (7) `ProtectedRoute` : une erreur 5xx sur `/auth/me` n'est plus traitée comme une déconnexion (`ErrorState` + « Réessayer »), squelette annoncé (`role="status"` + libellé masqué), `state.from` conserve la query string ; `retry: false` retiré (la politique globale ne retente déjà pas les 4xx). (8) `isStringRecord` refuse tableaux et objets vides ; commentaire sur l'exigence de même site pour le cookie `jt_csrf`. Tests web : 36.
+
 **Files:**
 - Modify: `apps/web/src/services/api/client.ts` (en-tête CSRF)
 - Create: `apps/web/src/services/api/auth.ts`, `profile.ts`
@@ -3368,6 +3431,8 @@ git commit -m "feat(web): couche d acces api, session courante et routes protege
 ---
 
 ## Task 14: Écrans d'authentification
+
+> **Amendement après exécution et revue (code livré : `d6633df` + correctif `88166a8`).** Vérifié dans le navigateur (mobile 375 px, clair et sombre) : inscription réelle → 201 → `/profile`, garde de route après déconnexion, bannière `?error=google_link`, écrans réinitialisation/mot de passe oublié. Écarts ratifiés : (1) titre de connexion « Connexion » / « Retrouvez vos candidatures en cours. » (plus sobre que « Content de vous revoir ») ; (2) `AuthLayout` centré, logo dans la colonne animée (`motion.div`, `reducedMotion="user"` respecté) ; (3) `useForm<XxxFormInput>` (types d'entrée, tâche 13) ; `Alert role="status"` pour les bannières Google (non bloquantes), `role="alert"` pour les erreurs serveur ; `?error=google|google_link|google_cancelled` lus via une **liste blanche** (`Object.hasOwn` — un objet littéral laissait passer `?error=constructor`) ; `from` de `ProtectedRoute` accepté seulement s'il commence par `/` et pas `//` (pas de redirection ouverte) ; helpers `features/auth/lib/form-errors.ts` (`topLevelMessage`, `applyFieldErrors`) partagés par les quatre pages ; `aria-describedby` sur aides/erreurs et focus déplacé sur l'alerte serveur. (4) Routage : quatre routes publiques hors layout, **toutes** les entrées de navigation sous `ProtectedRoute` → `AppLayout` ; `/profile` et `/settings` restent « Bientôt » jusqu'aux tâches 15–16 ; « Mon profil » ajouté avant « Paramètres » (`available: false` pour l'instant). Tests web : 36 → 43. Constat d'outillage : dans le volet navigateur masqué, `requestAnimationFrame` est suspendu et les animations d'entrée restent à opacité 0 — vérifier l'opacité calculée avant de conclure à un bug.
 
 **Files:**
 - Create: `apps/web/src/features/auth/components/auth-layout.tsx`, `google-button.tsx`
@@ -3689,6 +3754,10 @@ git commit -m "feat(web): ecrans de connexion, inscription et reinitialisation"
 ---
 
 ## Task 15: Écran de profil
+
+> **Amendement après exécution et revue (code livré : `69ee96e` + correctif `b597b46`).** Vérifié dans le navigateur contre l'API réelle : `PATCH /profile` (ville) → 200 + toast, ajout de deux compétences par le dialogue, réordonnancement (▲ → l'API renvoie `0:React, 1:TypeScript`), suppression avec confirmation, rendu sombre et mobile (375 px). Écarts au plan, ratifiés : (1) `CollectionSection<N extends CollectionName>` typé par la couche de la tâche 13 (`CollectionInputs`/`CollectionOutputs`, `CollectionItem<N>`) — pas de `Record<string, unknown>` ; props supplémentaires `toFormValues` (ligne API → valeurs de formulaire : `null` → `''`, tableaux → texte) et `icon`. (2) **Formulaires vs contrat** : pas de fork des schémas partagés ; `lib/forms.ts` fournit `zodResolverWith(schema, normalize)` + `emptyToNull` (dates nullables seulement — `optionalText`/`optionalUrl` refusent `null`, `''` suffit à effacer), `splitTags`/`joinTags` (saisie par virgules pour `technologies`, `desiredRoles`, `desiredCategories`, `locations`) ; le corps envoyé est reconstruit depuis `normalize(form.getValues())` (types `*FormInput`), le résolveur ne sert qu'à valider. (3) Réordonnancement par boutons « Monter »/« Descendre » (mise à jour optimiste, retour arrière + toast en cas d'échec) — pas de glisser-déposer (tranche 6). (4) Suppression confirmée dans un `Dialog` ; `Checkbox` shadcn écrit à la main sur `radix-ui` (aucune dépendance ajoutée). (5) `lib/dates.ts` (`formatMonthYear`, « janv. 2024 »). Tests web : 43 → 49, puis 53 après revue.
+
+> **Après revue (`b597b46`) :** (6) **Régression bloquante corrigée** — la carte « Profil professionnel » envoyait un `PATCH /profile` sans `firstName`/`lastName` (requis par `profileSchema`) : 400 à chaque enregistrement, masqué par un `as ProfileFormInput` et affiché comme erreur générique ; ma vérification visuelle n'avait testé qu'une carte — leçon consignée. Le corps renvoie désormais les deux noms inchangés et le cast disparaît ; test d'écriture ajouté. (7) Niveau d'expérience : « Non précisé » par défaut au lieu de « Junior » forcé (sentinelle `UNSET`, clé omise du corps ; effacer un niveau déjà posé exigera un `''` dans le schéma partagé — à faire). (8) Zone d'erreur + `aria-invalid` + `aria-describedby` sur **tous** les champs enregistrés (un `max(10)` sur les tags laissait un formulaire muet), dialogue `max-h-[90dvh] overflow-y-auto` sur mobile, boutons ▲▼/modifier/supprimer désactivés pendant une mutation, `Record<ExperienceLevel, string>`. (9) **Typage sans casts mensongers** : `CollectionSection<N, TValues>` générique sur les valeurs de formulaire (types `*FormValues` par section : `endDate: string`, `technologies: string`), `zodResolverWith<TValues, TOut>` → `Resolver<TValues, unknown, TOut>` (un seul cast interne documenté). Tests d'écriture : carte professionnelle, réordonnancement (liste d'ids + retour arrière), chemin imbriqué du résolveur, charge utile des préférences (cinq tableaux, pas de niveau si non précisé).
 
 Les six collections partagent un composant unique, `CollectionSection`, qui porte le chargement, l'état vide, l'erreur, le dialogue de création et d'édition et la suppression. Chaque section ne fournit que son schéma, ses champs de formulaire et son résumé de ligne.
 
@@ -4022,6 +4091,10 @@ git commit -m "feat(web): ecran de profil avec ses sept sections en crud reel"
 
 ## Task 16: Écran de paramètres
 
+> **Amendement après exécution (code livré : API `09b0248`, web `dbbe7da`).** (1) **`PATCH /auth/password`** : `AuthService.changePassword` — compte sans mot de passe (Google) → 400 `NO_PASSWORD_SET` (« Utilisez « Mot de passe oublié » pour en définir un ») ; mot de passe actuel faux → 400 `INVALID_CURRENT_PASSWORD` (la session est valide : pas un 401) ; audit `warn` ; puis `destroyAllForUser(user.id, request.session.id)` — **la session courante est conservée**, les autres appareils sont déconnectés ; débit 10/h par IP, CSRF exigé. e2e : mot de passe actuel faux, changement + déconnexion de l'appareil B + reconnexion avec le nouveau, jeton CSRF exigé. (2) Web : `SessionsCard` (badge « Session actuelle », « Déconnecter » sur les autres), `AppearanceCard` (radiogroup Clair / Sombre / Système), `AccountCard` (email en lecture seule + déconnexion), `SecurityCard` (formulaire `changePasswordSchema`, `INVALID_CURRENT_PASSWORD` → erreur sur le champ) ; page `Tabs` Compte / Sécurité / Apparence + quatre onglets « Bientôt » ; **menu utilisateur dans l'en-tête** (avatar à initiales : Mon profil, Paramètres, Se déconnecter) partageant `useLogout()` avec `AccountCard` — sans lui, aucune déconnexion n'était accessible avant cet écran. `/settings` → `SettingsPage`, « Paramètres » `available: true`. Compteurs finaux : shared 39, api 87 unitaires + 48 e2e, web 57.
+
+> **Après revues (`2ed8679`) :** vérifié dans le navigateur avec un compte de test : mot de passe actuel faux → erreur sous le champ ; changement réel → 204 + toast ; liste des sessions ; déconnexion depuis le menu de l'en-tête. La revue sécurité n'a trouvé aucune faille ; corrections : (3) **fermeture des sessions intégrée à `AuthService.changePassword`** avec, comme dans le flux de réinitialisation, un 503 explicite si Redis échoue après l'écriture du hachage (« mot de passe changé, mais vos autres appareils n'ont pas pu être déconnectés ») — un 500 générique aurait été trompeur ; (4) **même mot de passe refusé** au niveau du schéma partagé (`refine`, 400 `VALIDATION_ERROR` sur `newPassword`) ; (5) limite de débit 30/h par IP — la garde s'exécute avant l'authentification, des requêtes anonymes consomment le même budget ; clé `ip+email` exclue (le corps n'a pas d'email → tout le monde dans le même seau) ; un compteur `by: 'user'` après `AuthGuard` est reporté ; (6) `warn` sur chaque mot de passe actuel invalide (signal d'une session volée) ; (7) `useLogout` ne relance plus l'erreur : toast sur une erreur non-401 mais déconnexion locale inconditionnelle, ordre session → navigation → `clear()` ; (8) a11y : email en `Input readOnly`, radiogroup Apparence au clavier (tabindex mouvant + flèches), barre d'onglets sans scrollbar visible, squelette d'avatar pendant le chargement, user-agent tronqué. Tests : `NO_PASSWORD_SET`, même mot de passe, trop court, jeton CSRF de la session courante toujours valide après le changement, `SecurityCard`. Reporté : rotation de la session après changement (hygiène, aucun vecteur de fixation ici), premier mot de passe pour un compte Google depuis les paramètres (`hasPassword` sur `SessionUser`), onglets synchronisés avec l'URL, libellé lisible du user-agent.
+
 **Files:**
 - Create: `apps/web/src/features/settings/pages/settings-page.tsx`
 - Create: `apps/web/src/features/settings/components/appearance-card.tsx`, `security-card.tsx`, `account-card.tsx`, `sessions-card.tsx`
@@ -4185,6 +4258,21 @@ git commit -m "feat(web): parametres compte, securite, apparence et sessions act
 
 ## Task 17: Parcours end-to-end et recette
 
+> **Amendement après exécution (code livré : `64d87e0`).** Pas de `docker compose` : les serveurs de dev (5173, 3001) sont réutilisés localement (`reuseExistingServer: !process.env.CI`) ; `playwright.config.ts` déclare **deux** `webServer` (web + API, sondée sur `/api/v1/health`) et un `globalTeardown` qui exécute `pnpm --filter @jobtrack/api e2e:cleanup` (`apps/api/scripts/cleanup-e2e-users.ts` : supprime les comptes `@playwright.local` après avoir détruit leurs sessions Redis, jamais d'autres comptes ; `lint` de l'API couvre `scripts`). Parcours : inscription → `/profile` → « Ville » enregistrée → compétence ajoutée par le dialogue → rechargement (données conservées) → déconnexion (`/settings`, onglet Compte) → `/profile` redirige vers `/login` → reconnexion → compétence toujours visible ; identifiants invalides → alerte lisible sans « 401 ». `getByLabel('Nom', { exact: true })` (sinon « Prénom » correspond aussi). 8 → **12 tests Playwright** (desktop + mobile). CI : les étapes `prisma migrate deploy` et e2e API existaient déjà (tâche 8) ; ajout de `playwright install --with-deps chromium` puis `pnpm --filter @jobtrack/web test:e2e` — Playwright entre donc en CI avec cette tranche.
+
+> **Recette des critères d'acceptation (2026-09-16, navigateur intégré contre les serveurs de dev, dépôt dans `~/dev/JOBTRACK`).**
+> - ☑ Landing mobile/desktop, clair/sombre — recette de la tranche 0, inchangée.
+> - ☑ Créer un compte, se déconnecter, se reconnecter — vérifié (tâches 14, 16 : inscription → `/profile`, déconnexion par le menu, reconnexion).
+> - ☑ Les neuf blocs de `/profile` s'enregistrent — vérifié un à un après correctif (`PATCH /profile` ×2, `PATCH /profile/preferences`, `POST` expérience/compétence, réordonnancement, suppression) ; survie au rechargement couverte par le parcours Playwright (Ville + compétence).
+> - ☑ Thème partout sans flash — script anti-flash de la tranche 0 ; carte Apparence vérifiée (bascule instantanée, clavier).
+> - ☑ `/profile` non connecté → `/login` → retour sur `/profile` après connexion — vérifié avec `/profile?onglet=test` (query conservée via `state.from`).
+> - ☑ Cookie `jt_csrf` supprimé puis enregistrement → « Requête refusée. Rechargez la page et réessayez. » — vérifié ; la garde réémet le cookie à la requête suivante (auto-réparation).
+> - ☑ Sessions actives listées et révocables ; révoquer depuis un autre appareil le déconnecte — vérifié (appareil B ouvert par l'API, révoqué depuis l'interface, `GET /auth/me` B → 401).
+> - ☑ Six connexions échouées → « Trop de tentatives. Réessayez dans quelques minutes. » — vérifié dans l'interface (message, pas de code HTTP).
+> - ☑ Isolation : `pnpm --filter @jobtrack/api test:e2e` — 15 tests `profile.e2e.spec.ts` dont l'`it.each` sur les six collections.
+> - ☑ `grep ": any\|<any>"` — aucun résultat ; lint / typecheck / build / test verts (shared 39, api 87 + 48 e2e, web 57).
+> Comptes de test supprimés après chaque vérification (0 utilisateur `recette-%`/`visuel-%`/`e2e-%`, sessions Redis nettoyées).
+
 **Files:**
 - Create: `apps/web/e2e/auth.spec.ts`
 - Modify: `.github/workflows/ci.yml`
@@ -4310,6 +4398,23 @@ git commit -m "test: parcours end-to-end inscription, profil et reconnexion"
 ```
 
 ---
+
+## Clôture de la tranche (revue finale de branche, 2026-09-16)
+
+Revue finale : **fusionnable après un correctif** (`87624cd`) — `GET /auth/sessions` renvoyait l'identifiant brut de session, c'est-à-dire la valeur du cookie `httpOnly` : un XSS aurait pu exfiltrer un jeton utilisable ailleurs. Désormais la liste expose un **handle opaque** (HMAC dérivé de `SESSION_SECRET`, clé séparée) et la révocation le résout côté serveur ; 404 inchangé pour un handle d'autrui. Mineurs corrigés dans le même commit : description masquée sur le dialogue de collection (a11y), ordre des dates sur formation et certification, débit 60/min sur `/health` (seule route publique non limitée), timeout de 5 s sur l'échange de code Google.
+
+Vérifié par la revue et non contesté : CORS fermé (origine étrangère non reflétée), en-têtes Helmet complets, surfaces d'erreur sans pile ni détail interne, isolation prouvée sur les six collections, PKCE + `id_token` + `email_verified` + passerelle de rattachement + state à usage unique, argon2id avec `burnTime` réel et `needsRehash`, réinitialisation à usage unique avec audit, CSRF lié à la session, aucune donnée de test résiduelle, CI cohérente (migrations, e2e API, Playwright).
+
+**Reporté à la tranche suivante (par priorité) :**
+1. **CSRF de connexion** — `/auth/login` est `@NoCsrf` : un POST cross-site peut connecter la victime sur le compte de l'attaquant (ses saisies de profil atterrissent chez lui). Correctif : jeton de double soumission pré-session émis au premier `GET`.
+2. **Vérification d'email** — aucun flux ; `emailVerifiedAt` n'est posé que par Google, donc le rattachement automatique Google ↔ compte à mot de passe n'a jamais lieu (sûr, mais plus strict que voulu).
+3. Plafond de sessions par utilisateur.
+4. `experienceLevel` impossible à effacer une fois posé (`''` à accepter dans le schéma partagé).
+5. `select` sur les réponses profil/collections (ne plus exposer `profileId`/`userId`/timestamps).
+6. `GET /profile/preferences` qui écrit (upsert) — un GET exempt de CSRF ne devrait pas muter.
+7. Compteurs de débit consommés avant authentification sur `PATCH /auth/password` (garde à réordonner ou clé `by: 'user'`).
+8. Nettoyage des clés `ratelimit:*` par la suite Playwright ; base Redis dédiée aux tests.
+9. Découpage du bundle (840 kio, avertissement Vite) ; premier mot de passe pour un compte Google depuis les paramètres ; onglets de paramètres synchronisés avec l'URL ; libellé lisible du user-agent.
 
 ## Limites assumées de la tranche
 

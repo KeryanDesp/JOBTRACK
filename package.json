@@ -10,16 +10,18 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "db:migrate": "pnpm --filter @jobtrack/api exec prisma migrate dev",
-    "db:seed": "pnpm --filter @jobtrack/api exec prisma db seed",
-    "db:studio": "pnpm --filter @jobtrack/api exec prisma studio",
+    "db:migrate": "dotenv -e .env -- pnpm --filter @jobtrack/api exec prisma migrate dev",
+    "db:seed": "dotenv -e .env -- pnpm --filter @jobtrack/api exec prisma db seed",
+    "db:studio": "dotenv -e .env -- pnpm --filter @jobtrack/api exec prisma studio",
     "postinstall": "pnpm --filter @jobtrack/api exec prisma generate --allow-no-models"
   },
   "devDependencies": {
+    "dotenv-cli": "^11.0.0",
+    "prettier": "^3.3.0",
     "turbo": "^2.1.0",
-    "typescript": "^5.6.0",
-    "prettier": "^3.3.0"
+    "typescript": "^5.6.0"
   }
 }

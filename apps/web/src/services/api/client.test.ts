@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiRequest } from './client';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  // Un test qui pose le cookie jt_csrf ne doit pas polluer les suivants.
+  document.cookie = 'jt_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+});
 
 function stubFetch(response: Response): void {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
@@ -84,5 +88,61 @@ describe('apiRequest', () => {
       status: 0,
       message: 'Connexion au serveur impossible. Vérifiez votre connexion internet.',
     });
+  });
+
+  it('recopie le cookie csrf dans l_en-tete sur une mutation', async () => {
+    document.cookie = 'jt_csrf=jeton-csrf-de-test';
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/profile', { method: 'PATCH', body: '{}' });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(new Headers(init?.headers).get('x-csrf-token')).toBe('jeton-csrf-de-test');
+  });
+
+  it('n_envoie pas d_en-tete csrf sur une lecture', async () => {
+    document.cookie = 'jt_csrf=jeton-csrf-de-test';
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/profile');
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(new Headers(init?.headers).get('x-csrf-token')).toBeNull();
+  });
+
+  it('expose le detail par champ d_une erreur de validation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json(
+          {
+            statusCode: 400,
+            code: 'VALIDATION_ERROR',
+            message: 'Certains champs sont invalides.',
+            details: { email: 'Adresse email invalide.' },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    await expect(apiRequest('/auth/register', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      status: 400,
+      code: 'VALIDATION_ERROR',
+      details: { email: 'Adresse email invalide.' },
+    });
+  });
+
+  it('ignore un cookie csrf absent', async () => {
+    document.cookie = 'jt_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(apiRequest('/profile', { method: 'PATCH', body: '{}' })).resolves.toEqual({});
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    expect(new Headers(init?.headers).get('x-csrf-token')).toBeNull();
   });
 });

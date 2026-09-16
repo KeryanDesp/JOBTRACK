@@ -22,7 +22,13 @@ const optionalUrl = z.preprocess(emptyToUndefined, z.string().url().optional());
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(3001),
-  WEB_ORIGIN: z.string().trim().url(),
+  // Sans ce nettoyage, une origine terminée par `/` produirait des redirections du type
+  // `http://host//profile` (double slash) partout où le code fait `${WEB_ORIGIN}/chemin`.
+  WEB_ORIGIN: z
+    .string()
+    .trim()
+    .url()
+    .transform((value) => value.replace(/\/+$/, '')),
 
   DATABASE_URL: z.string().trim().min(1),
   REDIS_URL: z.string().trim().min(1),

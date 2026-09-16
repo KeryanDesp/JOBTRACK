@@ -60,4 +60,10 @@ describe('serverEnvSchema', () => {
     const parsed = serverEnvSchema.parse({ ...valid, WEB_ORIGIN: '  http://localhost:5173  ' });
     expect(parsed.WEB_ORIGIN).toBe('http://localhost:5173');
   });
+
+  it('retire le ou les slash finaux de WEB_ORIGIN', () => {
+    // Sinon `${WEB_ORIGIN}/profile` produirait `http://host//profile`.
+    const parsed = serverEnvSchema.parse({ ...valid, WEB_ORIGIN: 'http://localhost:5173///' });
+    expect(parsed.WEB_ORIGIN).toBe('http://localhost:5173');
+  });
 });

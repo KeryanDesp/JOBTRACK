@@ -1,6 +1,7 @@
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { HttpExceptionFilter } from './common/http-exception.filter';
 import { env } from './config/env';
 
 /**
@@ -19,6 +20,7 @@ export async function configureApp(app: NestFastifyApplication): Promise<void> {
   });
 
   app.setGlobalPrefix('api/v1');
+  app.useGlobalFilters(new HttpExceptionFilter());
 }
 
 export function createAdapter(): FastifyAdapter {

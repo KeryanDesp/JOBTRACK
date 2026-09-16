@@ -6,6 +6,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['src/**/*.spec.ts'],
+    exclude: ['**/node_modules/**', '**/*.e2e.spec.ts'],
   },
   plugins: [swc.vite({ module: { type: 'es6' } })],
 });

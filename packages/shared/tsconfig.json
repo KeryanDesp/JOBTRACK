@@ -1,5 +1,13 @@
 {
   "extends": "@jobtrack/config/tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    // "DOM" ajouté uniquement pour le type global `URL` (utilisé par optionalUrl pour
+    // vérifier le protocole) : ce paquet est consommé à la fois par l'API (Node, où `URL`
+    // est global sans import) et par le web (navigateur) ; le runtime ne change pas ici,
+    // seul le typage de ce global était manquant avec "lib": ["ES2022"] seul.
+    "lib": ["ES2022", "DOM"]
+  },
   "include": ["src/**/*"]
 }
