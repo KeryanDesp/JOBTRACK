@@ -18,7 +18,7 @@ export function normalize(raw: EducationFormValues): unknown {
   return emptyToNull(raw, ['endDate']);
 }
 
-export const DEFAULT_VALUES: EducationFormValues = {
+const DEFAULT_VALUES: EducationFormValues = {
   school: '',
   degree: '',
   field: '',

@@ -31,9 +31,10 @@ describe('ImportCvPage', () => {
 
     expect(screen.getByRole('heading', { name: 'Importer un CV' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Choisir un fichier CV')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revenir à mon profil' })).toBeInTheDocument();
   });
 
-  it("affiche l'alerte IA non configuree, sans zone de depot, quand les capacites l_indiquent", async () => {
+  it("affiche l'alerte IA non configuree, sans zone de depot, avec un lien de sortie, quand les capacites l_indiquent", async () => {
     fetchCvCapabilities.mockResolvedValue({ ai: false, maxSizeBytes: 10_000_000, acceptedTypes: [] });
     renderPage();
 
@@ -41,5 +42,6 @@ describe('ImportCvPage', () => {
       await screen.findByText(/L'analyse automatique n'est pas disponible pour le moment/),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText('Choisir un fichier CV')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revenir à mon profil' })).toBeInTheDocument();
   });
 });

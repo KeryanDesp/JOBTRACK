@@ -19,7 +19,7 @@ export function normalize(raw: CertificationFormValues): unknown {
   return emptyToNull(raw, ['expiresAt']);
 }
 
-export const DEFAULT_VALUES: CertificationFormValues = {
+const DEFAULT_VALUES: CertificationFormValues = {
   name: '',
   issuer: '',
   issuedAt: '',

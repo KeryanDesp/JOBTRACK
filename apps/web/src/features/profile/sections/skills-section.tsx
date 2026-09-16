@@ -8,23 +8,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FormFieldError } from '@/features/auth/components/form-field-error';
 import type { CollectionItem } from '@/services/api/profile';
 
-// Exportées : réutilisées par la revue d'extraction de CV (`extraction-review.tsx`).
-export const CATEGORY_LABELS: Record<SkillFormInput['category'] & string, string> = {
+const CATEGORY_LABELS: Record<SkillFormInput['category'] & string, string> = {
   TECHNICAL: 'Technique',
   SOFT: 'Savoir-être',
   TOOL: 'Outil',
   OTHER: 'Autre',
 };
 
-export const LEVEL_LABELS: Record<SkillFormInput['level'] & string, string> = {
+const LEVEL_LABELS: Record<SkillFormInput['level'] & string, string> = {
   BEGINNER: 'Débutant',
   INTERMEDIATE: 'Intermédiaire',
   ADVANCED: 'Avancé',
   EXPERT: 'Expert',
 };
 
-// Exportées : réutilisées par la revue d'extraction de CV (`extraction-review.tsx`).
-export const DEFAULT_VALUES: SkillFormInput = { name: '', category: 'TECHNICAL', level: 'INTERMEDIATE' };
+const DEFAULT_VALUES: SkillFormInput = { name: '', category: 'TECHNICAL', level: 'INTERMEDIATE' };
 
 export function toFormValues(item: CollectionItem<'skills'>): SkillFormInput {
   return { name: item.name, category: item.category, level: item.level };

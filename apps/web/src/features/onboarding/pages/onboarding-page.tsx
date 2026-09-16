@@ -1,14 +1,15 @@
+import type { CvImportDto } from '@jobtrack/shared';
 import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useSession } from '@/features/auth/hooks/use-session';
+import { CvImportReview } from '@/features/cv-import/components/cv-import-review';
+import { CvUploadFlow } from '@/features/cv-import/components/cv-upload-flow';
 import { useDeleteCvImport } from '@/features/cv-import/hooks/use-cv-import';
 import { OnboardingLayout } from '../layouts/onboarding-layout';
 import { clearOnboardingImportId, getOnboardingImportId, setOnboardingImportId, setOnboardingResult } from '../lib/storage';
 import { isOnboardingStep, type OnboardingStep } from '../lib/steps';
-import { CvStep } from '../steps/cv-step';
 import { DoneStep } from '../steps/done-step';
 import { PreferencesStep } from '../steps/preferences-step';
-import { ReviewStep } from '../steps/review-step';
 import { WelcomeStep } from '../steps/welcome-step';
 
 /**
@@ -63,9 +64,15 @@ export function OnboardingPage() {
   return (
     <OnboardingLayout step={step}>
       {step === 'bienvenue' && <WelcomeStep firstName={user?.firstName ?? ''} onNext={() => goToStep('cv')} />}
-      {step === 'cv' && <CvStep onExtracted={handleExtracted} onManual={() => goToStep('preferences')} />}
+      {step === 'cv' && (
+        <CvUploadFlow
+          onExtracted={(dto: CvImportDto) => handleExtracted(dto.id)}
+          onManual={() => goToStep('preferences')}
+          manualLabel="Remplir à la main"
+        />
+      )}
       {step === 'verification' && importId && (
-        <ReviewStep
+        <CvImportReview
           importId={importId}
           onApplied={(result) => {
             setOnboardingResult(result);

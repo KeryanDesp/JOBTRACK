@@ -29,7 +29,7 @@ export function normalize(raw: ExperienceFormValues): unknown {
   return emptyToNull(raw, ['endDate']);
 }
 
-export const DEFAULT_VALUES: ExperienceFormValues = {
+const DEFAULT_VALUES: ExperienceFormValues = {
   company: '',
   role: '',
   location: '',

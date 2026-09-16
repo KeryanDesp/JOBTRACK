@@ -109,15 +109,18 @@ export function useUploadCv(): UseUploadCvResult {
  * Application du brouillon au profil : invalide `profileKeys.all`, dont la
  * correspondance de préfixe par défaut de React Query couvre déjà
  * `profileKeys.preferences` et chaque `profileKeys.collection(name)` — pas
- * besoin de les énumérer une par une.
+ * besoin de les énumérer une par une. Invalide aussi le brouillon lui-même
+ * (`cvImportKeys.detail(id)`) : son statut passe à `APPLIED` côté serveur,
+ * qu'une lecture ultérieure (retour sur cette étape) doit refléter.
  */
 export function useApplyCvImport() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: CvApplyFormInput }) => applyCvImport(id, body),
-    onSuccess: () => {
+    onSuccess: (_data, { id }) => {
       void queryClient.invalidateQueries({ queryKey: profileKeys.all });
+      void queryClient.invalidateQueries({ queryKey: cvImportKeys.detail(id) });
     },
   });
 }

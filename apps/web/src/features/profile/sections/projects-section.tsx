@@ -23,7 +23,7 @@ export function normalize(raw: ProjectFormValues): unknown {
   return splitTags(raw, 'technologies');
 }
 
-export const DEFAULT_VALUES: ProjectFormValues = {
+const DEFAULT_VALUES: ProjectFormValues = {
   name: '',
   description: '',
   url: '',

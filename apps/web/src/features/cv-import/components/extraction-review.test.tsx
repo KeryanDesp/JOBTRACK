@@ -60,7 +60,7 @@ function renderReview(extraction: CvExtraction, overrides: Partial<Parameters<ty
 }
 
 describe('ExtractionReview', () => {
-  it("decocher une ligne l_exclut du corps envoye (selected: false), sans retirer l_element du tableau", async () => {
+  it("bloque l_envoi si une ligne cochee est invalide (avec le message du schema), et reussit une fois la ligne decochee (exclue du corps, jamais envoyee a selected: false)", async () => {
     const user = userEvent.setup();
     const extraction = buildExtraction({
       identity: { ...EMPTY_IDENTITY, firstName: 'Camille' },
@@ -74,18 +74,34 @@ describe('ExtractionReview', () => {
           isCurrent: true,
           description: null,
         },
+        {
+          // Ni date de fin, ni "poste actuel" : invalide pour `experienceSchema` (refine dedie).
+          company: 'Beta SARL',
+          role: 'Developpeuse junior',
+          location: null,
+          startDate: '2019-01-01',
+          endDate: null,
+          isCurrent: false,
+          description: null,
+        },
       ],
     });
     const { onSubmit } = renderReview(extraction);
 
-    await user.click(screen.getByRole('checkbox', { name: 'Inclure cet élément dans « Expériences »' }));
+    await user.click(screen.getByRole('button', { name: 'Appliquer au profil' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText('Corrigez les éléments signalés ou décochez-les.')).toBeInTheDocument();
+    expect(screen.getByText('Indiquez une date de fin ou cochez « poste actuel ».')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: 'Inclure « Developpeuse junior – Beta SARL »' }));
     await user.click(screen.getByRole('button', { name: 'Appliquer au profil' }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const body = firstCall(onSubmit);
     expect(body.experiences).toHaveLength(1);
     const row = firstOf(body.experiences);
-    expect(row.selected).toBe(false);
+    expect(row.selected).toBe(true);
     expect(row.item.company).toBe('Acme');
   });
 
@@ -122,7 +138,7 @@ describe('ExtractionReview', () => {
     });
     const { onSubmit } = renderReview(extraction);
 
-    await user.click(screen.getByRole('button', { name: 'Modifier cet élément dans « Expériences »' }));
+    await user.click(screen.getByRole('button', { name: 'Modifier « Ingenieure – Acme »' }));
     const roleInput = screen.getByLabelText('Poste');
     await user.clear(roleInput);
     await user.type(roleInput, 'Ingenieure principale');
@@ -150,7 +166,7 @@ describe('ExtractionReview', () => {
     await user.click(screen.getByRole('button', { name: 'Aucun' }));
 
     expect(screen.getByText('0 sur 2 sélectionnés')).toBeInTheDocument();
-    expect(screen.getByText('0 éléments seront ajoutés à votre profil.')).toBeInTheDocument();
+    expect(screen.getByText('0 élément ne sera ajouté à votre profil.')).toBeInTheDocument();
   });
 
   it("une extraction vide affiche l_etat vide avec les deux actions", async () => {

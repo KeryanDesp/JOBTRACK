@@ -37,7 +37,13 @@ export function ImportCvPage() {
         title="Importer un CV"
         description="Déposez votre CV, vérifiez les informations extraites, puis appliquez-les à votre profil."
       />
-      {phase.step === 'upload' && <CvUploadFlow onExtracted={handleExtracted} />}
+      {phase.step === 'upload' && (
+        <CvUploadFlow
+          onExtracted={handleExtracted}
+          onManual={() => navigate('/profile')}
+          manualLabel="Revenir à mon profil"
+        />
+      )}
       {phase.step === 'review' && (
         <CvImportReview importId={phase.importId} onApplied={() => navigate('/profile')} onBack={handleBack} />
       )}

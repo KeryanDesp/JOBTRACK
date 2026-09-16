@@ -27,9 +27,9 @@ export interface CvUploadFlowProps {
 /**
  * Machine d'état de l'envoi d'un CV — capacités (IA absente ⇒ lien seul),
  * dépôt, envoi avec progression, analyse en cours, échec avec réessai —
- * partagée par l'étape d'accueil (`onboarding/steps/cv-step.tsx`) et la page
- * d'import direct depuis le profil (`pages/import-cv-page.tsx`), pour ne pas
- * dupliquer cette logique entre les deux points d'entrée.
+ * partagée par l'étape « cv » de l'accueil (`onboarding/pages/onboarding-page.tsx`)
+ * et la page d'import direct depuis le profil (`pages/import-cv-page.tsx`),
+ * pour ne pas dupliquer cette logique entre les deux points d'entrée.
  */
 export function CvUploadFlow({ onExtracted, onManual, manualLabel = DEFAULT_MANUAL_LABEL }: CvUploadFlowProps) {
   const capabilities = useCvCapabilities();
@@ -98,7 +98,7 @@ export function CvUploadFlow({ onExtracted, onManual, manualLabel = DEFAULT_MANU
             votre profil à la main.
           </AlertDescription>
         </Alert>
-        {onManual && <Button onClick={onManual}>Remplir à la main</Button>}
+        {onManual && <Button onClick={onManual}>{manualLabel}</Button>}
       </div>
     );
   }

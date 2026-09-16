@@ -22,8 +22,8 @@ const EMPTY_APPLY_RESULT: CvApplyResult = {
 
 /**
  * Étape « Vérifier » d'un import de CV, quel que soit le point d'entrée
- * (accueil via `onboarding/steps/review-step.tsx`, ou import direct depuis le
- * profil via `pages/import-cv-page.tsx`) : charge le brouillon (`useCvImport`,
+ * (accueil via `onboarding/pages/onboarding-page.tsx`, ou import direct
+ * depuis le profil via `pages/import-cv-page.tsx`) : charge le brouillon (`useCvImport`,
  * qui sonde tant que le statut reste `PENDING`), puis affiche l'état qui
  * convient — chargement, erreur, analyse en cours, échec avec réessai, ou la
  * revue elle-même (`ExtractionReview`).
