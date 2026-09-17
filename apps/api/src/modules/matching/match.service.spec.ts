@@ -3,8 +3,6 @@ import { Logger } from '@nestjs/common';
 import { Prisma, type ContractType, type Job, type RemoteMode } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../../common/prisma.service';
-import type { RedisService } from '../../common/redis.service';
-import { CommuneService } from '../jobs/commune.service';
 import { JOB_ANALYSIS_VERSION } from './job-analysis.prompt';
 import type { JobAnalysisService } from './job-analysis.service';
 import { MatchService } from './match.service';
@@ -16,8 +14,7 @@ const prisma = new PrismaService();
 function fakeJobAnalysisService(configured: boolean): JobAnalysisService {
   return { isConfigured: () => configured } as unknown as JobAnalysisService;
 }
-const communeService = new CommuneService(prisma, {} as unknown as RedisService, []);
-const profileInputsService = new ProfileInputsService(prisma, communeService);
+const profileInputsService = new ProfileInputsService(prisma);
 function createMatchService(configured = true): MatchService {
   return new MatchService(prisma, profileInputsService, fakeJobAnalysisService(configured));
 }
@@ -128,9 +125,14 @@ const VALID_REQUIREMENTS = {
   summary: 'Résumé neutre.',
 };
 
+// Horodatage fixe (bien avant les `now` simulés des tests, ex. 08h/09h/10h le même jour) : jamais
+// `new Date()` ici, pour ne pas rendre la comparaison `computedAt >= analyzedAt` dépendante de
+// l'heure réelle d'exécution des tests.
+const DEFAULT_ANALYZED_AT = new Date('2026-09-17T00:00:00Z');
+
 async function createAnalysis(
   jobId: string,
-  overrides: Partial<Pick<Prisma.JobAnalysisUncheckedCreateInput, 'status' | 'requirements' | 'error'>> = {},
+  overrides: Partial<Pick<Prisma.JobAnalysisUncheckedCreateInput, 'status' | 'requirements' | 'error' | 'analyzedAt'>> = {},
 ): Promise<void> {
   await prisma.jobAnalysis.create({
     data: {
@@ -139,7 +141,7 @@ async function createAnalysis(
       version: JOB_ANALYSIS_VERSION,
       requirements: overrides.requirements ?? VALID_REQUIREMENTS,
       error: overrides.error ?? null,
-      analyzedAt: new Date(),
+      analyzedAt: overrides.analyzedAt ?? DEFAULT_ANALYZED_AT,
     },
   });
 }
@@ -157,6 +159,16 @@ describe('MatchService.ensureScores', () => {
     expect(await prisma.matchScore.count({ where: { profileId } })).toBe(0);
   });
 
+  it('profileComplete reste correct meme pour une liste d_offres vide', async () => {
+    const { userId } = await createCompleteProfile('empty-ids');
+    const service = createMatchService();
+
+    const { scores, profileComplete } = await service.ensureScores(userId, []);
+
+    expect(scores).toEqual({});
+    expect(profileComplete).toBe(true);
+  });
+
   it('calcule et persiste le score quand l_analyse est terminee', async () => {
     const { userId, profileId } = await createCompleteProfile('done');
     const job = await createJob();
@@ -169,9 +181,6 @@ describe('MatchService.ensureScores', () => {
     expect(scores[job.id]?.band).toBe('EXCELLENT');
     const row = await prisma.matchScore.findUniqueOrThrow({ where: { profileId_jobId: { profileId, jobId: job.id } } });
     expect(row.score).toBe(100);
-    const payload = row.factors as unknown as { factors: unknown[]; insufficientData: boolean };
-    expect(payload.factors).toHaveLength(8);
-    expect(payload.insufficientData).toBe(false);
   });
 
   it('reutilise le score sans recalcul quand rien n_a change', async () => {
@@ -207,6 +216,61 @@ describe('MatchService.ensureScores', () => {
     expect(second.computedAt).not.toEqual(first.computedAt);
   });
 
+  it('recalcule apres une re-analyse a version egale (analyzedAt plus recent que le score stocke)', async () => {
+    const { userId, profileId } = await createCompleteProfile('reanalyzed');
+    const job = await createJob();
+    await createAnalysis(job.id, { analyzedAt: new Date('2026-09-17T00:00:00Z') });
+    const service = createMatchService();
+
+    await service.ensureScores(userId, [job.id], new Date('2026-09-17T08:00:00Z'));
+    const first = await prisma.matchScore.findUniqueOrThrow({ where: { profileId_jobId: { profileId, jobId: job.id } } });
+
+    // Ré-analyse a la même version, mais plus récente que le score déjà calculé.
+    await prisma.jobAnalysis.update({ where: { jobId: job.id }, data: { analyzedAt: new Date('2026-09-17T09:00:00Z') } });
+    await service.ensureScores(userId, [job.id], new Date('2026-09-17T10:00:00Z'));
+    const second = await prisma.matchScore.findUniqueOrThrow({ where: { profileId_jobId: { profileId, jobId: job.id } } });
+
+    expect(second.computedAt).not.toEqual(first.computedAt);
+    expect(second.computedAt).toEqual(new Date('2026-09-17T10:00:00Z'));
+  });
+
+  it('supprime la ligne perimee et renvoie null quand une analyse DONE devient FAILED', async () => {
+    const { userId, profileId } = await createCompleteProfile('done-to-failed');
+    const job = await createJob();
+    await createAnalysis(job.id);
+    const service = createMatchService();
+
+    await service.ensureScores(userId, [job.id]);
+    expect(await prisma.matchScore.count({ where: { profileId, jobId: job.id } })).toBe(1);
+
+    await prisma.jobAnalysis.update({ where: { jobId: job.id }, data: { status: 'FAILED', error: 'Erreur simulée.' } });
+    const { scores } = await service.ensureScores(userId, [job.id]);
+
+    expect(scores[job.id]).toBeNull();
+    expect(await prisma.matchScore.count({ where: { profileId, jobId: job.id } })).toBe(0);
+  });
+
+  it('recalcule quand le contenu stocke de factors ne se relit plus (colonne corrompue)', async () => {
+    const { userId, profileId } = await createCompleteProfile('corrupt-payload');
+    const job = await createJob();
+    await createAnalysis(job.id);
+    const service = createMatchService();
+
+    await service.ensureScores(userId, [job.id], new Date('2026-09-17T08:00:00Z'));
+    await prisma.matchScore.update({
+      where: { profileId_jobId: { profileId, jobId: job.id } },
+      data: { factors: { inattendu: true } },
+    });
+
+    const { scores } = await service.ensureScores(userId, [job.id], new Date('2026-09-17T09:00:00Z'));
+
+    expect(scores[job.id]?.score).toBe(100);
+    const row = await prisma.matchScore.findUniqueOrThrow({ where: { profileId_jobId: { profileId, jobId: job.id } } });
+    expect(row.computedAt).toEqual(new Date('2026-09-17T09:00:00Z'));
+    const payload = row.factors as unknown as { factors: unknown[] };
+    expect(payload.factors).toHaveLength(8);
+  });
+
   it('ne calcule aucun score pour un profil incomplet', async () => {
     const { userId, profileId } = await createIncompleteProfile('incomplete');
     const job = await createJob();
@@ -235,6 +299,22 @@ describe('MatchService.ensureScores', () => {
     expect(warnSpy).toHaveBeenCalled();
     expect(await prisma.matchScore.count({ where: { profileId } })).toBe(0);
     warnSpy.mockRestore();
+  });
+
+  it('isole les scores par profil : le score de B n_apparait pas pour A et reciproquement', async () => {
+    const a = await createCompleteProfile('isolation-a');
+    const b = await createCompleteProfile('isolation-b');
+    const job = await createJob();
+    await createAnalysis(job.id);
+    const service = createMatchService();
+
+    await service.ensureScores(a.userId, [job.id]);
+    expect(await prisma.matchScore.count({ where: { profileId: b.profileId } })).toBe(0);
+
+    const { scores: scoresB } = await service.ensureScores(b.userId, [job.id]);
+    expect(scoresB[job.id]?.score).toBe(100);
+    expect(await prisma.matchScore.count({ where: { profileId: a.profileId } })).toBe(1);
+    expect(await prisma.matchScore.count({ where: { profileId: b.profileId } })).toBe(1);
   });
 });
 

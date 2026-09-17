@@ -1,15 +1,15 @@
 import { Module } from '@nestjs/common';
-import { JobsModule } from '../jobs/jobs.module';
 import { JobAnalysisService } from './job-analysis.service';
+import { MatchingController } from './matching.controller';
 import { MatchService } from './match.service';
 import { ProfileInputsService } from './profile-inputs.service';
 
 // `ANTHROPIC_CLIENT`/`PrismaService`/`RedisService` viennent de `CommonModule` (`@Global()`) :
-// pas besoin de l'importer ici (même remarque que `CvImportModule`). `JobsModule` est importé
-// pour son seul export `CommuneService` (résolution des lieux souhaités du profil, tâche 5) ;
-// `JobsModule` n'importe pas `MatchingModule` en retour, pas de cycle à ce jour.
+// pas besoin de l'importer ici (même remarque que `CvImportModule`). Pas d'import de `JobsModule` :
+// `ProfileInputsService` résout désormais les communes directement via `PrismaService` (résolution
+// batch, tâche 5 — amendement revue), sans dépendre de `CommuneService`.
 @Module({
-  imports: [JobsModule],
+  controllers: [MatchingController],
   providers: [JobAnalysisService, ProfileInputsService, MatchService],
   exports: [JobAnalysisService, ProfileInputsService, MatchService],
 })

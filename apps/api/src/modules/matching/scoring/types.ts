@@ -19,8 +19,8 @@ export const SCORING_VERSION = 1;
  * partir du `Profile` Prisma (spec §5, « Entrées profil »), sans dépendance à
  * Prisma ni à Nest — uniquement des types scalaires et des dates. `complete`
  * porte la même règle que le bandeau « Complétez vos compétences et
- * expériences… » (spec §2.4) : `true` seulement si au moins une compétence et
- * une expérience sont renseignées.
+ * expériences… » (spec §2.4) : `true` dès qu'au moins une compétence OU une
+ * expérience est renseignée (l'une suffit, les deux ne sont pas exigées).
  */
 export interface ProfileInputs {
   skills: { name: string; level: SkillLevel }[];

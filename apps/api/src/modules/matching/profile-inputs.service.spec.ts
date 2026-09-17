@@ -1,18 +1,12 @@
 import type { LanguageLevel, SkillLevel } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaService } from '../../common/prisma.service';
-import type { RedisService } from '../../common/redis.service';
-import { CommuneService } from '../jobs/commune.service';
 import { normalizeForKey } from '../jobs/lib/text';
 import { ProfileInputsService } from './profile-inputs.service';
 import { computeExperienceYears } from './scoring';
 
 const prisma = new PrismaService();
-// `search()` (seule méthode utilisée par `ProfileInputsService`) ne touche ni `redis` ni
-// `connectors` : un objet vide typé par cast suffit, même philosophie que les faux services
-// étroits de `job-analysis.service.spec.ts` (`fakeRedis`).
-const communeService = new CommuneService(prisma, {} as unknown as RedisService, []);
-const service = new ProfileInputsService(prisma, communeService);
+const service = new ProfileInputsService(prisma);
 
 // Préfixes distinctifs par processus : deux workers vitest ne partagent jamais les mêmes lignes.
 const EMAIL_PREFIX = `matching-profile-inputs-${process.pid}-`;
@@ -74,8 +68,8 @@ async function createUserWithProfile(suffix: string, seed: ProfileSeed = {}): Pr
   return { userId: user.id, profileId: profile.id };
 }
 
-async function createCommune(code: string, name: string, departmentCode: string): Promise<void> {
-  await prisma.commune.create({ data: { code, name, nameNormalized: normalizeForKey(name), postalCode: null, departmentCode } });
+async function createCommune(code: string, name: string, departmentCode: string, postalCode: string | null = null): Promise<void> {
+  await prisma.commune.create({ data: { code, name, nameNormalized: normalizeForKey(name), postalCode, departmentCode } });
 }
 
 describe('ProfileInputsService', () => {
@@ -161,6 +155,24 @@ describe('ProfileInputsService', () => {
     expect(after?.fingerprint).not.toBe(before?.fingerprint);
   });
 
+  it('currentProfileFingerprint renvoie la meme empreinte que build', async () => {
+    const { userId } = await createUserWithProfile('current-fingerprint', { skills: [{ name: 'Node' }] });
+    const now = new Date('2026-09-17T10:00:00Z');
+
+    const built = await service.build(userId, now);
+    const fingerprint = await service.currentProfileFingerprint(userId, now);
+
+    expect(fingerprint).toBe(built?.fingerprint);
+  });
+
+  it('currentProfileFingerprint renvoie null sans profil', async () => {
+    const user = await prisma.user.create({ data: { email: email('current-fingerprint-none') } });
+
+    const fingerprint = await service.currentProfileFingerprint(user.id);
+
+    expect(fingerprint).toBeNull();
+  });
+
   it('ne resout pas une commune au nom seulement proche (Metz / Metzeresche)', async () => {
     await createCommune(`${COMMUNE_PREFIX}metzeresche`, `${COMMUNE_PREFIX}Metzeresche`, 'E2E');
     const { userId } = await createUserWithProfile('near-miss', {
@@ -199,5 +211,79 @@ describe('ProfileInputsService', () => {
     const result = await service.build(userId);
 
     expect(result?.inputs.preferredCommuneCodes).toEqual([`${COMMUNE_PREFIX}metz`]);
+  });
+
+  it('tronque la ville quand les lieux souhaites remplissent deja la limite (fusion puis troncature)', async () => {
+    await createCommune(`${COMMUNE_PREFIX}ville`, `${COMMUNE_PREFIX}Ville`, 'E2E-DEPT');
+    // 10 lieux (la limite `MAX_LOCATIONS`) : la ville, ajoutée après fusion, est tronquée et
+    // jamais interrogée — même si une commune existe pour elle.
+    const locations = Array.from({ length: 10 }, (_, index) => `${COMMUNE_PREFIX}Lieu-Introuvable-${index}`);
+    const { userId } = await createUserWithProfile('max-locations', {
+      skills: [{ name: 'Java' }],
+      city: `${COMMUNE_PREFIX}Ville`,
+      locations,
+    });
+
+    const result = await service.build(userId);
+
+    expect(result?.inputs.preferredCommuneCodes).toEqual([]);
+  });
+
+  it('resout un lieu au format « Nom (departement) » en ignorant le suffixe', async () => {
+    await createCommune(`${COMMUNE_PREFIX}metz`, `${COMMUNE_PREFIX}Metz`, '57');
+    const { userId } = await createUserWithProfile('paren-suffix', {
+      skills: [{ name: 'Java' }],
+      locations: [`${COMMUNE_PREFIX}Metz (57)`],
+    });
+
+    const result = await service.build(userId);
+
+    expect(result?.inputs.preferredCommuneCodes).toEqual([`${COMMUNE_PREFIX}metz`]);
+    expect(result?.inputs.preferredDepartmentCodes).toEqual(['57']);
+  });
+
+  it('resout un code postal exact', async () => {
+    // Code postal fictif (jamais attribué en France) plutôt qu'un « 57000 » réaliste : contrairement
+    // au nom (toujours préfixé par `COMMUNE_PREFIX` avant normalisation), un code postal ne peut pas
+    // porter de préfixe — `commune.service.spec.ts` sème déjà un vrai « 57000 » (Metz) sur cette même
+    // base partagée, un choix réaliste collisionnerait par intermittence selon l'ordre d'exécution.
+    await createCommune(`${COMMUNE_PREFIX}metz-cp`, `${COMMUNE_PREFIX}Metz`, '57', '00001');
+    const { userId } = await createUserWithProfile('postal-code', {
+      skills: [{ name: 'Java' }],
+      locations: ['00001'],
+    });
+
+    const result = await service.build(userId);
+
+    expect(result?.inputs.preferredCommuneCodes).toEqual([`${COMMUNE_PREFIX}metz-cp`]);
+    expect(result?.inputs.preferredDepartmentCodes).toEqual(['57']);
+  });
+
+  it('replie sur le seul departement quand un nom sans correspondance exacte designe plusieurs arrondissements homonymes (Paris)', async () => {
+    await createCommune(`${COMMUNE_PREFIX}paris-1`, `${COMMUNE_PREFIX}Paris 1er Arrondissement`, '75');
+    await createCommune(`${COMMUNE_PREFIX}paris-2`, `${COMMUNE_PREFIX}Paris 2e Arrondissement`, '75');
+    const { userId } = await createUserWithProfile('paris', {
+      skills: [{ name: 'Java' }],
+      locations: [`${COMMUNE_PREFIX}Paris`],
+    });
+
+    const result = await service.build(userId);
+
+    expect(result?.inputs.preferredCommuneCodes).toEqual([]);
+    expect(result?.inputs.preferredDepartmentCodes).toEqual(['75']);
+  });
+
+  it('ignore un homonyme reparti sur plusieurs departements', async () => {
+    await createCommune(`${COMMUNE_PREFIX}homonyme-a`, `${COMMUNE_PREFIX}Sainte Marie`, 'E2E-DEPT-A');
+    await createCommune(`${COMMUNE_PREFIX}homonyme-b`, `${COMMUNE_PREFIX}Sainte Marie`, 'E2E-DEPT-B');
+    const { userId } = await createUserWithProfile('homonym', {
+      skills: [{ name: 'Java' }],
+      locations: [`${COMMUNE_PREFIX}Sainte Marie`],
+    });
+
+    const result = await service.build(userId);
+
+    expect(result?.inputs.preferredCommuneCodes).toEqual([]);
+    expect(result?.inputs.preferredDepartmentCodes).toEqual([]);
   });
 });

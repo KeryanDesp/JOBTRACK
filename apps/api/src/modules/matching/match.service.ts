@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type JobAnalysisStatus } from '@prisma/client';
+import { z } from 'zod';
 import {
+  factorKeySchema,
   jobRequirementsSchema,
   type MatchAnalysisStatus,
   type MatchFactorDto,
@@ -27,43 +29,66 @@ const JOB_SELECT = {
   publishedAt: true,
   skills: { select: { name: true, required: true } },
   requirements: { select: { kind: true, label: true, required: true } },
-  analysis: { select: { status: true, version: true, requirements: true } },
+  // `analyzedAt`/`error` inclus ici pour que `getDetail` n'ait plus besoin d'une lecture séparée
+  // de `JobAnalysis` (revue tâche 5 — un seul aller-retour couvre `ensureScores` et `getDetail`).
+  analysis: { select: { status: true, version: true, requirements: true, analyzedAt: true, error: true } },
 } satisfies Prisma.JobSelect;
 
 type JobRow = Prisma.JobGetPayload<{ select: typeof JOB_SELECT }>;
+
+/** Nombre maximal d'upserts par transaction (spec §8 : « ≤ 20 upserts, transaction courte »). */
+const MAX_UPSERT_BATCH = 20;
+
+/** Un des repères par petits groupes de `size`, dans l'ordre. */
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+// ---------------------------------------------------------------------------
+// Validation du contenu stocké dans `MatchScore.factors` (Json)
+// ---------------------------------------------------------------------------
+
+const matchEvidenceSchema = z.object({
+  kind: z.enum(['ok', 'warn', 'missing', 'info']),
+  text: z.string(),
+});
+
+const matchFactorSchema = z.object({
+  key: factorKeySchema,
+  label: z.string(),
+  weight: z.number(),
+  score: z.number().nullable(),
+  status: z.enum(['evaluated', 'unknown']),
+  evidence: z.array(matchEvidenceSchema),
+});
 
 /**
  * Contenu persisté dans `MatchScore.factors` (Json) : le détail par facteur,
  * l'explication du classement et le drapeau « données insuffisantes »
  * (spec §6, note de conception — choix documenté de la tâche 5 : un seul
  * objet plutôt que trois colonnes, puisque tout provient d'un seul appel à
- * `scoreJob` et n'est jamais interrogé isolément côté SQL).
+ * `scoreJob` et n'est jamais interrogé isolément côté SQL). Validé en
+ * relecture par ce schéma (jamais par un simple cast, revue tâche 5) : une
+ * colonne corrompue ou écrite par une version antérieure incompatible ne doit
+ * jamais produire une valeur mal typée en mémoire, seulement déclencher un
+ * recalcul (`computeStates`, plus bas).
  */
-interface StoredMatchPayload {
-  factors: MatchFactorDto[];
-  explanation: { top: string[]; weak: string[] };
-  insufficientData: boolean;
-}
+const storedMatchPayloadSchema = z.object({
+  factors: z.array(matchFactorSchema),
+  explanation: z.object({ top: z.array(z.string()), weak: z.array(z.string()) }),
+  insufficientData: z.boolean(),
+});
 
 /** Sérialise le résultat du moteur pour la colonne `Json` (mêmes garanties que `JobAnalysisService.toJson`). */
 function toStoredPayload(result: MatchResult): Prisma.InputJsonValue {
-  const payload: StoredMatchPayload = {
+  const payload = {
     factors: result.factors,
     explanation: result.explanation,
     insufficientData: result.insufficientData,
   };
   return JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
-}
-
-/**
- * Relit `MatchScore.factors` : cette colonne n'est jamais écrite que par
- * `toStoredPayload` ci-dessus (jamais par un modèle ni saisie utilisateur), un
- * décodage typé direct suffit donc — `Prisma.JsonValue` n'ayant pas un
- * recouvrement structurel suffisant avec `StoredMatchPayload` pour un `as`
- * simple, d'où le détour par `unknown`.
- */
-function fromStoredPayload(value: Prisma.JsonValue): StoredMatchPayload {
-  return value as unknown as StoredMatchPayload;
 }
 
 /** Construit les entrées offre du moteur à partir de la ligne Prisma sélectionnée (`JOB_SELECT`). */
@@ -86,19 +111,45 @@ function buildJobInputs(job: JobRow): JobInputs {
   };
 }
 
+/** État de correspondance d'une offre pour l'utilisateur — construit une fois par `computeStates`, partagé par `ensureScores` et `getDetail`. */
+interface JobMatchState {
+  score: number | null;
+  band: MatchScoreSummaryDto['band'];
+  priority: MatchScoreSummaryDto['priority'];
+  explanation: MatchScoreSummaryDto['explanation'];
+  factors: MatchFactorDto[];
+  computedAt: Date | null;
+  insufficientData: boolean;
+  /** `null` seulement en l'absence de toute ligne `JobAnalysis` pour cette offre. */
+  analysisStatus: JobAnalysisStatus | null;
+  analysisError: string | null;
+}
+
+function emptyState(): JobMatchState {
+  return {
+    score: null,
+    band: null,
+    priority: null,
+    explanation: { top: [], weak: [] },
+    factors: [],
+    computedAt: null,
+    insufficientData: true,
+    analysisStatus: null,
+    analysisError: null,
+  };
+}
+
 /**
  * Calcule et persiste les scores de correspondance (`MatchScore`, spec §3 et
  * §5) : construit les entrées profil une fois (`ProfileInputsService`), lit
  * les offres et leur analyse, recalcule (`scoreJob`) uniquement ce qui est
- * périmé (empreinte de profil ou version d'analyse différente) ou absent, et
- * upsert le tout en une seule transaction courte (au plus 20 offres par
- * appel, budget porté par l'appelant — spec §4/§8). Une offre sans analyse
- * `DONE`, ou dont les exigences stockées ne sont plus valides, renvoie `null`
- * sans écriture ; une ligne déjà calculée pour une autre version d'analyse ou
- * un profil différent n'est **pas supprimée** pour autant (choix documenté :
- * elle redevient simplement invisible tant qu'elle n'a pas été recalculée,
- * ce qui évite de perdre une donnée exploitable si l'analyse redevient
- * `DONE` à l'identique après une panne passagère).
+ * périmé (empreinte de profil, version d'analyse, ou ré-analyse plus récente
+ * que le score stocké) ou absent, et upsert le tout par lots d'au plus
+ * `MAX_UPSERT_BATCH` upserts par transaction courte. Une offre dont
+ * l'analyse n'est plus `DONE`, ou dont les exigences stockées ne sont plus
+ * valides, voit sa ligne `MatchScore` **supprimée** (jamais laissée périmée :
+ * une jointure SQL de `GET /jobs`, tâche 6, ne doit jamais trier sur un score
+ * obsolète) — dans la même transaction que les upserts du même appel.
  */
 @Injectable()
 export class MatchService {
@@ -115,13 +166,68 @@ export class MatchService {
     jobIds: readonly string[],
     now: Date = new Date(),
   ): Promise<{ scores: Record<string, MatchScoreSummaryDto | null>; profileComplete: boolean }> {
-    const uniqueIds = [...new Set(jobIds)];
+    const { states, profileComplete } = await this.computeStates(userId, jobIds, now);
     const scores: Record<string, MatchScoreSummaryDto | null> = {};
-    for (const jobId of uniqueIds) scores[jobId] = null;
-    if (uniqueIds.length === 0) return { scores, profileComplete: false };
+    for (const [jobId, state] of states) {
+      scores[jobId] =
+        state.computedAt !== null
+          ? { score: state.score, band: state.band, priority: state.priority, explanation: state.explanation }
+          : null;
+    }
+    return { scores, profileComplete };
+  }
+
+  /**
+   * Score détaillé d'une offre pour l'utilisateur (`GET /jobs/:id/match`) :
+   * recalcule si nécessaire (`computeStates`, partagé avec `ensureScores`),
+   * sans relire séparément le profil, l'analyse ou la ligne `MatchScore`
+   * (revue tâche 5). `null` seulement si l'offre elle-même n'existe pas
+   * (jamais pour un profil incomplet ou une analyse absente, qui sont des
+   * états valides du DTO — spec §6) ; cette seule vérification d'existence
+   * reste une lecture à part, `computeStates` pouvant renvoyer sans avoir
+   * jamais interrogé `Job` (profil incomplet ou absent).
+   */
+  async getDetail(userId: string, jobId: string, now: Date = new Date()): Promise<MatchScoreDto | null> {
+    const job = await this.prisma.job.findUnique({ where: { id: jobId }, select: { id: true } });
+    if (!job) return null;
+
+    const { states, profileComplete } = await this.computeStates(userId, [jobId], now);
+    const state = states.get(jobId) ?? emptyState();
+
+    return {
+      score: state.score,
+      band: state.band,
+      priority: state.priority,
+      explanation: state.explanation,
+      factors: state.factors,
+      computedAt: state.computedAt ? state.computedAt.toISOString() : null,
+      analysis: { status: this.resolveAnalysisStatus(state.analysisStatus), error: state.analysisError },
+      profileComplete,
+      insufficientData: state.computedAt !== null ? state.insufficientData : true,
+    };
+  }
+
+  /**
+   * Cœur partagé de `ensureScores`/`getDetail` : construit le profil une
+   * seule fois (même pour une liste d'offres vide — `profileComplete` doit
+   * rester correct dans ce cas, revue tâche 5), puis, si le profil est
+   * complet, lit les offres demandées et leurs analyses, détermine pour
+   * chacune si son score peut être réutilisé, doit être recalculé, ou si sa
+   * ligne `MatchScore` doit être supprimée, et persiste le tout par lots.
+   */
+  private async computeStates(
+    userId: string,
+    jobIds: readonly string[],
+    now: Date,
+  ): Promise<{ states: Map<string, JobMatchState>; profileComplete: boolean }> {
+    const uniqueIds = [...new Set(jobIds)];
+    const states = new Map<string, JobMatchState>();
+    for (const jobId of uniqueIds) states.set(jobId, emptyState());
 
     const built = await this.profileInputsService.build(userId, now);
-    if (!built || !built.complete) return { scores, profileComplete: built?.complete ?? false };
+    const profileComplete = built?.complete ?? false;
+    if (!built || !built.complete || uniqueIds.length === 0) return { states, profileComplete };
+
     const { inputs, fingerprint, profileId } = built;
 
     const [jobs, existingRows] = await Promise.all([
@@ -131,106 +237,128 @@ export class MatchService {
     const existingByJobId = new Map(existingRows.map((row) => [row.jobId, row]));
 
     const toUpsert: { jobId: string; result: MatchResult; analysisVersion: number }[] = [];
+    const toDelete: string[] = [];
 
     for (const job of jobs) {
+      const state = states.get(job.id);
+      if (!state) continue; // ne peut pas arriver : `job.id` provient de `uniqueIds`.
+
       const analysis = job.analysis;
-      if (!analysis || analysis.status !== 'DONE') continue; // reste `null`, initialisé ci-dessus.
+      state.analysisStatus = analysis?.status ?? null;
+      state.analysisError = analysis?.status === 'FAILED' ? (analysis.error ?? null) : null;
+
+      if (!analysis || analysis.status !== 'DONE') {
+        // Une ligne déjà calculée pour une version d'analyse antérieure (redevenue `PENDING`/
+        // `FAILED` depuis) n'a plus aucune raison d'être servie : elle est supprimée, jamais
+        // laissée périmée (revue tâche 5 — `GET /jobs` ne doit jamais trier dessus).
+        if (existingByJobId.has(job.id)) toDelete.push(job.id);
+        continue;
+      }
 
       const parsedRequirements = jobRequirementsSchema.safeParse(analysis.requirements);
       if (!parsedRequirements.success) {
         // Jamais le contenu des exigences, seulement l'identifiant de l'offre (spec §8).
         this.logger.warn(`Exigences d'analyse invalides pour l'offre ${job.id}, score non calculé.`);
+        if (existingByJobId.has(job.id)) toDelete.push(job.id);
         continue;
       }
 
       const existing = existingByJobId.get(job.id);
-      if (existing && existing.profileFingerprint === fingerprint && existing.analysisVersion === analysis.version) {
-        const payload = fromStoredPayload(existing.factors);
-        scores[job.id] = { score: existing.score, band: existing.band, priority: existing.priority, explanation: payload.explanation };
-        continue;
+      // `analyzedAt` conditionne la réutilisation : une ré-analyse à version égale (retry manuel
+      // sur une offre déjà `DONE`, par exemple) doit invalider un score calculé avant elle, même
+      // si l'empreinte de profil et la version n'ont pas changé (revue tâche 5). `analyzedAt` nul
+      // sur une analyse `DONE` ne devrait jamais arriver (`JobAnalysisService` le pose toujours) —
+      // traité par prudence comme « jamais réutilisable » plutôt que de risquer un score obsolète.
+      const canReuse =
+        existing !== undefined &&
+        existing.profileFingerprint === fingerprint &&
+        existing.analysisVersion === analysis.version &&
+        analysis.analyzedAt !== null &&
+        existing.computedAt >= analysis.analyzedAt;
+
+      if (canReuse && existing) {
+        const payload = storedMatchPayloadSchema.safeParse(existing.factors);
+        if (payload.success) {
+          state.score = existing.score;
+          state.band = existing.band;
+          state.priority = existing.priority;
+          state.explanation = payload.data.explanation;
+          state.factors = payload.data.factors;
+          state.computedAt = existing.computedAt;
+          state.insufficientData = payload.data.insufficientData;
+          continue;
+        }
+        // Ligne à jour (empreinte, version, fraîcheur) mais contenu illisible (colonne corrompue,
+        // format d'une version antérieure incompatible) : recalculée comme si elle était absente.
       }
 
       const result = scoreJob(inputs, buildJobInputs(job), parsedRequirements.data, now);
       toUpsert.push({ jobId: job.id, result, analysisVersion: analysis.version });
     }
 
-    if (toUpsert.length > 0) {
-      await this.prisma.$transaction(
-        toUpsert.map(({ jobId, result, analysisVersion }) => {
-          const data = {
-            score: result.score,
-            relevance: result.relevance,
-            band: result.band,
-            priority: result.priority,
-            factors: toStoredPayload(result),
-            profileFingerprint: fingerprint,
-            analysisVersion,
-            computedAt: now,
-          };
-          return this.prisma.matchScore.upsert({
-            where: { profileId_jobId: { profileId, jobId } },
-            create: { profileId, jobId, ...data },
-            update: data,
-          });
-        }),
-      );
-      for (const { jobId, result } of toUpsert) {
-        scores[jobId] = { score: result.score, band: result.band, priority: result.priority, explanation: result.explanation };
-      }
+    if (toDelete.length > 0 || toUpsert.length > 0) {
+      await this.persist(profileId, fingerprint, toDelete, toUpsert, now);
     }
 
-    return { scores, profileComplete: true };
+    for (const { jobId, result } of toUpsert) {
+      const state = states.get(jobId);
+      if (!state) continue;
+      state.score = result.score;
+      state.band = result.band;
+      state.priority = result.priority;
+      state.explanation = result.explanation;
+      state.factors = result.factors;
+      state.computedAt = now;
+      state.insufficientData = result.insufficientData;
+    }
+
+    return { states, profileComplete: true };
   }
 
   /**
-   * Score détaillé d'une offre pour l'utilisateur (`GET /jobs/:id/match`) :
-   * recalcule si nécessaire (`ensureScores`), puis relit `MatchScore.factors`
-   * pour le détail par facteur. `null` seulement si l'offre elle-même
-   * n'existe pas (jamais pour un profil incomplet ou une analyse absente,
-   * qui sont des états valides du DTO — spec §6).
+   * Persiste les lignes calculées et supprime les lignes périmées, par lots
+   * d'au plus `MAX_UPSERT_BATCH` upserts par transaction : la suppression
+   * (un seul `deleteMany`) voyage dans la même transaction que le premier lot
+   * — au-delà de 20 offres à mettre à jour (jamais le cas en pratique, les
+   * appelants plafonnent déjà à 20 offres par appel), les lots suivants
+   * n'ont plus qu'à upserter, la suppression ayant déjà eu lieu.
    */
-  async getDetail(userId: string, jobId: string, now: Date = new Date()): Promise<MatchScoreDto | null> {
-    const job = await this.prisma.job.findUnique({ where: { id: jobId }, select: { id: true } });
-    if (!job) return null;
+  private async persist(
+    profileId: string,
+    fingerprint: string,
+    deleteJobIds: readonly string[],
+    toUpsert: readonly { jobId: string; result: MatchResult; analysisVersion: number }[],
+    now: Date,
+  ): Promise<void> {
+    const upsertChunks = chunk(toUpsert, MAX_UPSERT_BATCH);
+    const groups = upsertChunks.length > 0 ? upsertChunks : [[]];
 
-    const { scores, profileComplete } = await this.ensureScores(userId, [jobId], now);
-    const summary = scores[jobId] ?? null;
-    const analysisRow = await this.prisma.jobAnalysis.findUnique({ where: { jobId }, select: { status: true, error: true } });
-    const analysisStatus = this.resolveAnalysisStatus(analysisRow);
-
-    if (!summary) {
-      return {
-        score: null,
-        band: null,
-        priority: null,
-        explanation: { top: [], weak: [] },
-        factors: [],
-        computedAt: null,
-        analysis: { status: analysisStatus, error: analysisStatus === 'failed' ? (analysisRow?.error ?? null) : null },
-        profileComplete,
-        insufficientData: true,
-      };
+    for (const [index, group] of groups.entries()) {
+      const operations: Prisma.PrismaPromise<unknown>[] = [];
+      if (index === 0 && deleteJobIds.length > 0) {
+        operations.push(this.prisma.matchScore.deleteMany({ where: { profileId, jobId: { in: [...deleteJobIds] } } }));
+      }
+      for (const entry of group) {
+        const data = {
+          score: entry.result.score,
+          relevance: entry.result.relevance,
+          band: entry.result.band,
+          priority: entry.result.priority,
+          factors: toStoredPayload(entry.result),
+          profileFingerprint: fingerprint,
+          analysisVersion: entry.analysisVersion,
+          computedAt: now,
+        };
+        operations.push(
+          this.prisma.matchScore.upsert({
+            where: { profileId_jobId: { profileId, jobId: entry.jobId } },
+            create: { profileId, jobId: entry.jobId, ...data },
+            update: data,
+          }),
+        );
+      }
+      if (operations.length > 0) await this.prisma.$transaction(operations);
     }
-
-    // `summary` non nul implique un profil complet et une analyse `DONE` valide : la ligne
-    // `MatchScore` existe forcément (créée ou réutilisée par `ensureScores` ci-dessus).
-    const profile = await this.prisma.profile.findUnique({ where: { userId }, select: { id: true } });
-    const matchScoreRow = profile
-      ? await this.prisma.matchScore.findUnique({ where: { profileId_jobId: { profileId: profile.id, jobId } } })
-      : null;
-    const payload = matchScoreRow ? fromStoredPayload(matchScoreRow.factors) : null;
-
-    return {
-      score: summary.score,
-      band: summary.band,
-      priority: summary.priority,
-      explanation: summary.explanation,
-      factors: payload?.factors ?? [],
-      computedAt: matchScoreRow ? matchScoreRow.computedAt.toISOString() : null,
-      analysis: { status: analysisStatus, error: null },
-      profileComplete,
-      insufficientData: payload?.insufficientData ?? summary.score === null,
-    };
   }
 
   /**
@@ -239,10 +367,10 @@ export class MatchService {
    * pour l'instant » — seule différence avec un simple mappage direct du
    * statut Prisma.
    */
-  private resolveAnalysisStatus(row: { status: JobAnalysisStatus } | null): MatchAnalysisStatus {
-    if (!row) return this.jobAnalysisService.isConfigured() ? 'none' : 'ai_not_configured';
-    if (row.status === 'DONE') return 'done';
-    if (row.status === 'PENDING') return 'pending';
+  private resolveAnalysisStatus(status: JobAnalysisStatus | null): MatchAnalysisStatus {
+    if (!status) return this.jobAnalysisService.isConfigured() ? 'none' : 'ai_not_configured';
+    if (status === 'DONE') return 'done';
+    if (status === 'PENDING') return 'pending';
     return 'failed';
   }
 }
