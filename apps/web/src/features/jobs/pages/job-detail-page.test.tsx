@@ -83,6 +83,7 @@ function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
     ],
     requirements: [{ kind: 'LANGUAGE', label: 'Anglais courant', required: true }],
     saved: false,
+    match: null,
     ...overrides,
   };
 }

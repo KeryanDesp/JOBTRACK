@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { MatchScoreSummaryDto } from './matching';
 import { contractTypeSchema, experienceLevelSchema, remoteModeSchema } from './profile';
 
 // ---------------------------------------------------------------------------
@@ -20,13 +21,41 @@ export type ContractType = z.infer<typeof contractTypeSchema>;
 export type RemoteMode = z.infer<typeof remoteModeSchema>;
 export type ExperienceLevel = z.infer<typeof experienceLevelSchema>;
 
-export const JOB_SORT_VALUES = ['recent', 'salary'] as const;
+export const JOB_SORT_VALUES = ['recent', 'salary', 'match', 'relevance'] as const;
 export const jobSortSchema = z.enum(JOB_SORT_VALUES);
 export type JobSort = z.infer<typeof jobSortSchema>;
 
-export const JOB_TAB_VALUES = ['all', 'new'] as const;
+export const JOB_TAB_VALUES = ['all', 'new', 'for_you', 'priority'] as const;
 export const jobTabSchema = z.enum(JOB_TAB_VALUES);
 export type JobTab = z.infer<typeof jobTabSchema>;
+
+// `sort`/`tab` portent une clé d'URL distincte de leur valeur canonique pour
+// `relevance`/`for_you`/`priority` (`tri=pertinence`, `onglet=pour-vous`,
+// `onglet=priorite` — spec §6) : la table ci-dessous est l'unique source pour
+// les deux sens de conversion (`parseJobSearchParams`/`toJobSearchParams`),
+// pour qu'ils restent synchronisés. Les autres valeurs gardent leur clé
+// canonique comme clé d'URL (identité).
+const SORT_URL_VALUES: Record<JobSort, string> = {
+  recent: 'recent',
+  salary: 'salary',
+  match: 'match',
+  relevance: 'pertinence',
+};
+
+const SORT_FROM_URL: Record<string, JobSort> = Object.fromEntries(
+  Object.entries(SORT_URL_VALUES).map(([canonical, url]) => [url, canonical as JobSort]),
+);
+
+const TAB_URL_VALUES: Record<JobTab, string> = {
+  all: 'all',
+  new: 'new',
+  for_you: 'pour-vous',
+  priority: 'priorite',
+};
+
+const TAB_FROM_URL: Record<string, JobTab> = Object.fromEntries(
+  Object.entries(TAB_URL_VALUES).map(([canonical, url]) => [url, canonical as JobTab]),
+);
 
 export const JOB_REQUIREMENT_KINDS = ['EDUCATION', 'LANGUAGE'] as const;
 export const jobRequirementKindSchema = z.enum(JOB_REQUIREMENT_KINDS);
@@ -160,14 +189,18 @@ const publishedWithinDaysSchema = rawNumericField
 const sortSchema = rawField
   .transform((value) => {
     const single = firstValue(value);
-    return single === undefined || single === '' ? 'recent' : single;
+    if (single === undefined || single === '') return 'recent';
+    if (typeof single === 'string' && Object.hasOwn(SORT_FROM_URL, single)) return SORT_FROM_URL[single];
+    return single;
   })
   .pipe(jobSortSchema);
 
 const tabSchema = rawField
   .transform((value) => {
     const single = firstValue(value);
-    return single === undefined || single === '' ? 'all' : single;
+    if (single === undefined || single === '') return 'all';
+    if (typeof single === 'string' && Object.hasOwn(TAB_FROM_URL, single)) return TAB_FROM_URL[single];
+    return single;
   })
   .pipe(jobTabSchema);
 
@@ -324,8 +357,8 @@ export function toJobSearchParams(query: JobSearchQuery): URLSearchParams {
     params.set(JOB_SEARCH_PARAM_KEYS.publishedWithinDays, String(query.publishedWithinDays));
   }
   if (query.sources.length > 0) params.set(JOB_SEARCH_PARAM_KEYS.sources, query.sources.join(','));
-  if (query.sort !== 'recent') params.set(JOB_SEARCH_PARAM_KEYS.sort, query.sort);
-  if (query.tab !== 'all') params.set(JOB_SEARCH_PARAM_KEYS.tab, query.tab);
+  if (query.sort !== 'recent') params.set(JOB_SEARCH_PARAM_KEYS.sort, SORT_URL_VALUES[query.sort]);
+  if (query.tab !== 'all') params.set(JOB_SEARCH_PARAM_KEYS.tab, TAB_URL_VALUES[query.tab]);
   if (query.page !== 1) params.set(JOB_SEARCH_PARAM_KEYS.page, String(query.page));
   if (query.refresh) params.set(JOB_SEARCH_PARAM_KEYS.refresh, '1');
   return params;
@@ -357,6 +390,8 @@ export interface JobSummaryDto {
   skills: string[];
   sources: JobSourceKind[];
   saved: boolean;
+  /** `null` : pas encore analysée, IA non configurée, ou profil incomplet (spec §6, tranche 4). */
+  match: MatchScoreSummaryDto | null;
 }
 
 export interface JobSourceDto {
@@ -416,6 +451,12 @@ export interface JobSyncInfoDto {
   status: SyncStatus;
   syncedAt: string | null;
   message: string | null;
+  /** Présent seulement quand la page a demandé une analyse (spec §6, tranche 4). */
+  analysis?: {
+    analyzed: number;
+    total: number;
+    notConfigured: boolean;
+  };
 }
 
 export interface JobListResponseDto {
@@ -485,9 +526,13 @@ export const PUBLISHED_WITHIN_OPTIONS: { value: PublishedWithinDays; label: stri
 export const JOB_SORT_OPTIONS: { value: JobSort; label: string }[] = [
   { value: 'recent', label: 'Plus récentes' },
   { value: 'salary', label: 'Salaire' },
+  { value: 'match', label: 'Meilleur match' },
+  { value: 'relevance', label: 'Pertinence' },
 ];
 
 export const JOB_TABS: { value: JobTab; label: string }[] = [
   { value: 'all', label: 'Toutes' },
   { value: 'new', label: 'Nouvelles' },
+  { value: 'for_you', label: 'Pour vous' },
+  { value: 'priority', label: 'Forte priorité' },
 ];

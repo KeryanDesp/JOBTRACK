@@ -41,6 +41,7 @@ function makeSummary(overrides: Partial<JobSummaryDto> = {}): JobSummaryDto {
     skills: [],
     sources: ['FRANCE_TRAVAIL'],
     saved: false,
+    match: null,
     ...overrides,
   };
 }

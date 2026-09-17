@@ -310,3 +310,58 @@ describe('libelles francais', () => {
     expect(JOB_TABS.map((option) => option.value).sort()).toEqual([...jobTabSchema.options].sort());
   });
 });
+
+describe('jobSearchQuerySchema — tri et onglets de correspondance (tranche 4)', () => {
+  it('accepte tri=match tel quel', () => {
+    const params = new URLSearchParams({ tri: 'match' });
+    expect(parseJobSearchParams(params).sort).toBe('match');
+  });
+
+  it('convertit tri=pertinence en sort relevance', () => {
+    const params = new URLSearchParams({ tri: 'pertinence' });
+    expect(parseJobSearchParams(params).sort).toBe('relevance');
+  });
+
+  it('convertit onglet=pour-vous en tab for_you', () => {
+    const params = new URLSearchParams({ onglet: 'pour-vous' });
+    expect(parseJobSearchParams(params).tab).toBe('for_you');
+  });
+
+  it('convertit onglet=priorite en tab priority', () => {
+    const params = new URLSearchParams({ onglet: 'priorite' });
+    expect(parseJobSearchParams(params).tab).toBe('priority');
+  });
+
+  it('serialise sort relevance en tri=pertinence', () => {
+    const query = jobSearchQuerySchema.parse({ sort: 'relevance' });
+    const params = toJobSearchParams(query);
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.sort)).toBe('pertinence');
+  });
+
+  it('serialise tab for_you en onglet=pour-vous', () => {
+    const query = jobSearchQuerySchema.parse({ tab: 'for_you' });
+    const params = toJobSearchParams(query);
+    expect(params.get(JOB_SEARCH_PARAM_KEYS.tab)).toBe('pour-vous');
+  });
+
+  it('fait un aller-retour stable pour les nouvelles valeurs de tri et d onglet', () => {
+    const query = jobSearchQuerySchema.parse({ sort: 'relevance', tab: 'priority' });
+    const reparsed = parseJobSearchParams(toJobSearchParams(query));
+    expect(reparsed.sort).toBe('relevance');
+    expect(reparsed.tab).toBe('priority');
+  });
+
+  it('conserve le comportement des anciennes URLs (tri=recent, onglet=new)', () => {
+    const params = new URLSearchParams({ tri: 'recent', onglet: 'new' });
+    const result = parseJobSearchParams(params);
+    expect(result.sort).toBe('recent');
+    expect(result.tab).toBe('new');
+  });
+
+  it('rejette un jeton de tri inconnu et retombe sur le defaut du champ', () => {
+    const params = new URLSearchParams({ tri: 'aleatoire', q: 'dev' });
+    const result = parseJobSearchParams(params);
+    expect(result.sort).toBe('recent');
+    expect(result.q).toBe('dev');
+  });
+});
