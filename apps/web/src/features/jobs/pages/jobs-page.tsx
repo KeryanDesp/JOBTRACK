@@ -1,0 +1,245 @@
+import type { CommuneDto, JobSearchQuery, JobSyncInfoDto } from '@jobtrack/shared';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { PageHeader } from '@/components/shared/page-header';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { profileKeys } from '@/features/profile/lib/query-keys';
+import { fetchPreferences, type PreferencesDto } from '@/services/api/profile';
+import { searchCommunes } from '@/services/api/jobs';
+import { hasActiveJobFilters, JobFilters } from '../components/job-filters';
+import { JobList } from '../components/job-list';
+import { JobSearchBar, RADIUS_OPTIONS, type JobSearchSubmit } from '../components/job-search-bar';
+import { JobSortSelect } from '../components/job-sort-select';
+import { JobTabs } from '../components/job-tabs';
+import { SyncBanner } from '../components/sync-banner';
+import { useJobSearch, useJobsCapabilities } from '../hooks/use-jobs';
+import { isDefaultQuery, readJobSearchQuery, useJobSearchParams } from '../lib/search-params';
+
+type CommuneMap = Record<string, CommuneDto>;
+
+/**
+ * Code département depuis un code commune INSEE : mêmes règles que l'API
+ * (`apps/api/.../france-travail.mapper.ts`) — deux premiers caractères en
+ * général (déjà `2A`/`2B` pour la Corse, le code commune les portant tels
+ * quels), trois pour les DOM/TOM (`97x`/`98x`).
+ */
+function departmentCodeFromCommuneCode(code: string): string {
+  const upper = code.toUpperCase();
+  if (upper.startsWith('97') || upper.startsWith('98')) return upper.slice(0, 3);
+  return upper.slice(0, 2);
+}
+
+/** Libellé de repli quand une commune de l'URL n'a pas encore été résolue (spec §7 : pas de lookup par code côté API). */
+function fallbackCommune(code: string): CommuneDto {
+  return { code, name: `Code INSEE ${code}`, postalCode: null, departmentCode: departmentCodeFromCommuneCode(code) };
+}
+
+/**
+ * Rayon d'une préférence ramené aux bornes du contrat de recherche (0–100,
+ * spec `packages/shared/src/jobs.ts`) puis à l'option de rayon la plus proche
+ * (`RADIUS_OPTIONS`, `job-search-bar.tsx`) : un profil enregistré avant que
+ * l'un ou l'autre soit resserré (ex. 200 km) ne doit jamais produire une URL
+ * que `jobSearchQuerySchema` rejetterait, ni une valeur absente du sélecteur.
+ */
+function clampSearchRadius(km: number): number {
+  const bounded = Math.min(Math.max(km, 0), 100);
+  return RADIUS_OPTIONS.reduce((closest, option) => (Math.abs(option - bounded) < Math.abs(closest - bounded) ? option : closest));
+}
+
+/**
+ * Requête par défaut dérivée des préférences du profil (spec §2/§7), résolue
+ * côté web : mots-clés = premier poste recherché, lieux = jusqu'à trois
+ * communes résolues (tolérant aux échecs individuels), reste des critères
+ * copiés tels quels. `undefined` si les préférences ne portent rien
+ * d'exploitable — la page garde alors ses valeurs par défaut.
+ */
+async function preferencesToQuery(
+  preferences: PreferencesDto,
+): Promise<{ patch: Partial<JobSearchQuery>; communes: CommuneDto[] } | undefined> {
+  // Le rayon a toujours une valeur (défaut 10, comme la requête elle-même) : il ne compte
+  // pas à lui seul comme un signal de préférences « non vides » — sans quoi un profil tout
+  // juste créé écrirait systématiquement `distance` dans l'URL sans aucune autre intention.
+  const hasSignal =
+    preferences.desiredRoles.length > 0 ||
+    preferences.locations.length > 0 ||
+    preferences.contractTypes.length > 0 ||
+    preferences.remoteModes.length > 0 ||
+    Boolean(preferences.experienceLevel);
+  if (!hasSignal) return undefined;
+
+  const patch: Partial<JobSearchQuery> = { distance: clampSearchRadius(preferences.searchRadiusKm) };
+
+  const firstRole = preferences.desiredRoles[0];
+  if (firstRole) patch.q = firstRole;
+
+  const locations = preferences.locations.slice(0, 3);
+  const settled = await Promise.allSettled(locations.map((location) => searchCommunes(location)));
+  const resolvedCommunes: CommuneDto[] = [];
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value[0]) resolvedCommunes.push(result.value[0]);
+  }
+  if (resolvedCommunes.length > 0) patch.communes = resolvedCommunes.map((commune) => commune.code);
+
+  if (preferences.contractTypes.length > 0) patch.contractTypes = preferences.contractTypes;
+  if (preferences.remoteModes.length > 0) patch.remoteModes = preferences.remoteModes;
+  if (preferences.experienceLevel) patch.experienceLevels = [preferences.experienceLevel];
+
+  return { patch, communes: resolvedCommunes };
+}
+
+// Bandeau « connecteur non configuré » (spec §2/§7) synthétisé côté web, avant
+// même la première réponse de `GET /jobs` (voir `showCapabilitiesNotConfigured`
+// dans `JobsPage`) : mêmes champs qu'un `sync` serveur pour que `SyncBanner`
+// n'ait pas à distinguer les deux origines.
+const NOT_CONFIGURED_SYNC: JobSyncInfoDto = { status: 'not_configured', syncedAt: null, message: null };
+
+function subtitleFor(isPending: boolean, total: number | undefined): string {
+  if (isPending) return 'Recherche en cours…';
+  if (!total) return 'Aucune offre trouvée.';
+  return `${total} offre${total > 1 ? 's' : ''} trouvée${total > 1 ? 's' : ''} dans votre zone de recherche.`;
+}
+
+export function JobsPage() {
+  const [query, setQuery] = useJobSearchParams();
+  const [communeMap, setCommuneMap] = useState<CommuneMap>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRef = useRef(false);
+  const appliedPreferencesRef = useRef(false);
+
+  const preferencesQuery = useQuery({ queryKey: profileKeys.preferences, queryFn: fetchPreferences });
+
+  // Première visite sans paramètres d'URL (spec §2/§7) : reprend les préférences une seule
+  // fois. Un lien partagé (URL déjà porteuse de critères) n'est jamais écrasé.
+  useEffect(() => {
+    if (appliedPreferencesRef.current) return;
+    if (!isDefaultQuery(query)) {
+      appliedPreferencesRef.current = true;
+      return;
+    }
+    if (preferencesQuery.isPending) return;
+    appliedPreferencesRef.current = true;
+
+    if (!preferencesQuery.data) return;
+    void preferencesToQuery(preferencesQuery.data).then((result) => {
+      if (!result) return;
+      // La résolution des communes est asynchrone (spec §7) : pendant son attente,
+      // l'utilisateur a pu taper sa propre recherche. On relit l'URL réelle plutôt que
+      // la fermeture (potentiellement périmée) de `query`, et on abandonne si elle a
+      // bougé — jamais écraser une saisie faite pendant que ce calcul tournait encore.
+      const currentQuery = readJobSearchQuery(new URLSearchParams(window.location.search));
+      if (!isDefaultQuery(currentQuery)) return;
+
+      if (result.communes.length > 0) {
+        setCommuneMap((previous) => {
+          const merged = { ...previous };
+          for (const commune of result.communes) merged[commune.code] = commune;
+          return merged;
+        });
+      }
+      setQuery(result.patch, { replace: true });
+    });
+  }, [preferencesQuery.isPending, preferencesQuery.data, query, setQuery]);
+
+  const searchResult = useJobSearch(query, { refreshRef });
+  const capabilitiesQuery = useJobsCapabilities();
+  // Avant la toute première réponse de `GET /jobs` (spec §2/§7), le bandeau
+  // « connecteur non configuré » n'a normalement rien à afficher : il n'y a pas
+  // encore de `sync.status` serveur à lire. `useJobsCapabilities` (résolu
+  // indépendamment, avec son propre cache) permet de l'annoncer immédiatement
+  // quand le serveur sait déjà que France Travail n'est pas configuré, plutôt
+  // que d'attendre une recherche qui de toute façon renverra ce même statut.
+  const showCapabilitiesNotConfigured = !searchResult.data && capabilitiesQuery.data?.sources.franceTravail === false;
+
+  function handleRefresh() {
+    refreshRef.current = true;
+    setRefreshing(true);
+    void searchResult.refetch().finally(() => setRefreshing(false));
+  }
+
+  const resolvedCommunes = query.communes.map((code) => communeMap[code] ?? fallbackCommune(code));
+
+  function handleCommunesResolved(next: CommuneDto[]) {
+    setCommuneMap((previous) => {
+      const merged = { ...previous };
+      for (const commune of next) merged[commune.code] = commune;
+      return merged;
+    });
+  }
+
+  function handleSearch(submit: JobSearchSubmit) {
+    setQuery({ q: submit.q, distance: submit.distance, communes: submit.communes });
+  }
+
+  function handleResetFilters() {
+    setQuery({
+      contractTypes: [],
+      remoteModes: [],
+      experienceLevels: [],
+      salaryMin: undefined,
+      publishedWithinDays: undefined,
+      sources: [],
+    });
+  }
+
+  function handlePageChange(page: number) {
+    window.scrollTo({ top: 0 });
+    setQuery({ page });
+  }
+
+  const total = searchResult.data?.total;
+  const filterValues = {
+    contractTypes: query.contractTypes,
+    remoteModes: query.remoteModes,
+    experienceLevels: query.experienceLevels,
+    salaryMin: query.salaryMin,
+    publishedWithinDays: query.publishedWithinDays,
+    sources: query.sources,
+  };
+  const activeFilters = hasActiveJobFilters(filterValues);
+
+  return (
+    <TooltipProvider>
+      <div className="mx-auto max-w-5xl">
+        <PageHeader title="Offres d'emploi" description={subtitleFor(searchResult.isPending, total)} />
+
+        <div className="space-y-4">
+          <JobSearchBar
+            q={query.q}
+            distance={query.distance}
+            communes={resolvedCommunes}
+            onCommunesResolved={handleCommunesResolved}
+            onSearch={handleSearch}
+          />
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <JobFilters value={filterValues} onChange={(patch, options) => setQuery(patch, options)} />
+            <JobSortSelect value={query.sort} onChange={(sort) => setQuery({ sort })} />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <JobTabs value={query.tab} onChange={(tab) => setQuery({ tab })} />
+            {searchResult.data ? (
+              <SyncBanner sync={searchResult.data.sync} onRefresh={handleRefresh} refreshing={refreshing} />
+            ) : (
+              showCapabilitiesNotConfigured && (
+                <SyncBanner sync={NOT_CONFIGURED_SYNC} onRefresh={handleRefresh} refreshing={refreshing} />
+              )
+            )}
+          </div>
+
+          <JobList
+            data={searchResult.data}
+            query={query}
+            isPending={searchResult.isPending}
+            isError={searchResult.isError}
+            error={searchResult.error}
+            isPlaceholderData={searchResult.isPlaceholderData}
+            onRetry={() => void searchResult.refetch()}
+            onPageChange={handlePageChange}
+            onResetFilters={activeFilters ? handleResetFilters : undefined}
+          />
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}

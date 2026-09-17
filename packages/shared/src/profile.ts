@@ -92,6 +92,21 @@ export const profileSchema = z
   })
   .transform(omitUndefinedValues);
 
+// Énumérations partagées avec `jobs.ts` (contrat de recherche et DTO des
+// offres) : exportées ici (une seule fois) pour que les deux fichiers valident
+// exactement les mêmes valeurs sans dupliquer la liste des libellés bruts.
+export const contractTypeSchema = z.enum([
+  'CDI',
+  'CDD',
+  'INTERIM',
+  'INTERNSHIP',
+  'APPRENTICESHIP',
+  'FREELANCE',
+  'PART_TIME',
+]);
+export const remoteModeSchema = z.enum(['ONSITE', 'HYBRID', 'REMOTE']);
+export const experienceLevelSchema = z.enum(['STUDENT', 'JUNIOR', 'MID', 'SENIOR', 'LEAD']);
+
 export const jobPreferencesSchema = z
   .object({
     desiredRoles: z.array(z.string().trim().min(1).max(80)).max(10),
@@ -106,12 +121,10 @@ export const jobPreferencesSchema = z
     // Idem : `?? 25` forçait 25 dès que la clé était omise, réinitialisant un rayon
     // déjà enregistré à chaque PATCH partiel. Le défaut (25) ne vit plus qu'en base.
     searchRadiusKm: optionalNumber(500),
-    remoteModes: z.array(z.enum(['ONSITE', 'HYBRID', 'REMOTE'])),
-    contractTypes: z.array(
-      z.enum(['CDI', 'CDD', 'INTERNSHIP', 'APPRENTICESHIP', 'FREELANCE', 'PART_TIME']),
-    ),
+    remoteModes: z.array(remoteModeSchema),
+    contractTypes: z.array(contractTypeSchema),
     availability: optionalText(80),
-    experienceLevel: z.enum(['STUDENT', 'JUNIOR', 'MID', 'SENIOR', 'LEAD']).optional(),
+    experienceLevel: experienceLevelSchema.optional(),
   })
   // `null` (champ effacé) compte comme « rien à comparer », au même titre que `undefined`
   // (champ omis) : optionalNumber peut désormais produire les deux.

@@ -1,0 +1,16 @@
+[
+  { "code": "57463", "libelle": "Metz", "codePostal": "57000", "codeDepartement": "57" },
+  { "code": "54395", "libelle": "Nancy", "codePostal": "54000", "codeDepartement": "54" },
+  { "code": "75101", "libelle": "Paris 1er Arrondissement", "codePostal": "75001", "codeDepartement": "75" },
+  { "code": "2A004", "libelle": "Ajaccio", "codePostal": "20000", "codeDepartement": "2A" },
+  { "code": "97411", "libelle": "Saint-Denis", "codePostal": "97400", "codeDepartement": "974" },
+  { "code": "69123", "libelle": "Lyon", "codePostal": "69001", "codeDepartement": "69" },
+  { "code": "33063", "libelle": "Bordeaux", "codePostal": "33000", "codeDepartement": "33" },
+  { "code": "31555", "libelle": "Toulouse", "codePostal": "31000", "codeDepartement": "31" },
+  { "code": "13055", "libelle": "Marseille", "codePostal": "13001", "codeDepartement": "13" },
+  { "code": "59350", "libelle": "Lille", "codePostal": "59000", "codeDepartement": "59" },
+  { "code": "67482", "libelle": "Strasbourg", "codePostal": "67000", "codeDepartement": "67" },
+  { "code": "35238", "libelle": "Rennes", "codePostal": "35000", "codeDepartement": "35" },
+  { "code": "", "libelle": "Commune sans code (invalide)", "codePostal": "00000", "codeDepartement": "00" },
+  { "code": "99999", "libelle": "", "codePostal": null, "codeDepartement": "99" }
+]

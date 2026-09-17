@@ -1,0 +1,42 @@
+{
+  "id": "FT-0001",
+  "intitule": "Ingénieur logiciel senior (H/F)",
+  "description": "Solaris Ingénierie recherche un ingénieur logiciel senior pour renforcer son équipe plateforme à Metz. Vous concevrez des services backend robustes et accompagnerez les développeurs juniors.\n\nMissions :\n- Concevoir et faire évoluer les services backend\n- Accompagner les développeurs juniors\n- Participer aux revues de code",
+  "dateCreation": "2026-09-01T08:00:00.000Z",
+  "dateActualisation": "2026-09-10T09:30:00.000Z",
+  "lieuTravail": { "libelle": "57 - METZ", "latitude": 49.1193, "longitude": 6.1757, "codePostal": "57000", "commune": "57463" },
+  "romeCode": "M1805",
+  "romeLibelle": "Études et développement informatique",
+  "appellationlibelle": "Ingénieur / Ingénieure logiciel",
+  "entreprise": { "nom": "Solaris Ingénierie", "description": "Éditeur de logiciels industriels basé en Lorraine.", "logo": null, "url": "https://www.solaris-ingenierie-fictif.example" },
+  "typeContrat": "CDI",
+  "typeContratLibelle": "Contrat à durée indéterminée",
+  "natureContrat": "Contrat travail",
+  "experienceExige": "E",
+  "experienceLibelle": "5 An(s)",
+  "formations": [
+    { "codeFormation": "34", "domaineLibelle": "Informatique", "niveauLibelle": "BAC+5 et plus ou équivalents", "commentaire": null, "exigence": "S" }
+  ],
+  "langues": [
+    { "libelle": "Anglais", "exigence": "S" }
+  ],
+  "competences": [
+    { "code": "116348", "libelle": "TypeScript", "exigence": "E" },
+    { "code": "116349", "libelle": "NestJS", "exigence": "E" },
+    { "code": "116350", "libelle": "PostgreSQL", "exigence": "S" }
+  ],
+  "salaire": { "libelle": "Annuel de 45000.00 Euros à 55000.00 Euros", "commentaire": null, "complement1": null, "complement2": null },
+  "dureeTravailLibelle": "39H Horaires normaux",
+  "dureeTravailLibelleConverti": "Temps plein",
+  "alternance": false,
+  "contact": { "nom": "Service recrutement", "coordonnees1": null, "coordonnees2": null, "coordonnees3": null, "telephone": null, "courriel": null, "commentaire": null, "urlRecruteur": null, "urlPostulation": "https://candidature.francetravail.fr/offre/FT-0001-fictive" },
+  "nombrePostes": 1,
+  "accessibleTH": true,
+  "qualificationCode": "9",
+  "qualificationLibelle": "Cadre",
+  "secteurActivite": "62",
+  "secteurActiviteLibelle": "Programmation, conseil et autres activités informatiques",
+  "origineOffre": { "origine": "1", "urlOrigine": "https://candidat.francetravail.fr/offres/recherche/detail/FT-0001-fictive", "partenaires": [] },
+  "tempsPlein": true,
+  "deplacementLibelle": null
+}

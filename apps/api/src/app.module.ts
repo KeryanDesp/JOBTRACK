@@ -7,11 +7,12 @@ import { AuthGuard } from './modules/auth/auth.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { CvImportModule } from './modules/cv-import/cv-import.module';
 import { HealthModule } from './modules/health/health.module';
+import { JobsModule } from './modules/jobs/jobs.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { ProfileModule } from './modules/profile/profile.module';
 
 @Module({
-  imports: [CommonModule, AuthModule, ProfileModule, OnboardingModule, CvImportModule, HealthModule],
+  imports: [CommonModule, AuthModule, ProfileModule, OnboardingModule, CvImportModule, JobsModule, HealthModule],
   providers: [
     // L'ordre compte : débit d'abord (avant tout travail coûteux), puis session, puis CSRF.
     { provide: APP_GUARD, useClass: RateLimitGuard },

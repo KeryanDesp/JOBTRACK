@@ -1,0 +1,87 @@
+import { describe, expect, it } from 'vitest';
+import { jobFingerprint, normalizeCompany } from './fingerprint';
+
+const BASE = {
+  company: 'Solaris Ingénierie',
+  title: 'Ingénieur logiciel senior',
+  communeCode: '57463' as string | null,
+  locationLabel: 'Metz (57)' as string | null,
+  sourceKind: 'FRANCE_TRAVAIL' as const,
+  externalId: 'FT-0001',
+};
+
+describe('jobFingerprint', () => {
+  it('deux offres de meme entreprise, titre et commune partagent la meme empreinte', () => {
+    const a = jobFingerprint(BASE);
+    const b = jobFingerprint({ ...BASE, externalId: 'FT-9999' });
+    expect(a).toBe(b);
+  });
+
+  it('la mention h/f est ignoree dans le titre', () => {
+    const a = jobFingerprint(BASE);
+    const b = jobFingerprint({ ...BASE, title: 'Ingénieur logiciel senior (H/F)' });
+    expect(a).toBe(b);
+  });
+
+  it('une casse ou un accent different du titre ne change pas l_empreinte', () => {
+    const a = jobFingerprint(BASE);
+    const b = jobFingerprint({ ...BASE, title: 'INGENIEUR LOGICIEL SENIOR' });
+    expect(a).toBe(b);
+  });
+
+  it('une commune differente change l_empreinte', () => {
+    const a = jobFingerprint(BASE);
+    const b = jobFingerprint({ ...BASE, communeCode: '75101' });
+    expect(a).not.toBe(b);
+  });
+
+  it('sans commune, se replie sur le libelle de lieu normalise', () => {
+    const a = jobFingerprint({ ...BASE, communeCode: null, locationLabel: 'Metz (57)' });
+    const b = jobFingerprint({ ...BASE, communeCode: null, locationLabel: 'metz (57)' });
+    expect(a).toBe(b);
+  });
+
+  it('sans entreprise, l_empreinte inclut la source et son identifiant externe', () => {
+    const a = jobFingerprint({ ...BASE, company: '', externalId: 'FT-0001' });
+    const b = jobFingerprint({ ...BASE, company: '', externalId: 'FT-0002' });
+    expect(a).not.toBe(b);
+  });
+
+  it('sans entreprise, une meme source et un meme identifiant donnent la meme empreinte', () => {
+    const a = jobFingerprint({ ...BASE, company: '' });
+    const b = jobFingerprint({ ...BASE, company: null });
+    expect(a).toBe(b);
+  });
+
+  it('avec ou sans entreprise, les empreintes different (chemins de calcul distincts)', () => {
+    const withCompany = jobFingerprint(BASE);
+    const withoutCompany = jobFingerprint({ ...BASE, company: '' });
+    expect(withCompany).not.toBe(withoutCompany);
+  });
+
+  it('une forme juridique abregee, developpee ou absente donnent la meme empreinte', () => {
+    const abbreviated = jobFingerprint({ ...BASE, company: 'ACME S.A.S.' });
+    const spelled = jobFingerprint({ ...BASE, company: 'Acme SAS' });
+    const bare = jobFingerprint({ ...BASE, company: 'Acme' });
+    expect(abbreviated).toBe(spelled);
+    expect(spelled).toBe(bare);
+  });
+});
+
+describe('normalizeCompany', () => {
+  it('recolle les lettres isolees d_une forme juridique abregee et la retire', () => {
+    expect(normalizeCompany('ACME S.A.S.')).toBe('acme');
+  });
+
+  it('retire une forme juridique deja developpee', () => {
+    expect(normalizeCompany('Acme SAS')).toBe('acme');
+  });
+
+  it('laisse un nom sans forme juridique intact', () => {
+    expect(normalizeCompany('Acme')).toBe('acme');
+  });
+
+  it('ne retire une forme juridique que si elle est le dernier mot', () => {
+    expect(normalizeCompany('SA Foncière du Centre')).toBe('sa fonciere du centre');
+  });
+});

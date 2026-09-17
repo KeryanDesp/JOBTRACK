@@ -19,6 +19,7 @@ model User {
   profile       Profile?
   oauthAccounts OAuthAccount[]
   cvImports     CvImport[]
+  savedJobs     SavedJob[]
 }
 
 enum OAuthProvider {
@@ -183,6 +184,7 @@ enum RemoteMode {
 enum ContractType {
   CDI
   CDD
+  INTERIM
   INTERNSHIP
   APPRENTICESHIP
   FREELANCE
@@ -242,4 +244,169 @@ model CvImport {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+enum JobSourceKind {
+  FRANCE_TRAVAIL
+}
+
+enum JobRequirementKind {
+  EDUCATION
+  LANGUAGE
+}
+
+enum JobSyncStatus {
+  OK
+  PARTIAL
+  FAILED
+}
+
+model Job {
+  id                 String           @id @default(cuid())
+  fingerprint        String           @unique
+  title              String
+  company            String?
+  companyDescription String?
+  companyUrl         String?
+  companyLogoUrl     String?
+  description        String
+  locationLabel      String?
+  communeCode        String?
+  postalCode         String?
+  departmentCode     String?
+  latitude           Float?
+  longitude          Float?
+  contractType       ContractType?
+  contractLabel      String?
+  contractNature     String?
+  remoteMode         RemoteMode?
+  remoteModeInferred Boolean          @default(false)
+  experienceLevel    ExperienceLevel?
+  experienceLabel    String?
+  experienceRequired Boolean?
+  salaryMinAnnual    Int?
+  salaryMaxAnnual    Int?
+  salaryLabel        String?
+  currency           String           @default("EUR")
+  workingTimeLabel   String?
+  isFullTime         Boolean?
+  isApprenticeship   Boolean          @default(false)
+  positionsCount     Int?
+  accessibleTh       Boolean?
+  sectorLabel        String?
+  romeCode           String?
+  romeLabel          String?
+  qualificationLabel String?
+  publishedAt        DateTime
+  sourceUpdatedAt    DateTime?
+  firstSeenAt        DateTime         @default(now())
+  lastSeenAt         DateTime         @default(now())
+  expiredAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  sources      JobSource[]
+  skills       JobSkill[]
+  requirements JobRequirement[]
+  savedBy      SavedJob[]
+
+  @@index([publishedAt])
+  @@index([lastSeenAt])
+  @@index([contractType, publishedAt])
+  @@index([departmentCode, publishedAt])
+  @@index([communeCode, publishedAt])
+  // Index de tri utilisables par le moteur (revue sécurité, tâche 4) — Prisma ne sait
+  // exprimer ni le tri DESC + NULLS LAST, ni la condition partielle : la migration
+  // `job_indexes_for_sorts` ajoute, à côté des index ci-dessus, `Job_salary_sort_idx`,
+  // `Job_recent_sort_idx` et `Job_communeCode_sort_idx` (tous `WHERE "expiredAt" IS
+  // NULL`, colonnes DESC) — sous des noms distincts de tout `@@index` déclaré ici,
+  // vérifié via `prisma migrate diff` : un nom en collision avec un index déclaré (ex.
+  // le défaut `Job_communeCode_publishedAt_idx` pour `@@index([communeCode,
+  // publishedAt])` ci-dessus) fait que `migrate dev` tente de le remplacer par sa
+  // version ASC pleine, jamais souhaité pour ces trois-là.
+}
+
+model JobSource {
+  id              String        @id @default(cuid())
+  jobId           String
+  source          JobSourceKind
+  externalId      String
+  url             String
+  applyUrl        String?
+  publishedAt     DateTime
+  sourceUpdatedAt DateTime?
+  lastSeenAt      DateTime      @default(now())
+  partnerName     String?
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([jobId])
+}
+
+model JobSkill {
+  id       String  @id @default(cuid())
+  jobId    String
+  name     String
+  required Boolean
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, name])
+  @@index([jobId])
+}
+
+model JobRequirement {
+  id       String             @id @default(cuid())
+  jobId    String
+  kind     JobRequirementKind
+  label    String
+  required Boolean
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+model SavedJob {
+  id        String   @id @default(cuid())
+  userId    String
+  jobId     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@index([jobId])
+}
+
+model JobSearchSync {
+  id           String        @id @default(cuid())
+  queryHash    String        @unique
+  queryJson    Json
+  lastSyncedAt DateTime      @default(now())
+  lastStatus   JobSyncStatus
+  lastError    String?
+  resultCount  Int
+}
+
+model Commune {
+  code           String  @id
+  name           String
+  nameNormalized String
+  postalCode     String?
+  departmentCode String
+
+  // `nameNormalized`/`postalCode` sont interrogés par `startsWith` (CommuneService.search) :
+  // un index B-tree ordinaire ne sert ce filtre que si la collation de la base est `C`,
+  // jamais garanti. La migration `job_indexes_for_sorts` ajoute donc, en complément des
+  // deux index B-tree ci-dessous, deux index `text_pattern_ops`
+  // (`Commune_nameNormalized_pattern_idx`, `Commune_postalCode_pattern_idx`) — sous des
+  // noms distincts, inexprimables dans ce DSL (opclass). Ils ne remplacent pas les
+  // `@@index` ci-dessous : `prisma migrate dev` a été vérifié pour vouloir les supprimer
+  // (les considérant hors schéma, sans réintroduire de remplaçant) dès que ces deux
+  // `@@index` sont retirés d'ici — les garder tous les deux est le choix sûr.
+  @@index([nameNormalized])
+  @@index([postalCode])
 }

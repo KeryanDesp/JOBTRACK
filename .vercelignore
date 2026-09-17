@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+storage
+apps/api/storage
+apps/api/fixtures
+docs
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+apps/web/e2e
+playwright-report
+test-results

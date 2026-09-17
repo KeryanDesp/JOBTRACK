@@ -73,4 +73,74 @@ describe('serverEnvSchema', () => {
     expect(parsed.ANTHROPIC_MODEL).toBeUndefined();
     expect(parsed.STORAGE_DIR).toBe('./storage');
   });
+
+  it('applique les defauts France Travail quand les identifiants sont absents', () => {
+    const parsed = serverEnvSchema.parse(valid);
+    expect(parsed.FRANCE_TRAVAIL_CLIENT_ID).toBeUndefined();
+    expect(parsed.FRANCE_TRAVAIL_CLIENT_SECRET).toBeUndefined();
+    expect(parsed.FRANCE_TRAVAIL_API_URL).toBe('https://api.francetravail.io/partenaire/offresdemploi/v2');
+    expect(parsed.FRANCE_TRAVAIL_TOKEN_URL).toBe(
+      'https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire',
+    );
+    expect(parsed.FRANCE_TRAVAIL_SCOPE).toBe('api_offresdemploiv2 o2dsoffre');
+  });
+
+  it('traite des variables France Travail vides comme absentes (defauts appliques)', () => {
+    const parsed = serverEnvSchema.parse({
+      ...valid,
+      FRANCE_TRAVAIL_CLIENT_ID: '',
+      FRANCE_TRAVAIL_CLIENT_SECRET: '',
+      FRANCE_TRAVAIL_API_URL: '',
+      FRANCE_TRAVAIL_TOKEN_URL: '',
+      FRANCE_TRAVAIL_SCOPE: '',
+    });
+    expect(parsed.FRANCE_TRAVAIL_CLIENT_ID).toBeUndefined();
+    expect(parsed.FRANCE_TRAVAIL_API_URL).toBe('https://api.francetravail.io/partenaire/offresdemploi/v2');
+    expect(parsed.FRANCE_TRAVAIL_SCOPE).toBe('api_offresdemploiv2 o2dsoffre');
+  });
+
+  it('accepte des identifiants et une URL France Travail personnalises', () => {
+    const parsed = serverEnvSchema.parse({
+      ...valid,
+      FRANCE_TRAVAIL_CLIENT_ID: 'id-partenaire',
+      FRANCE_TRAVAIL_CLIENT_SECRET: 'secret-partenaire',
+      FRANCE_TRAVAIL_API_URL: 'https://api.example.test/offres',
+    });
+    expect(parsed.FRANCE_TRAVAIL_CLIENT_ID).toBe('id-partenaire');
+    expect(parsed.FRANCE_TRAVAIL_CLIENT_SECRET).toBe('secret-partenaire');
+    expect(parsed.FRANCE_TRAVAIL_API_URL).toBe('https://api.example.test/offres');
+  });
+
+  it('rejette une FRANCE_TRAVAIL_API_URL renseignee mais invalide', () => {
+    const result = serverEnvSchema.safeParse({ ...valid, FRANCE_TRAVAIL_API_URL: 'pas-une-url' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejette une FRANCE_TRAVAIL_API_URL en http (non https)', () => {
+    const result = serverEnvSchema.safeParse({ ...valid, FRANCE_TRAVAIL_API_URL: 'http://api.example.test/offres' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejette une FRANCE_TRAVAIL_API_URL contenant un point d_interrogation', () => {
+    // Le client ajoute lui-meme ses parametres de requete (`buildUrl`) : une base
+    // qui en porterait deja produirait une requete corrompue.
+    const result = serverEnvSchema.safeParse({ ...valid, FRANCE_TRAVAIL_API_URL: 'https://api.example.test/offres?debug=1' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejette une FRANCE_TRAVAIL_TOKEN_URL en http (non https)', () => {
+    const result = serverEnvSchema.safeParse({
+      ...valid,
+      FRANCE_TRAVAIL_TOKEN_URL: 'http://entreprise.francetravail.fr/connexion/oauth2/access_token',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepte une FRANCE_TRAVAIL_TOKEN_URL https personnalisee (avec parametres, autorises pour ce champ)', () => {
+    const parsed = serverEnvSchema.parse({
+      ...valid,
+      FRANCE_TRAVAIL_TOKEN_URL: 'https://entreprise.example.test/oauth2/token?realm=%2Fpartenaire',
+    });
+    expect(parsed.FRANCE_TRAVAIL_TOKEN_URL).toBe('https://entreprise.example.test/oauth2/token?realm=%2Fpartenaire');
+  });
 });
