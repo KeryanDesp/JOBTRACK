@@ -28,12 +28,18 @@ vi.mock('@/services/api/matching', () => ({
 
 const fetchBaseResume = vi.hoisted(() => vi.fn());
 const tailorResume = vi.hoisted(() => vi.fn());
+// `useResume(cvId)` (revue tâche 7 fixup point 3) revalide en arrière-plan dès qu'il devient
+// actif (staleTime 0 par défaut dans ce client de test) : sans réponse par défaut, ce second
+// appel à `fetchResume` résoudrait `undefined` et déclencherait l'avertissement React Query
+// « Query data cannot be undefined » — jamais observable en production (l'API renvoie toujours
+// un corps), donc simplement rejoué ici avec la même réponse que `tailorResume`.
+const fetchResume = vi.hoisted(() => vi.fn());
 vi.mock('@/services/api/resume', () => ({
   fetchBaseResume,
   updateResumeTemplate: vi.fn(),
   fetchResumes: vi.fn(),
   tailorResume,
-  fetchResume: vi.fn(),
+  fetchResume,
   updateResume: vi.fn(),
   deleteResume: vi.fn(),
   fetchLetters: vi.fn(),
@@ -168,7 +174,7 @@ function makeTailoredResume(overrides: Partial<ResumeDto> = {}): ResumeDto {
       summary: { before: 'Résumé du profil.', after: 'Résumé adapté à l’offre.' },
       experiences: [
         { id: 'exp-1', before: ['A construit une plateforme.'], after: ['A construit une plateforme React.'], kept: true, rejected: [] },
-        { id: 'exp-2', before: ['A développé un prototype.'], after: ['A développé un prototype.'], kept: false, rejected: [] },
+        { id: 'exp-2', before: ['A développé un prototype.'], after: [], kept: false, rejected: [] },
       ],
       skills: { before: [], after: [] },
       educations: { kept: [], removed: [] },
@@ -187,6 +193,7 @@ afterEach(() => {
   analyzeJobs.mockReset();
   fetchBaseResume.mockReset();
   tailorResume.mockReset();
+  fetchResume.mockReset();
 });
 
 function LocationSearchProbe() {
@@ -246,6 +253,7 @@ describe('ResumeCreatePage', () => {
     fetchJobMatch.mockResolvedValue(makeMatch());
     fetchBaseResume.mockResolvedValue(makeBaseResume());
     tailorResume.mockResolvedValue(makeTailoredResume());
+    fetchResume.mockResolvedValue(makeTailoredResume());
     const user = userEvent.setup();
     renderAtStep('selection');
 
@@ -256,20 +264,26 @@ describe('ResumeCreatePage', () => {
     expect(screen.getByText('A construit une plateforme React.')).toBeInTheDocument();
   });
 
-  it("Retablir restaure une experience ecartee par l_IA", async () => {
+  it("Retablir restaure une experience ecartee par l_IA avec les puces de la base (after vide cote serveur)", async () => {
     fetchJob.mockResolvedValue(makeJob());
     fetchJobMatch.mockResolvedValue(makeMatch());
     fetchBaseResume.mockResolvedValue(makeBaseResume());
     tailorResume.mockResolvedValue(makeTailoredResume());
+    fetchResume.mockResolvedValue(makeTailoredResume());
     const user = userEvent.setup();
     renderAtStep('selection');
 
     await user.click(await screen.findByRole('button', { name: 'Adapter mon CV' }));
     await screen.findByText('Écartée');
 
-    await user.click(screen.getByRole('button', { name: 'Rétablir' }));
+    await user.click(screen.getByRole('button', { name: "Rétablir l'expérience Stagiaire — Beta" }));
 
-    expect(await screen.findByText(/stagiaire/i)).toBeInTheDocument();
+    // Rétablie : l'expérience réapparaît à la fois dans « Modifications » (désormais
+    // « Conservée ») et dans l'éditeur — deux occurrences, jamais une erreur.
+    expect((await screen.findAllByText(/stagiaire/i)).length).toBeGreaterThan(0);
+    // `after` est vide côté serveur pour une expérience écartée (revue, point 1) : la
+    // puce rétablie dans l'éditeur doit venir de la base, jamais rester vide.
+    expect(await screen.findByDisplayValue('A développé un prototype.')).toBeInTheDocument();
   });
 
   it("affiche l_etat IA non configuree quand l_adaptation echoue avec ce code", async () => {

@@ -7,10 +7,24 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export type ResumeChangesSection = 'educations' | 'certifications' | 'projects';
 
+interface ExperienceLabel {
+  role: string;
+  company: string;
+}
+
 interface ResumeChangesProps {
   changes: ResumeChangesData;
   /** Contenu courant (édité) : sert à déterminer si une expérience est encore conservée et à nommer les compétences. */
   content: ResumeContent;
+  /**
+   * Rôle/entreprise de chaque expérience du CV de base, par id (revue, tâche
+   * 7 fixup) : source de vérité pour l'intitulé affiché de chaque bloc
+   * (« {rôle} — {entreprise} », spec) — `content` seul ne suffit pas, une
+   * expérience écartée n'y figure plus. Sans cette table (détail d'un CV,
+   * pas de CV de base sous la main), le bloc retombe sur celles encore
+   * présentes dans `content`.
+   */
+  experienceLabels?: Record<string, ExperienceLabel>;
   /**
    * Libellés lisibles des formations/certifications/projets écartés, par id
    * (uniquement disponibles avec le CV de base, spec §7 étape 2) : sans eux
@@ -47,8 +61,14 @@ function BeforeAfterBlock({ before, after }: { before: string; after: string }) 
  * certifications / projets écartés — rétablissables via `onRestore` quand
  * fourni (étape 2 de la création), en lecture seule sinon (détail d'un CV).
  */
-export function ResumeChanges({ changes, content, labels, onRestoreExperience, onRestore }: ResumeChangesProps) {
+export function ResumeChanges({ changes, content, experienceLabels, labels, onRestoreExperience, onRestore }: ResumeChangesProps) {
   const skillNames = new Map(content.skills.map((skill) => [skill.id, skill.name]));
+
+  function labelForExperience(id: string): ExperienceLabel | undefined {
+    const kept = content.experiences.find((item) => item.id === id);
+    if (kept) return { role: kept.role, company: kept.company };
+    return experienceLabels?.[id];
+  }
 
   return (
     <div className="space-y-4">
@@ -76,14 +96,19 @@ export function ResumeChanges({ changes, content, labels, onRestoreExperience, o
           <CardContent className="space-y-5">
             {changes.experiences.map((experience) => {
               const isKept = content.experiences.some((item) => item.id === experience.id);
+              const label = labelForExperience(experience.id);
+              const title = label ? `${label.role} — ${label.company}` : 'Expérience';
               return (
                 <div key={experience.id} className="space-y-2 border-b pb-4 last:border-b-0 last:pb-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium">{isKept ? 'Conservée' : 'Écartée'}</p>
+                    <div>
+                      <p className="text-sm font-medium">{title}</p>
+                      <p className="text-xs text-muted-foreground">{isKept ? 'Conservée' : 'Écartée'}</p>
+                    </div>
                     {!isKept && onRestoreExperience && (
                       <Button type="button" variant="outline" size="sm" onClick={() => onRestoreExperience(experience.id)}>
                         <Undo2 />
-                        Rétablir
+                        {label ? `Rétablir l'expérience ${label.role} — ${label.company}` : "Rétablir l'expérience"}
                       </Button>
                     )}
                   </div>
@@ -105,7 +130,7 @@ export function ResumeChanges({ changes, content, labels, onRestoreExperience, o
                     <ul className="space-y-0.5">
                       {experience.rejected.map((rejection) => (
                         <li key={rejection.index} className="text-xs text-muted-foreground italic">
-                          Reformulation écartée : {rejection.reason}
+                          Puce écartée : {rejection.reason}
                         </li>
                       ))}
                     </ul>
@@ -160,17 +185,20 @@ export function ResumeChanges({ changes, content, labels, onRestoreExperience, o
             <CardContent>
               {sectionLabels ? (
                 <ul className="space-y-2">
-                  {removed.map((id) => (
-                    <li key={id} className="flex items-center justify-between gap-2 text-sm">
-                      <span>{sectionLabels[id] ?? id}</span>
-                      {onRestore && (
-                        <Button type="button" variant="outline" size="sm" onClick={() => onRestore(section, id)}>
-                          <Undo2 />
-                          Rétablir
-                        </Button>
-                      )}
-                    </li>
-                  ))}
+                  {removed.map((id) => {
+                    const label = sectionLabels[id] ?? id;
+                    return (
+                      <li key={id} className="flex items-center justify-between gap-2 text-sm">
+                        <span>{label}</span>
+                        {onRestore && (
+                          <Button type="button" variant="outline" size="sm" onClick={() => onRestore(section, id)}>
+                            <Undo2 />
+                            {`Rétablir ${label}`}
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : (
                 <p className="text-sm text-muted-foreground">

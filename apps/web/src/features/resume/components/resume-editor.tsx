@@ -1,6 +1,7 @@
-import type { ResumeContent } from '@jobtrack/shared';
+import type { ResumeContent, ResumeContentExperience } from '@jobtrack/shared';
 import { RESUME_SECTION_LABELS } from '@jobtrack/shared';
 import { ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -24,14 +25,86 @@ function move<T>(items: readonly T[], index: number, direction: -1 | 1): T[] {
 }
 
 /**
+ * Normalise un texte brut de puces (revue, tâche 7 fixup) : une ligne par
+ * puce, lignes vides retirées, 6 puces max, 300 caractères max chacune.
+ * Appliquée **seulement** à la perte de focus du champ et avant
+ * l'enregistrement (jamais à chaque frappe) : pendant la saisie, `Entrée`
+ * doit pouvoir créer une nouvelle ligne vide et les espaces ne doivent pas
+ * être retirés en cours de route.
+ */
+export function normalizeHighlights(raw: string): string[] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 6)
+    .map((line) => line.slice(0, 300));
+}
+
+/**
+ * Normalise les puces de toutes les expériences d'un document (revue, tâche 7
+ * fixup) : filet de sécurité avant l'enregistrement, au cas où le champ n'a
+ * pas perdu le focus avant le clic sur « Enregistrer »/« Générer mon CV »
+ * (`resumeContentSchema` rejette une puce vide plutôt que de la tolérer).
+ */
+export function normalizeResumeContentHighlights(content: ResumeContent): ResumeContent {
+  return {
+    ...content,
+    experiences: content.experiences.map((experience) => ({
+      ...experience,
+      highlights: normalizeHighlights(experience.highlights.join('\n')),
+    })),
+  };
+}
+
+interface HighlightsFieldProps {
+  experience: ResumeContentExperience;
+  onCommit: (highlights: string[]) => void;
+}
+
+/**
+ * Champ de puces d'une expérience (revue, tâche 7 fixup) : texte **local**
+ * pendant la frappe (`Entrée` crée une ligne, les espaces sont conservés),
+ * normalisé (`normalizeHighlights`) seulement à la perte de focus — sans cet
+ * état local, filtrer les lignes vides à chaque frappe empêchait de créer une
+ * nouvelle puce (la ligne vide qu'`Entrée` venait de créer disparaissait
+ * immédiatement du texte contrôlé). Remonté par `experience.id` (clé de la
+ * liste parente) : un réordonnancement conserve ce texte local, la
+ * suppression/le rétablissement d'une autre expérience n'y touche pas.
+ */
+function HighlightsField({ experience, onCommit }: HighlightsFieldProps) {
+  const [raw, setRaw] = useState(experience.highlights.join('\n'));
+
+  function handleBlur(): void {
+    const normalized = normalizeHighlights(raw);
+    setRaw(normalized.join('\n'));
+    onCommit(normalized);
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={`resume-editor-highlights-${experience.id}`}>Points clés (une puce par ligne)</Label>
+      <Textarea
+        id={`resume-editor-highlights-${experience.id}`}
+        value={raw}
+        onChange={(event) => setRaw(event.target.value)}
+        onBlur={handleBlur}
+        rows={Math.max(3, raw.split('\n').length)}
+      />
+    </div>
+  );
+}
+
+/**
  * Édition du contenu d'un CV adapté (spec §2/§7, tâche 7) : titre, résumé,
- * puces de chaque expérience (une par ligne), retrait d'une expérience / d'une
- * formation / d'une certification / d'un projet et réordonnancement des
- * expériences et compétences par boutons ↑↓ (jamais de glisser-déposer, même
- * principe que `CollectionSection`, `features/profile/components/collection-section.tsx`).
+ * puces de chaque expérience, retrait d'une expérience / d'une formation /
+ * d'une certification / d'un projet et réordonnancement des expériences et
+ * compétences par boutons ↑↓ (jamais de glisser-déposer, même principe que
+ * `CollectionSection`, `features/profile/components/collection-section.tsx`).
  * Contrôlé : `onChange` reçoit systématiquement un document dont la forme
  * reste celle de `resumeContentSchema` (bornes déjà respectées : 6 puces max,
- * 300 caractères chacune) — l'appelant revalide malgré tout avant d'enregistrer.
+ * 300 caractères chacune) — l'appelant revalide malgré tout avant d'enregistrer
+ * (`normalizeResumeContentHighlights` puis `resumeContentSchema.safeParse`).
  */
 export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
   function updateTitle(value: string) {
@@ -42,13 +115,7 @@ export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
     onChange({ ...content, summary: value });
   }
 
-  function updateHighlights(experienceId: string, raw: string) {
-    const highlights = raw
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .slice(0, 6)
-      .map((line) => line.slice(0, 300));
+  function commitHighlights(experienceId: string, highlights: string[]) {
     onChange({
       ...content,
       experiences: content.experiences.map((experience) =>
@@ -149,22 +216,14 @@ export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={`Retirer l'expérience ${experience.role}`}
+                      aria-label={`Retirer l'expérience ${experience.role} — ${experience.company}`}
                       onClick={() => removeExperience(experience.id)}
                     >
                       <Trash2 />
                     </Button>
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={`resume-editor-highlights-${experience.id}`}>Points clés (une puce par ligne)</Label>
-                  <Textarea
-                    id={`resume-editor-highlights-${experience.id}`}
-                    value={experience.highlights.join('\n')}
-                    onChange={(event) => updateHighlights(experience.id, event.target.value)}
-                    rows={Math.max(3, experience.highlights.length)}
-                  />
-                </div>
+                <HighlightsField experience={experience} onCommit={(highlights) => commitHighlights(experience.id, highlights)} />
               </div>
             ))}
           </CardContent>
@@ -223,7 +282,13 @@ export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
                     {education.degree}
                     {education.field ? ` — ${education.field}` : ''} · {education.school}
                   </span>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Retirer" onClick={() => removeEducation(education.id)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Retirer ${education.degree} — ${education.school}`}
+                    onClick={() => removeEducation(education.id)}
+                  >
                     <Trash2 />
                   </Button>
                 </li>
@@ -249,7 +314,7 @@ export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="Retirer"
+                    aria-label={`Retirer ${certification.name}`}
                     onClick={() => removeCertification(certification.id)}
                   >
                     <Trash2 />
@@ -271,7 +336,13 @@ export function ResumeEditor({ content, onChange }: ResumeEditorProps) {
               {content.projects.map((project) => (
                 <li key={project.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm">
                   <span>{project.name}</span>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Retirer" onClick={() => removeProject(project.id)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Retirer ${project.name}`}
+                    onClick={() => removeProject(project.id)}
+                  >
                     <Trash2 />
                   </Button>
                 </li>

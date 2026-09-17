@@ -11,10 +11,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiError } from '@/services/api/client';
 import { DownloadPdfButton } from '../components/download-pdf-button';
 import { ResumeChanges } from '../components/resume-changes';
-import { ResumeEditor } from '../components/resume-editor';
+import { normalizeResumeContentHighlights, ResumeEditor } from '../components/resume-editor';
 import { ResumePreview } from '../components/resume-preview';
 import { TemplatePicker } from '../components/template-picker';
-import { useDeleteResume, useResume, useUpdateResume } from '../hooks/use-resume';
+import { useBaseResume, useDeleteResume, useResume, useUpdateResume } from '../hooks/use-resume';
+
+/** Libellés lisibles des formations/certifications/projets écartés (spec §7, revue tâche 7 fixup) : depuis le CV de base. */
+function buildRemovedLabels(content: ResumeContent) {
+  return {
+    educations: Object.fromEntries(
+      content.educations.map((item) => [item.id, item.field ? `${item.degree} — ${item.field} · ${item.school}` : `${item.degree} · ${item.school}`]),
+    ),
+    certifications: Object.fromEntries(content.certifications.map((item) => [item.id, `${item.name} · ${item.issuer}`])),
+    projects: Object.fromEntries(content.projects.map((item) => [item.id, item.name])),
+  };
+}
+
+/** Rôle/entreprise de chaque expérience du CV de base (revue, tâche 7 fixup point 5) : source de vérité pour `ResumeChanges`. */
+function buildExperienceLabels(content: ResumeContent) {
+  return Object.fromEntries(content.experiences.map((item) => [item.id, { role: item.role, company: item.company }]));
+}
 
 function DetailSkeleton() {
   return (
@@ -47,6 +63,7 @@ export function ResumeDetailPage() {
   const id = params.id ?? '';
   const navigate = useNavigate();
   const resumeQuery = useResume(id);
+  const baseResumeQuery = useBaseResume();
   const updateResume = useUpdateResume(id);
   const deleteResume = useDeleteResume();
 
@@ -64,16 +81,17 @@ export function ResumeDetailPage() {
   const effectiveContent = content ?? resumeQuery.data?.content ?? null;
   const effectiveTemplate = templateOverride ?? resumeQuery.data?.template ?? 'CLASSIC';
 
+  // Choix de modèle **local** (revue, tâche 7 fixup point 7) : persisté avec le
+  // contenu par « Enregistrer » seulement, jamais une version par bascule —
+  // `handleSaveEdits` envoie déjà `effectiveTemplate` avec `effectiveContent`.
   function handleTemplateChange(next: ResumeTemplate): void {
     setTemplateOverride(next);
-    if (resumeQuery.data) {
-      updateResume.mutate({ content: resumeQuery.data.content, template: next });
-    }
   }
 
   function handleSaveEdits(): void {
     if (!effectiveContent) return;
-    const result = resumeContentSchema.safeParse(effectiveContent);
+    const normalized = normalizeResumeContentHighlights(effectiveContent);
+    const result = resumeContentSchema.safeParse(normalized);
     if (!result.success) {
       toast.error('Le contenu du CV est invalide.');
       return;
@@ -124,7 +142,7 @@ export function ResumeDetailPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{resume.title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Adapté à partir de votre profil le {formatDate(resume.createdAt)}
+          Ce CV a été adapté à partir de votre profil le {formatDate(resume.createdAt)}
           {resume.jobTitle &&
             (resume.jobId ? (
               <>
@@ -156,23 +174,24 @@ export function ResumeDetailPage() {
 
         {resume.changes && (
           <TabsContent value="modifications">
-            <ResumeChanges changes={resume.changes} content={resume.content} />
+            <ResumeChanges
+              changes={resume.changes}
+              content={resume.content}
+              experienceLabels={baseResumeQuery.data ? buildExperienceLabels(baseResumeQuery.data.content) : undefined}
+              labels={baseResumeQuery.data ? buildRemovedLabels(baseResumeQuery.data.content) : undefined}
+            />
           </TabsContent>
         )}
 
         <TabsContent value="modifier">
-          {effectiveContent && (
-            <div className="space-y-4">
-              <ResumeEditor content={effectiveContent} onChange={setContent} />
-              <Button type="button" onClick={handleSaveEdits} disabled={updateResume.isPending}>
-                {updateResume.isPending ? 'Enregistrement…' : 'Enregistrer'}
-              </Button>
-            </div>
-          )}
+          {effectiveContent && <ResumeEditor content={effectiveContent} onChange={setContent} />}
         </TabsContent>
       </Tabs>
 
       <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" onClick={handleSaveEdits} disabled={updateResume.isPending || !effectiveContent}>
+          {updateResume.isPending ? 'Enregistrement…' : 'Enregistrer'}
+        </Button>
         {effectiveContent && (
           <DownloadPdfButton
             content={effectiveContent}
