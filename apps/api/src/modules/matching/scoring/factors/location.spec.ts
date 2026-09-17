@@ -19,6 +19,17 @@ describe('scoreLocation', () => {
     const job = baseJob({ communeCode: '57463', departmentCode: '57' });
     const result = scoreLocation(baseProfile(), job, baseRequirements(), NOW);
     expect(result.status).toBe('unknown');
+    expect(result.evidence[0]?.text).toBe("Vous n'avez pas indiqué de lieu souhaité.");
+  });
+
+  it('est unknown avec un message dedie quand un lieu souhaite a ete saisi mais n_est pas reconnu', () => {
+    const profile = baseProfile({ preferredLocationLabels: ['Metz', 'Nancy'] });
+    const job = baseJob({ communeCode: '57463', departmentCode: '57' });
+    const result = scoreLocation(profile, job, baseRequirements(), NOW);
+    expect(result.status).toBe('unknown');
+    expect(result.evidence[0]?.text).toBe(
+      'Vos lieux souhaités (Metz, Nancy) ne sont pas reconnus dans le référentiel des communes.',
+    );
   });
 
   it('vaut 100 quand la commune de l_offre fait partie des lieux souhaites', () => {

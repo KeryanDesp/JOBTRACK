@@ -31,6 +31,11 @@ function canonicalize(profile: ProfileInputs): unknown {
       .sort((a, b) => a.name.localeCompare(b.name) || a.level.localeCompare(b.level)),
     preferredCommuneCodes: sortedStrings(profile.preferredCommuneCodes),
     preferredDepartmentCodes: sortedStrings(profile.preferredDepartmentCodes),
+    // Amendement revue (spec §5, facteur Localisation) : un libellé de lieu souhaité modifié
+    // sans changer la résolution (ex. correction d'une faute de frappe qui reste non reconnue)
+    // doit tout de même invalider un score déjà calculé, pour que l'explication reflète le
+    // libellé actuel plutôt qu'un ancien.
+    preferredLocationLabels: sortedStrings(profile.preferredLocationLabels),
     salaryMin: profile.salaryMin,
     salaryMax: profile.salaryMax,
     contractTypes: sortedStrings(profile.contractTypes),

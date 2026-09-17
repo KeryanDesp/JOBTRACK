@@ -11,11 +11,12 @@ import type {
   JobsCapabilitiesDto,
   MatchScoreSummaryDto,
 } from '@jobtrack/shared';
-import { ANTHROPIC_CLIENT, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RateLimiterService } from '../../common/rate-limiter.service';
 import { rateLimitKey } from '../../common/rate-limit.guard';
 import { RedisService } from '../../common/redis.service';
+import { JobAnalysisService } from '../matching/job-analysis.service';
+import { JOB_ANALYSIS_VERSION } from '../matching/job-analysis.prompt';
 import { ProfileInputsService } from '../matching/profile-inputs.service';
 import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, isConfigured, type JobSourceConnector } from './sources/job-source.connector';
@@ -306,15 +307,16 @@ export class JobsService {
     private readonly rateLimiter: RateLimiterService,
     private readonly syncService: JobSyncService,
     @Inject(JOB_SOURCE_CONNECTORS) private readonly connectors: JobSourceConnector[],
-    // `MatchService`/`JobAnalysisService` (calcul des scores) restent dans le module `matching` :
-    // `JobsService` lit `MatchScore` directement via Prisma (spec §6, tâche 6) plutôt que
-    // d'appeler `MatchService`, pour ne jamais déclencher de recalcul sur une simple recherche —
-    // `ProfileInputsService` (empreinte courante du profil, amendement tâche 5) est en revanche
-    // nécessaire ici pour ne jamais afficher/trier/filtrer un score périmé (`ProfileScoreContext`
-    // ci-dessus). `ANTHROPIC_CLIENT` (fourni globalement par `CommonModule`) ne sert qu'à savoir
-    // si le service IA est configuré (`sync.analysis.notConfigured`) — jamais pour analyser une offre.
+    // `MatchService` (calcul des scores) reste dans le module `matching` : `JobsService` lit
+    // `MatchScore` directement via Prisma (spec §6, tâche 6) plutôt que de l'appeler, pour ne
+    // jamais déclencher de recalcul sur une simple recherche. `ProfileInputsService` (empreinte
+    // courante du profil, amendement tâche 5) est en revanche nécessaire ici pour ne jamais
+    // afficher/trier/filtrer un score périmé (`ProfileScoreContext` ci-dessus).
+    // `JobAnalysisService.isConfigured()` (amendement revue) remplace une injection directe de
+    // `ANTHROPIC_CLIENT` : une seule source de vérité pour « le service IA est-il configuré »,
+    // jamais pour analyser une offre depuis ce service.
     private readonly profileInputsService: ProfileInputsService,
-    @Inject(ANTHROPIC_CLIENT) private readonly anthropicClient: AnthropicClient,
+    private readonly jobAnalysisService: JobAnalysisService,
   ) {}
 
   async search(userId: string, query: JobSearchQuery): Promise<JobListResponseDto> {
@@ -329,11 +331,18 @@ export class JobsService {
       allowSync: () => this.allowImplicitSync(userId),
     });
 
-    // Résolu une seule fois par requête (spec §6) : un utilisateur sans profil, ou dont le
-    // profil est incomplet, n'a jamais d'empreinte — `fingerprint: null` désactive silencieusement
-    // la jointure et les onglets/tris dépendants plutôt que d'échouer. Une ligne `MatchScore`
-    // dont l'empreinte stockée diverge de celle-ci est traitée comme non évaluée (§3) : jamais
-    // affichée, triée ou comptée dans les onglets « Pour vous »/« Forte priorité ».
+    // Résolu une seule fois par requête (spec §6), via `ProfileInputsService.build` plutôt qu'une
+    // simple lecture de `Profile.id` : construire les entrées complètes du profil est le seul
+    // moyen d'obtenir son empreinte courante (`fingerprint.ts`), nécessaire pour ne jamais
+    // afficher/trier/filtrer une ligne `MatchScore` périmée (voir `ProfileScoreContext`
+    // ci-dessus). Coût accepté et documenté : quelques lectures Prisma indexées par `profileId`
+    // (profil + ses collections, cf. `ProfileInputsService.build`), sur une seule offre par
+    // requête `GET /jobs` — jamais un recalcul de score (aucun appel à `scoreJob`/Claude ici).
+    // Une mise en cache (Redis, par utilisateur) économiserait ce coût mais exigerait une
+    // invalidation explicite sur chaque écriture du profil (identité, préférences, compétences,
+    // expériences, formations, langues, projets — sept chemins d'écriture distincts,
+    // `profile.controller.ts`/`collections/*.controller.ts`) : différé (hors périmètre tâche 6)
+    // tant que le volume ne le justifie pas.
     const built = await this.profileInputsService.build(userId);
     const context: ProfileScoreContext = { profileId: built?.profileId ?? null, fingerprint: built?.fingerprint ?? null };
 
@@ -365,7 +374,7 @@ export class JobsService {
     const analyzed = items.filter((item) => item.match !== null).length;
     const syncWithAnalysis: JobSyncInfoDto = {
       ...sync,
-      analysis: { analyzed, total: items.length, notConfigured: !this.aiConfigured() },
+      analysis: { analyzed, total: items.length, notConfigured: !this.jobAnalysisService.isConfigured() },
     };
 
     return { items, total, page: query.page, pageSize: PAGE_SIZE, sync: syncWithAnalysis };
@@ -446,13 +455,22 @@ export class JobsService {
         return;
       case 'for_you':
         // Onglet « Pour vous » (spec §2, §6) : offres dont le score de CE profil, à l'empreinte
-        // courante, atteint le seuil. Sans profil (ou empreinte périmée), le filtre écarte tout
-        // plutôt que de risquer un `where` Prisma sur un `profileId` `null` (colonne non nullable).
+        // et à la version d'analyse courantes, atteint le seuil. Sans profil (ou empreinte
+        // périmée), le filtre écarte tout plutôt que de risquer un `where` Prisma sur un
+        // `profileId` `null` (colonne non nullable). `analysisVersion` exclut une ligne
+        // calculée sur des exigences d'une version antérieure du prompt/schéma (amendement
+        // revue, même raison que `profileFingerprint`) : un score potentiellement obsolète ne
+        // doit jamais faire entrer une offre dans cet onglet.
         and.push(
           context.profileId && context.fingerprint
             ? {
                 matches: {
-                  some: { profileId: context.profileId, profileFingerprint: context.fingerprint, score: { gte: FOR_YOU_MIN_SCORE } },
+                  some: {
+                    profileId: context.profileId,
+                    profileFingerprint: context.fingerprint,
+                    analysisVersion: JOB_ANALYSIS_VERSION,
+                    score: { gte: FOR_YOU_MIN_SCORE },
+                  },
                 },
               }
             : { id: { in: [] } },
@@ -464,7 +482,12 @@ export class JobsService {
           context.profileId && context.fingerprint
             ? {
                 matches: {
-                  some: { profileId: context.profileId, profileFingerprint: context.fingerprint, priority: { in: PRIORITY_TAB_VALUES } },
+                  some: {
+                    profileId: context.profileId,
+                    profileFingerprint: context.fingerprint,
+                    analysisVersion: JOB_ANALYSIS_VERSION,
+                    priority: { in: PRIORITY_TAB_VALUES },
+                  },
                 },
               }
             : { id: { in: [] } },
@@ -500,11 +523,16 @@ export class JobsService {
   /**
    * Tri « Meilleur match »/« Pertinence » (spec §5, §6) : Prisma ne sait pas ordonner par un
    * champ d'une relation filtrée par une valeur dynamique (`MatchScore` d'un seul profil parmi
-   * plusieurs par offre). Classement en deux temps : les `RELEVANCE_CANDIDATE_CAP` offres les
-   * plus récentes correspondant aux filtres (identifiants seuls), puis un tri en mémoire par
-   * score/pertinence décroissant (non évaluées en dernier), fraîcheur puis identifiant en
-   * égalité — enfin la page demandée. Sans profil, aucune offre n'a de score : l'ordre retombe
-   * sur la fraîcheur seule (même ordre que « Plus récentes »), jamais une erreur.
+   * plusieurs par offre). Classement en deux temps, documenté (amendement revue, spec à
+   * modifier en conséquence) : (1) les `RELEVANCE_CANDIDATE_CAP` (500) offres les **plus
+   * récentes** correspondant aux filtres (identifiants seuls, `publishedAt desc`) ; (2) un tri
+   * en mémoire de ces candidates par score/pertinence décroissant (non évaluées en dernier),
+   * fraîcheur puis identifiant en égalité. `total` vaut le nombre de candidates considérées
+   * (jamais le compte réel au-delà du plafond) : une page au-delà de ce total est donc
+   * toujours vide, plutôt que de faire réapparaître des offres non classées. Une offre plus
+   * ancienne que les 500 plus récentes reste trouvable par les autres tris/onglets, mais
+   * jamais par « Meilleur match »/« Pertinence ». Sans profil, aucune offre n'a de score :
+   * l'ordre retombe sur la fraîcheur seule (même ordre que « Plus récentes »), jamais une erreur.
    */
   private async rankByScore(
     where: Prisma.JobWhereInput,
@@ -527,6 +555,7 @@ export class JobsService {
                 where: {
                   profileId: context.profileId,
                   profileFingerprint: context.fingerprint,
+                  analysisVersion: JOB_ANALYSIS_VERSION,
                   jobId: { in: candidates.map((candidate) => candidate.id) },
                 },
                 select: { jobId: true, score: true, relevance: true },
@@ -554,18 +583,20 @@ export class JobsService {
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   }
 
-  /** `MatchScore` de la page pour CE profil, à l'empreinte courante — jamais celui d'un autre
-   * utilisateur, jamais une ligne calculée pour une version périmée du profil (spec §6). */
+  /** `MatchScore` de la page pour CE profil, à l'empreinte et à la version d'analyse courantes
+   * — jamais celui d'un autre utilisateur, jamais une ligne calculée pour un profil ou une
+   * analyse périmés (spec §6). */
   private matchRowsFor(context: ProfileScoreContext, jobIds: string[]): Promise<StoredMatchScoreRow[]> {
     if (!context.profileId || !context.fingerprint || jobIds.length === 0) return Promise.resolve([]);
     return this.prisma.matchScore.findMany({
-      where: { profileId: context.profileId, profileFingerprint: context.fingerprint, jobId: { in: jobIds } },
+      where: {
+        profileId: context.profileId,
+        profileFingerprint: context.fingerprint,
+        analysisVersion: JOB_ANALYSIS_VERSION,
+        jobId: { in: jobIds },
+      },
       select: { jobId: true, score: true, band: true, priority: true, factors: true },
     });
-  }
-
-  private aiConfigured(): boolean {
-    return this.anthropicClient !== null;
   }
 
   /**

@@ -99,14 +99,22 @@ async function preferencesToQuery(
 // même la première réponse de `GET /jobs` (voir `showCapabilitiesNotConfigured`
 // dans `JobsPage`) : mêmes champs qu'un `sync` serveur pour que `SyncBanner`
 // n'ait pas à distinguer les deux origines.
-const NOT_CONFIGURED_SYNC: JobSyncInfoDto = { status: 'not_configured', syncedAt: null, message: null };
+const NOT_CONFIGURED_SYNC: JobSyncInfoDto = {
+  status: 'not_configured',
+  syncedAt: null,
+  message: null,
+  // Aucune offre connue avant la première réponse serveur (amendement revue tâche 6,
+  // `JobSyncInfoDto.analysis` désormais toujours émis) : `0/0`, `notConfigured` repris de
+  // l'état déjà connu côté client (capacités) plutôt que recalculé.
+  analysis: { analyzed: 0, total: 0, notConfigured: true },
+};
 
 /**
  * Sous-titre de la liste (spec §2 : « 13 offres trouvées · 9 analysées »).
  * `analyzed` est un décompte purement local (`items.filter(match !== null).length`,
- * calculé par l'appelant) : le serveur ne renvoie aucun total d'analyse à
- * l'échelle de la page (`JobSyncInfoDto.analysis` reste toujours absent de
- * `GET /jobs` à ce jour), seule `JobCard` sait vraiment ce qui est affiché.
+ * calculé par l'appelant) plutôt que `sync.analysis.analyzed` (serveur) : les deux
+ * comptent la même chose pour la page courante, mais recalculer localement évite toute
+ * dépendance à l'ordre d'arrivée entre la réponse `GET /jobs` et le rendu des cartes.
  */
 function subtitleFor(isPending: boolean, total: number | undefined, analyzed: number): string {
   if (isPending) return 'Recherche en cours…';

@@ -126,7 +126,7 @@ function makeList(overrides: Partial<JobListResponseDto> = {}): JobListResponseD
     total: 0,
     page: 1,
     pageSize: 20,
-    sync: { status: 'ok', syncedAt: null, message: null },
+    sync: { status: 'ok', syncedAt: null, message: null, analysis: { analyzed: 0, total: 0, notConfigured: false } },
     ...overrides,
   };
 }
@@ -201,7 +201,7 @@ describe('JobsPage', () => {
 
   it('affiche le bandeau connecteur non configure', async () => {
     fetchPreferences.mockResolvedValue(EMPTY_PREFS);
-    searchJobs.mockResolvedValue(makeList({ sync: { status: 'not_configured', syncedAt: null, message: null } }));
+    searchJobs.mockResolvedValue(makeList({ sync: { status: 'not_configured', syncedAt: null, message: null, analysis: { analyzed: 0, total: 0, notConfigured: true } } }));
 
     renderPage('/jobs');
 
@@ -210,7 +210,7 @@ describe('JobsPage', () => {
 
   it('affiche le bandeau degrade quand France Travail ne repond pas', async () => {
     fetchPreferences.mockResolvedValue(EMPTY_PREFS);
-    searchJobs.mockResolvedValue(makeList({ sync: { status: 'degraded', syncedAt: null, message: null } }));
+    searchJobs.mockResolvedValue(makeList({ sync: { status: 'degraded', syncedAt: null, message: null, analysis: { analyzed: 0, total: 0, notConfigured: false } } }));
 
     renderPage('/jobs');
 

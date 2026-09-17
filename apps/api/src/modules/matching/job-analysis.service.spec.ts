@@ -471,7 +471,7 @@ describe('JobAnalysisService', () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
-  it('getStatus renvoie `null` pour une offre jamais analysée, le statut sinon', async () => {
+  it('getStatus renvoie `null` pour une offre jamais analysée, le statut et la version sinon', async () => {
     const analyzed = await createJob();
     const untouched = await createJob();
     await prisma.jobAnalysis.create({
@@ -481,7 +481,7 @@ describe('JobAnalysisService', () => {
 
     const statuses = await service.getStatus([analyzed.id, untouched.id]);
 
-    expect(statuses.get(analyzed.id)).toBe('DONE');
+    expect(statuses.get(analyzed.id)).toEqual({ status: 'DONE', version: JOB_ANALYSIS_VERSION });
     expect(statuses.get(untouched.id)).toBeNull();
   });
 

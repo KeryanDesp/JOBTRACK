@@ -15,6 +15,7 @@ export function baseProfile(overrides: Partial<ProfileInputs> = {}): ProfileInpu
     languages: [],
     preferredCommuneCodes: [],
     preferredDepartmentCodes: [],
+    preferredLocationLabels: [],
     salaryMin: null,
     salaryMax: null,
     contractTypes: [],

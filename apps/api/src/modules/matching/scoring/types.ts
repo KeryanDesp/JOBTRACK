@@ -31,6 +31,12 @@ export interface ProfileInputs {
   languages: { name: string; level: LanguageLevel }[];
   preferredCommuneCodes: string[];
   preferredDepartmentCodes: string[];
+  /** Libellés bruts des lieux souhaités (préférences + ville du profil), avant toute résolution
+   * au référentiel des communes (amendement revue, spec §5 — facteur Localisation) : sert
+   * uniquement à distinguer, dans l'explication du facteur, « aucun lieu souhaité indiqué »
+   * d'« un lieu indiqué mais non reconnu dans le référentiel » (faute de frappe, commune absente
+   * du référentiel) — jamais utilisé dans le calcul du score lui-même. */
+  preferredLocationLabels: string[];
   salaryMin: number | null;
   salaryMax: number | null;
   contractTypes: ContractType[];

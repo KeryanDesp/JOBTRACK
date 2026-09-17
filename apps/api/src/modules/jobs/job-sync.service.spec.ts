@@ -141,13 +141,13 @@ function makeService(connector: JobSourceConnector | null, redis: FakeRedis = ne
 }
 
 describe('JobSyncService.ensureFresh', () => {
-  it('renvoie not_configured sans connecteur, sans jamais lever', async () => {
+  it('renvoie not_configured sans connecteur, sans jamais lever, sans message (deja porte par le bandeau client)', async () => {
     const service = makeService(null);
     const result = await service.ensureFresh(buildQuery());
 
     expect(result.status).toBe('not_configured');
     expect(result.syncedAt).toBeNull();
-    expect(result.message).toContain('pas configuré');
+    expect(result.message).toBeNull();
   });
 
   it('un succes total ingere les offres et renvoie ok', async () => {

@@ -53,7 +53,7 @@ function makeList(overrides: Partial<JobListResponseDto> = {}): JobListResponseD
     total: 0,
     page: 1,
     pageSize: 20,
-    sync: { status: 'ok', syncedAt: null, message: null },
+    sync: { status: 'ok', syncedAt: null, message: null, analysis: { analyzed: 0, total: 0, notConfigured: false } },
     ...overrides,
   };
 }

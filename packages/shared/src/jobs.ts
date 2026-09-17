@@ -451,8 +451,10 @@ export interface JobSyncInfoDto {
   status: SyncStatus;
   syncedAt: string | null;
   message: string | null;
-  /** Présent seulement quand la page a demandé une analyse (spec §6, tranche 4). */
-  analysis?: {
+  /** Toujours émis par `GET /jobs` (spec §6, tranche 4, tâche 6 — amendement revue) : décompte
+   * des offres de la page dont `match` est renseigné, jamais optionnel — un client qui affiche
+   * la barre de progression d'analyse n'a pas à distinguer « absent » d'« aucune offre ». */
+  analysis: {
     analyzed: number;
     total: number;
     notConfigured: boolean;

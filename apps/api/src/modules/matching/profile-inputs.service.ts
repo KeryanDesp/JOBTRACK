@@ -112,6 +112,9 @@ export class ProfileInputsService {
       languages: profile.languages.map((language) => ({ name: language.name, level: language.level })),
       preferredCommuneCodes,
       preferredDepartmentCodes,
+      // Libellés bruts (amendement revue, spec §5 — facteur Localisation) : mêmes lieux, avant
+      // résolution, que `rawLocationNames` ci-dessus — jamais retronqués une seconde fois.
+      preferredLocationLabels: rawLocationNames,
       salaryMin: profile.preferences?.salaryMin ?? null,
       salaryMax: profile.preferences?.salaryMax ?? null,
       contractTypes: profile.preferences?.contractTypes ?? [],

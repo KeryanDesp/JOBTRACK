@@ -16,6 +16,7 @@ import { ANTHROPIC_CLIENT } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
 import { SessionService } from '../auth/session.service';
+import { JOB_ANALYSIS_VERSION } from './job-analysis.prompt';
 import { ProfileInputsService } from './profile-inputs.service';
 import { FakeAnthropicClient, toAnthropicClient } from './testing/fake-anthropic';
 
@@ -266,7 +267,7 @@ async function createMatchScore(
       priority: values.priority,
       factors: { factors: [], explanation: { top: [], weak: [] }, insufficientData: values.score === null },
       profileFingerprint: context.fingerprint,
-      analysisVersion: 1,
+      analysisVersion: JOB_ANALYSIS_VERSION,
       computedAt: new Date(),
     },
   });
@@ -370,6 +371,36 @@ describe('POST /jobs/analyses', () => {
     expect(second.body.scores[jobId]).toEqual(first.body.scores[jobId]);
   });
 
+  it('une analyse DONE a une version anterieure est reanalysee (evolution du prompt/schema)', async () => {
+    const session = await registerUser();
+    await addSkill(session, 'TypeScript');
+    const { id: jobId } = await createAnalyzableJob({ technologies: [{ name: 'TypeScript', required: true }] });
+    // Simule une analyse déjà `DONE`, mais à une version de prompt/schéma antérieure
+    // (`JOB_ANALYSIS_VERSION - 1`) : jamais rejouée pour un `FAILED` à la version courante, mais
+    // une version périmée doit l'être malgré un statut `DONE` (amendement revue).
+    await prisma.jobAnalysis.create({
+      data: {
+        jobId,
+        status: 'DONE',
+        version: JOB_ANALYSIS_VERSION - 1,
+        requirements: { technologies: [], softSkills: [], experienceYearsMin: null, seniority: null, educationLevel: null, educationFields: [], languages: [], remoteMode: null, contractHints: [], mustHaves: [], niceToHaves: [], summary: '' },
+        model: 'fixture-old',
+        inputTokens: 10,
+        outputTokens: 10,
+        analyzedAt: new Date(),
+      },
+    });
+
+    const response = await analyze(session, [jobId]);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body.analyzed).toBe(1); // reanalysee malgre le statut DONE prealable.
+    expect(fake.calls).toBe(1);
+    const row = await prisma.jobAnalysis.findUniqueOrThrow({ where: { jobId } });
+    expect(row.version).toBe(JOB_ANALYSIS_VERSION);
+    expect(row.model).not.toBe('fixture-old');
+  });
+
   it('renvoie 429 des que le budget de 60 analyses/heure est deja epuise', async () => {
     const session = await registerUser();
     await redis.client.set(`ratelimit:job-analysis:user:${session.userId}`, '60', 'EX', 3600);
@@ -400,7 +431,10 @@ describe('POST /jobs/analyses', () => {
     expect(response.body.scores[jobId]?.score).not.toBeNull();
   });
 
-  it('service IA non configure : 503 AI_NOT_CONFIGURED quand une analyse est necessaire', async () => {
+  it('service IA non configure : 200 (jamais 503) meme quand une analyse serait necessaire', async () => {
+    // Amendement revue UX : `POST /jobs/analyses` ne renvoie plus jamais 503 pour un service IA
+    // non configuré (seul `retry` le fait encore) — rien n'est tenté, mais le client reçoit
+    // toujours une réponse exploitable (`notConfigured: true`, offre non analysée).
     const session = await registerUser(unconfiguredApp);
     const jobId = await createPlainJob();
 
@@ -411,8 +445,12 @@ describe('POST /jobs/analyses', () => {
       payload: { jobIds: [jobId] },
     });
 
-    expect(response.statusCode).toBe(503);
-    expect(response.json<{ code: string }>().code).toBe('AI_NOT_CONFIGURED');
+    expect(response.statusCode).toBe(200);
+    const body = response.json<AnalyzeJobsResponseDto>();
+    expect(body.notConfigured).toBe(true);
+    expect(body.analyzed).toBe(0);
+    expect(body.failed).toBe(0);
+    expect(body.scores[jobId]).toBeNull();
     const row = await prisma.jobAnalysis.findUnique({ where: { jobId } });
     expect(row).toBeNull();
   });
@@ -516,6 +554,19 @@ describe('POST /jobs/:id/analyses/retry', () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.json<{ code: string }>().code).toBe('ANALYSIS_NOT_RETRYABLE');
+  });
+
+  it('404 JOB_NOT_FOUND sur une offre inexistante, avant meme le 409 (offre jamais creee)', async () => {
+    const session = await registerUser();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `${BASE}/offre-inexistante/analyses/retry`,
+      headers: authHeaders(session),
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ code: string }>().code).toBe('JOB_NOT_FOUND');
   });
 
   it('le retry partage le meme budget que POST /jobs/analyses (429 une fois epuise)', async () => {

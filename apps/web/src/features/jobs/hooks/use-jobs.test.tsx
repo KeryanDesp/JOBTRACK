@@ -95,7 +95,13 @@ function makeJobDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
 }
 
 function makeList(items: JobSummaryDto[]): JobListResponseDto {
-  return { items, total: items.length, page: 1, pageSize: 20, sync: { status: 'ok', syncedAt: null, message: null } };
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    pageSize: 20,
+    sync: { status: 'ok', syncedAt: null, message: null, analysis: { analyzed: 0, total: items.length, notConfigured: false } },
+  };
 }
 
 function makeClient(): QueryClient {

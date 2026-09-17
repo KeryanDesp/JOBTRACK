@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { Prisma, type JobAnalysis, type JobAnalysisStatus } from '@prisma/client';
@@ -57,6 +57,14 @@ export interface JobAnalysisManyResult {
   failed: number;
   skipped: number;
   pending: number;
+}
+
+/** Statut et version d'une analyse (`getStatus`) : la version seule dit si un `DONE`/`FAILED`
+ * date d'avant une évolution du prompt/schéma (`JOB_ANALYSIS_VERSION`), auquel cas il doit être
+ * traité comme périmé malgré son statut. */
+export interface JobAnalysisStatusInfo {
+  status: JobAnalysisStatus;
+  version: number;
 }
 
 // Construit une seule fois : `zodOutputFormat` génère le JSON Schema à l'appel, pas besoin
@@ -246,9 +254,16 @@ export class JobAnalysisService {
   }
 
   /** Relance une analyse en échec ; refuse toute autre statut (déjà `DONE`/`PENDING`, ou
-   * inexistante). Seul appelant à passer `force: true` à `runAnalysis` : la garde ci-dessus
-   * (statut `FAILED` déjà vérifié) est le seul cas où contourner le garde-fou anti-rejeu est sûr. */
+   * inexistante). Une offre elle-même introuvable lève un 404 dédié — vérifié avant la garde
+   * ci-dessous (revue sécurité, tâche 6) : sans cela, une offre qui n'a jamais existé n'a jamais
+   * de ligne `JobAnalysis` non plus, et tombait donc dans le même 409 « non relançable » qu'une
+   * offre bien réelle mais déjà `DONE`/`PENDING` — deux causes distinctes méritant deux réponses
+   * distinctes. Seul appelant à passer `force: true` à `runAnalysis` : la garde `FAILED`
+   * ci-dessous (déjà vérifiée) est le seul cas où contourner le garde-fou anti-rejeu est sûr. */
   async retry(jobId: string): Promise<JobAnalysisOutcome> {
+    const job = await this.prisma.job.findUnique({ where: { id: jobId }, select: { id: true } });
+    if (!job) throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: JOB_NOT_FOUND_MESSAGE });
+
     const existing = await this.prisma.jobAnalysis.findUnique({ where: { jobId } });
     if (!existing || existing.status !== 'FAILED') {
       throw new ConflictException({
@@ -259,15 +274,21 @@ export class JobAnalysisService {
     return this.runAnalysis(jobId, new Date(), true);
   }
 
-  /** Lecture bon marché (projection minimale) : `null` pour une offre jamais analysée. */
-  async getStatus(jobIds: readonly string[]): Promise<Map<string, JobAnalysisStatus | null>> {
+  /**
+   * Lecture bon marché (projection minimale) : `null` pour une offre jamais analysée. Porte
+   * aussi `version` (tâche 6 — amendement revue) : `MatchingController` en a besoin pour
+   * distinguer une analyse `DONE`/`FAILED` à la version courante (jamais recomptée) d'une
+   * analyse à une version antérieure (prompt/schéma évolué depuis, `JOB_ANALYSIS_VERSION`),
+   * qui doit être réanalysée même si son statut est `DONE`.
+   */
+  async getStatus(jobIds: readonly string[]): Promise<Map<string, JobAnalysisStatusInfo | null>> {
     const rows = await this.prisma.jobAnalysis.findMany({
       where: { jobId: { in: [...jobIds] } },
-      select: { jobId: true, status: true },
+      select: { jobId: true, status: true, version: true },
     });
-    const statuses = new Map(rows.map((row): [string, JobAnalysisStatus] => [row.jobId, row.status]));
-    const result = new Map<string, JobAnalysisStatus | null>();
-    for (const jobId of jobIds) result.set(jobId, statuses.get(jobId) ?? null);
+    const infos = new Map(rows.map((row): [string, JobAnalysisStatusInfo] => [row.jobId, { status: row.status, version: row.version }]));
+    const result = new Map<string, JobAnalysisStatusInfo | null>();
+    for (const jobId of jobIds) result.set(jobId, infos.get(jobId) ?? null);
     return result;
   }
 

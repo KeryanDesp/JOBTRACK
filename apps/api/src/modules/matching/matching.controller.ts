@@ -11,7 +11,6 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { JobAnalysisStatus } from '@prisma/client';
 import {
   analyzeJobsSchema,
   type AnalyzeJobsInput,
@@ -24,12 +23,17 @@ import { UserRateLimit, UserRateLimitGuard } from '../../common/user-rate-limit.
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 import type { AuthenticatedRequest } from '../auth/auth.guard';
 import { AiNotConfiguredError, AiUnavailableError } from './job-analysis.errors';
-import { JobAnalysisService, type JobAnalysisOutcomeStatus } from './job-analysis.service';
+import { JOB_ANALYSIS_VERSION } from './job-analysis.prompt';
+import { JobAnalysisService, type JobAnalysisOutcomeStatus, type JobAnalysisStatusInfo } from './job-analysis.service';
 import { MatchService } from './match.service';
 
 /** Nom partagé par le budget compté manuellement (`POST /jobs/analyses`, une frappe par offre
  * réellement lancée) et par la garde locale du retry (`@UserRateLimit`, tâche 6) : les deux
- * routes consomment le même budget « 60 analyses / heure / utilisateur » (spec §4). */
+ * routes consomment le même budget « 60 analyses / heure / utilisateur » (spec §4). Une offre
+ * introuvable (`analyze()` renvoie `{status:'failed'}` sans jamais lever) ou dont le verrou
+ * Redis est tenu par un autre appelant (`skipped_pending`) coûte tout de même une frappe : le
+ * budget borne le nombre de tentatives, jamais seulement les appels Claude effectivement
+ * exécutés — c'est un plafond volontairement large plutôt qu'un compteur d'appels réels. */
 const JOB_ANALYSIS_BUCKET = 'job-analysis';
 const JOB_ANALYSIS_RATE_LIMIT = { limit: 60, windowSeconds: 3600 } as const;
 
@@ -38,12 +42,18 @@ const AI_NOT_CONFIGURED_MESSAGE = "L'analyse des offres nécessite le service IA
 const AI_UNAVAILABLE_MESSAGE = 'Le service IA ne répond pas. Réessayez.';
 const JOB_NOT_FOUND_MESSAGE = 'Offre introuvable.';
 
-/** Une offre déjà `DONE` (à la version courante, vérifiée par `JobAnalysisService` lui-même) ne
- * compte jamais sur le budget : c'est le seul statut qui n'a jamais besoin d'un nouvel appel
- * Claude. Un `FAILED` (jamais rejoué automatiquement) ni une offre inconnue ne comptent pas non
- * plus contre le budget de cet appel-ci : seule une relance explicite (`retry`) les concerne. */
-function needsAnalysis(status: JobAnalysisStatus | null): boolean {
-  return status === null || status === 'PENDING';
+/**
+ * Une offre déjà `DONE` **à la version courante** ne compte jamais sur le budget : c'est le seul
+ * cas qui n'a jamais besoin d'un nouvel appel Claude. Une offre jamais analysée, `PENDING`
+ * (fraîcheur vérifiée par `JobAnalysisService` lui-même), ou `DONE`/`FAILED` à une version
+ * antérieure (évolution du prompt/schéma, `JOB_ANALYSIS_VERSION`) est réanalysée — un `FAILED`
+ * n'est en revanche jamais rejoué automatiquement à la version courante : seule une relance
+ * explicite (`retry`) le concerne.
+ */
+function needsAnalysis(info: JobAnalysisStatusInfo | null): boolean {
+  if (!info) return true;
+  if (info.version !== JOB_ANALYSIS_VERSION) return true;
+  return info.status === 'PENDING';
 }
 
 /**
@@ -74,9 +84,7 @@ export class MatchingController {
     let failed = 0;
     let pending = 0;
 
-    if (needed.length > 0) {
-      if (!this.jobAnalysis.isConfigured()) throw this.aiNotConfigured();
-
+    if (needed.length > 0 && this.jobAnalysis.isConfigured()) {
       // Décompte manuel, une frappe par offre réellement candidate à l'analyse (spec §4, §8) :
       // s'arrête dès que le budget est épuisé, les offres restantes ne sont jamais tentées.
       const key = rateLimitKey(JOB_ANALYSIS_BUCKET, `user:${userId}`);
@@ -93,16 +101,24 @@ export class MatchingController {
         const outcome = await this.jobAnalysis.analyzeMany(launched);
         analyzed = outcome.done;
         failed = outcome.failed;
-        // `outcome.skipped` (déjà `DONE`/`FAILED`) ne peut pas survenir ici (`needed` les exclut
-        // déjà) : seul `outcome.pending` (verrou tenu ailleurs, `PENDING` frais) s'ajoute aux
-        // offres jamais lancées faute de budget, toutes deux « en attente » du point de vue de
-        // l'appelant.
+        // `outcome.skipped` (déjà `DONE`/`FAILED` à la version courante) ne peut pas survenir
+        // ici (`needed` les exclut déjà) : seul `outcome.pending` (verrou tenu ailleurs,
+        // `PENDING` frais) s'ajoute aux offres jamais lancées faute de budget, toutes deux
+        // « en attente » du point de vue de l'appelant.
         pending = outcome.pending + (needed.length - launched.length);
       } catch (error) {
-        if (error instanceof AiNotConfiguredError) throw this.aiNotConfigured();
         if (error instanceof AiUnavailableError) throw this.aiUnavailable();
-        throw error;
+        // Le service devient indisponible en cours d'appel (ex. clé révoquée entre le contrôle
+        // ci-dessus et cet appel) : jamais un 503 sur cette route (seul `retry` le renvoie,
+        // amendement revue UX) — les offres de ce lot restent simplement « en attente ».
+        if (!(error instanceof AiNotConfiguredError)) throw error;
+        pending += launched.length + (needed.length - launched.length);
       }
+    } else if (needed.length > 0) {
+      // Service IA non configuré : rien n'est tenté, jamais un 503 ici (amendement revue UX) —
+      // le client doit tout de même recevoir les scores déjà disponibles (offres partagées déjà
+      // analysées par un autre utilisateur) ci-dessous, `notConfigured: true` portant l'état.
+      pending = needed.length;
     }
 
     const { scores, profileComplete } = await this.matchService.ensureScores(userId, body.jobIds);
