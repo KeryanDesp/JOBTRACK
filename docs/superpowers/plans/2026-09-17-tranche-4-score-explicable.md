@@ -99,7 +99,10 @@
 ### Task 1 — amendement après exécution (`2a310ca`, approuvé)
 Conforme à la spec §3 (`relevance Int?` inclus). Migration `20260917001228_job_analysis_and_match_score`. Suites inchangées (api 363 + 115).
 
-### Task 2 — note d'exécution (`6af9a39` + pont `9900ce7`, revue en cours)
+### Task 2 — amendement après revue (`6af9a39` + pont `9900ce7` + correctif `4d05431`)
+Revue : contrat conforme (§4/§5/§6), `zodOutputFormat` compatible (constaté : le SDK rétrograde `enum`/`maxItems`/`maxLength` en simples descriptions, non appliquées par l'API — d'où l'importance de la tolérance côté v3). Corrigé : une liste non-tableau (`null`) renvoyée par le modèle faisait échouer toute l'analyse → traitée comme `[]` ; une `category` inconnue supprimait la technologie (y compris exigée) → `'other'`, ligne conservée ; `experienceYearsMin` vide → `null` (plus `0`) ; `level` de langue via l'assistant tolérant (plus de `as`) ; `MATCH_ANALYSIS_STATUSES` exporté ; seuils testés ; côté API, `switch` exhaustifs sur `sort`/`tab` (les nouveaux tris/onglets retombent explicitement sur la récence jusqu'à la tâche 6) ; ordre des espaces réservés du tri et test dédié. `analyzeJobsSchema` garde des ids `min(1).max(64)` (plus strict que le « cuid » du plan). shared 141 → 182.
+
+Note d'exécution initiale :
 Contrat livré (28 tests `matching`, 8 tests `jobs`) ; `JobSummaryDto.match` devient obligatoire (`| null`) → le pont `9900ce7` renseigne `match: null` côté API (rempli en tâche 6) et filtre côté web les onglets/tris désormais présents dans `JOB_TABS`/`JOB_SORT_OPTIONS` mais encore rendus comme espaces réservés désactivés (valeurs alignées sur le contrat : `for_you`, `priority`, `match`, `relevance`) — la tâche 8 retire ces espaces réservés. shared 141 → 178.
 
 ---
