@@ -1,0 +1,18 @@
+{
+  "technologies": [
+    { "name": "TypeScript", "required": true, "category": "language" },
+    { "name": "NestJS", "required": true, "category": "framework" },
+    { "name": "PostgreSQL", "required": false, "category": "database" }
+  ],
+  "softSkills": [],
+  "experienceYearsMin": 5,
+  "seniority": "senior",
+  "educationLevel": "bac5",
+  "educationFields": ["Informatique"],
+  "languages": [{ "name": "Anglais", "level": null, "required": false }],
+  "remoteMode": null,
+  "contractHints": ["CDI"],
+  "mustHaves": ["Maîtrise de TypeScript et NestJS"],
+  "niceToHaves": ["Connaissance de PostgreSQL"],
+  "summary": "Poste d'ingénieur logiciel senior chez Solaris Ingénierie à Metz, pour concevoir des services backend et accompagner des développeurs juniors."
+}
