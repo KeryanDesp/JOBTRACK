@@ -95,6 +95,8 @@ export function toSummaryDto(job: JobSummaryRow): JobSummaryDto {
     skills: job.skills.map((skill) => skill.name),
     sources: [...new Set(job.sources.map((source) => source.source))],
     saved: job.savedBy.length > 0,
+    // Score de correspondance : renseigné par le module `matching` (tranche 4, tâche 6).
+    match: null,
   };
 }
 
@@ -153,6 +155,8 @@ function toDetailDto(job: JobDetailRow): JobDetailDto {
     publishedAt: job.publishedAt.toISOString(),
     expiredAt: job.expiredAt ? job.expiredAt.toISOString() : null,
     saved: job.savedBy.length > 0,
+    // Score de correspondance : renseigné par le module `matching` (tranche 4, tâche 6).
+    match: null,
     description: job.description,
     companyDescription: job.companyDescription,
     companyUrl: job.companyUrl,

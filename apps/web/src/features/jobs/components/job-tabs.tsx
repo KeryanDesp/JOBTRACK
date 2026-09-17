@@ -14,8 +14,8 @@ interface JobTabsProps {
  * donnée simulée derrière eux, seulement l'info-bulle qui explique pourquoi.
  */
 const DISABLED_TABS = [
-  { value: 'for-you', label: 'Pour vous' },
-  { value: 'high-priority', label: 'Forte priorité' },
+  { value: 'for_you', label: 'Pour vous' },
+  { value: 'priority', label: 'Forte priorité' },
 ] as const;
 
 const DISABLED_HINT = 'Disponible avec le score (tranche 4)';
@@ -45,7 +45,7 @@ export function JobTabs({ value, onChange }: JobTabsProps) {
   return (
     <Tabs value={value} onValueChange={(next) => onChange(next as JobTab)}>
       <TabsList>
-        {JOB_TABS.map((tab) => (
+        {JOB_TABS.filter((tab) => !DISABLED_TABS.some((d) => d.value === tab.value)).map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value}>
             {tab.label}
           </TabsTrigger>
