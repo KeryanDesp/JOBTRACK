@@ -417,7 +417,7 @@ describe('groundLetter', () => {
     // `stripControlChars` reduit ce sujet a une chaine vide, qui viole `coverLetterContentSchema`
     // (`subject` requis, `.min(1)` implicite via l_absence de valeur par defaut) — doit toujours
     // remonter en `AiOutputInvalidError` (502), jamais en `ZodError` (500).
-    const letter = { ...baseLetter(['Paragraphe ancre chez Solaris Ingénierie.']), subject: '  ' };
+    const letter = { ...baseLetter(['Paragraphe ancre chez Solaris Ingénierie.']), subject: '\u0000\u0000' };
     expect(() => groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL')).toThrow(
       AiOutputInvalidError,
     );

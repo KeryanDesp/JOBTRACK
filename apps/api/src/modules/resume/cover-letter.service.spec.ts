@@ -317,14 +317,14 @@ describe('CoverLetterService', () => {
   });
 
   it('sujet compose uniquement de caracteres de controle (non vide, donc jamais retenu par callClaude) : AiOutputInvalidError une fois nettoye (revue securite)', async () => {
-    // `  ` (longueur 2) passe `coverLetterContentSchema.safeParse` dans `callClaude`
+    // `\u0000\u0000` (longueur 2) passe `coverLetterContentSchema.safeParse` dans `callClaude`
     // (`.trim()` ne retire pas les caracteres de controle) ; c_est seulement une fois nettoye par
     // `stripControlChars`, dans `groundLetter`, que `subject` devient une chaine vide — doit
     // toujours remonter en `AiOutputInvalidError` (502), jamais une `ZodError` brute (500).
     const profile = await createProfile();
     const job = await createJob();
     const fixture = loadLetterFixture();
-    fixture.subject = '  ';
+    fixture.subject = '\u0000\u0000';
     const parse = fakeParse({ parsed_output: fixture });
     const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
