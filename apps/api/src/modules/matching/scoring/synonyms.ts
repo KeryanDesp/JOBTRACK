@@ -17,11 +17,19 @@ export const SYNONYM_GROUPS: readonly (readonly string[])[] = [
   // Langages
   ['javascript', 'js'],
   ['typescript', 'ts'],
-  // Pas de forme brute « c# »/« .net » ici : `normalizeForKey` retirerait leur
-  // seul caractère distinctif (`#`, `.`) et les confondrait avec le langage C
-  // (`normalizeForKey('c#') === 'c'`) — `normalize.ts` les réécrit en toutes
-  // lettres (« csharp », « dotnet ») avant normalisation.
-  ['csharp', 'dotnet'],
+  // Pas de forme brute « c# »/« c++ »/« .net » ici : `normalizeForKey`
+  // retirerait leur seul caractère distinctif (`#`, `+`, `.`) et les
+  // confondrait avec le langage C (`normalizeForKey('c#') === 'c'`) —
+  // `normalize.ts` les réécrit en toutes lettres (« csharp », « cplusplus »,
+  // « dotnet ») avant normalisation. C# et .NET restent deux groupes
+  // distincts : le premier est un langage, le second une plateforme — les
+  // confondre masquerait une compétence VB.NET ou F# sans C#, par exemple.
+  ['cplusplus'],
+  ['csharp', 'c sharp'],
+  // « dotnet core » et « aspdotnet » sont les formes obtenues après
+  // prétraitement de « .NET Core » et « ASP.NET » (le point de « .net » est
+  // réécrit en toutes lettres sans espace ajouté).
+  ['dotnet', 'dotnet core', 'aspdotnet'],
   ['python'],
   ['java'],
   ['php'],
@@ -86,7 +94,33 @@ export const SYNONYM_GROUPS: readonly (readonly string[])[] = [
   // Bureautique et divers
   ['excel'],
   ['power bi', 'powerbi'],
-  ['tableau'],
+  // Pas de forme brute « tableau » : c'est aussi le mot français ordinaire
+  // (« tableau de bord », « tableau Excel »…) — ne matcher que les formes
+  // désignant explicitement le logiciel Tableau.
+  ['tableau software', 'tableau desktop'],
   ['sap'],
   ['salesforce'],
+  ['vba'],
+
+  // Conception assistée par ordinateur
+  ['autocad'],
+  ['solidworks'],
+  ['catia'],
+
+  // Langages et frameworks additionnels
+  ['swift'],
+  ['kotlin'],
+  ['ruby', 'ruby on rails', 'rails'],
+  ['scala'],
+  ['jquery'],
+
+  // Outils additionnels
+  ['jenkins'],
+  ['elasticsearch'],
+  ['sql server', 'sqlserver', 'mssql'],
+  ['oracle'],
+  ['wordpress'],
+  ['photoshop'],
+  ['jest'],
+  ['cypress'],
 ];

@@ -32,9 +32,14 @@ function formatYears(years: number): string {
 /**
  * Facteur Expérience (poids 15, spec §5) : compare les années d'expérience du
  * profil aux années exigées par l'offre. `experienceRequired === false`
- * (« Débutant accepté ») vaut toujours 100, avant toute autre règle. `unknown`
- * seulement quand ni le profil ni l'offre ne portent d'information
- * d'expérience.
+ * (« Débutant accepté ») vaut toujours 100, avant toute autre règle.
+ *
+ * Contrat `unknown` : un profil vide — aucune expérience renseignée *et*
+ * `experienceYears` absent ou à 0 — est traité comme une absence de donnée
+ * dès lors que l'offre n'exige rien non plus. `experienceYears === 0` ne
+ * distingue pas « profil jamais rempli » de « zéro année déclarée » ; sans
+ * exigence en face pour trancher, on ne peut pas en tirer un score fiable
+ * (jamais de 100 par défaut pour un profil simplement vide).
  */
 export function scoreExperience(profile: ProfileInputs, job: JobInputs, requirements: JobRequirements, now: Date): MatchFactorDto {
   if (job.experienceRequired === false) {
@@ -44,7 +49,7 @@ export function scoreExperience(profile: ProfileInputs, job: JobInputs, requirem
   const required = requiredYears(job, requirements);
   const actual = actualYears(profile, now);
 
-  if (required === null && actual === null) {
+  if (required === null && (actual === null || actual === 0)) {
     return unknownFactor('experience', "Aucune information d'expérience n'est disponible.");
   }
 

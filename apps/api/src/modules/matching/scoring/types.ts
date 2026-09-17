@@ -1,3 +1,7 @@
+// Import de *types* seulement (effacé à la compilation, aucun `PrismaClient`
+// ni appel base de données ici) : réutiliser ces unions littérales évite de
+// dupliquer, et de laisser diverger, les énumérations déjà partagées par le
+// schéma Prisma et le reste de l'API (module `jobs`, `job-analysis`…).
 import type { ContractType, ExperienceLevel, LanguageLevel, RemoteMode, SkillLevel } from '@prisma/client';
 import type { EducationLevel, MatchBand, MatchFactorDto, MatchPriority } from '@jobtrack/shared';
 

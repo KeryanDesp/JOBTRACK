@@ -60,6 +60,13 @@ describe('scoreExperience', () => {
     expect(result.score).toBe(100);
   });
 
+  it('est unknown quand le profil declare 0 an et que l_offre n_exige rien (profil vide, jamais 100 par defaut)', () => {
+    const profile = baseProfile({ experienceYears: 0 });
+    const result = scoreExperience(profile, baseJob(), baseRequirements(), NOW);
+    expect(result.status).toBe('unknown');
+    expect(result.score).toBeNull();
+  });
+
   it('calcule les annees du profil a partir des experiences quand elles sont renseignees', () => {
     const profile = baseProfile({
       experienceYears: 0,

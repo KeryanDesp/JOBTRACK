@@ -62,7 +62,7 @@ const RAW_NEIGHBOURS: Readonly<Record<string, readonly string[]>> = {
   '51': ['08', '55', '52', '10', '77', '02'],
   '52': ['51', '55', '88', '70', '21', '10'],
   '53': ['50', '61', '72', '49', '44', '35'],
-  '54': ['57', '55', '88'],
+  '54': ['57', '55', '88', '67'],
   '55': ['08', '51', '52', '88', '54'],
   '56': ['29', '22', '35', '44'],
   '57': ['54', '67', '88'],
@@ -75,7 +75,7 @@ const RAW_NEIGHBOURS: Readonly<Record<string, readonly string[]>> = {
   '64': ['40', '32', '65'],
   '65': ['64', '32', '31'],
   '66': ['11', '09'],
-  '67': ['57', '88', '68'],
+  '67': ['57', '88', '68', '54'],
   '68': ['88', '70', '90', '67'],
   '69': ['42', '01', '38', '71'],
   '70': ['88', '90', '25', '39', '21', '52', '68'],
@@ -85,7 +85,7 @@ const RAW_NEIGHBOURS: Readonly<Record<string, readonly string[]>> = {
   '74': ['73', '01'],
   '75': ['92', '93', '94'],
   '76': ['27', '80'],
-  '77': ['10', '89', '45', '91', '94', '93', '51', '60'],
+  '77': ['10', '89', '45', '91', '94', '93', '51', '60', '95'],
   '78': ['27', '28', '91', '92', '95'],
   '79': ['85', '49', '86', '16', '17'],
   '80': ['62', '02', '60', '76'],
@@ -103,7 +103,7 @@ const RAW_NEIGHBOURS: Readonly<Record<string, readonly string[]>> = {
   '92': ['75', '78', '95', '93', '94', '91'],
   '93': ['75', '95', '77', '94', '92'],
   '94': ['75', '77', '91', '92', '93'],
-  '95': ['60', '27', '78', '92', '93'],
+  '95': ['60', '27', '78', '92', '93', '77'],
 };
 
 function buildAdjacency(raw: Readonly<Record<string, readonly string[]>>): ReadonlyMap<string, ReadonlySet<string>> {
@@ -130,4 +130,9 @@ const ADJACENCY = buildAdjacency(RAW_NEIGHBOURS);
 export function areNeighbours(a: string, b: string): boolean {
   if (a === b) return false;
   return ADJACENCY.get(a)?.has(b) ?? false;
+}
+
+/** Les 96 codes de département métropolitains connus de la table (pour les tests de couverture). */
+export function listDepartmentCodes(): string[] {
+  return Object.keys(RAW_NEIGHBOURS);
 }

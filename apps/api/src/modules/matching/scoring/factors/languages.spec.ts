@@ -54,4 +54,33 @@ describe('scoreLanguages', () => {
     const result = scoreLanguages(profile, baseJob(), requirements, NOW);
     expect(result.score).toBe(100);
   });
+
+  it('se rabat sur les exigences France Travail (JobRequirement) quand l_analyse n_exige aucune langue', () => {
+    const profile = baseProfile({ languages: [{ name: 'Anglais', level: 'A1' }] });
+    const job = baseJob({ languages: [{ label: 'Anglais', required: true }] });
+    const result = scoreLanguages(profile, job, baseRequirements(), NOW);
+    // Pas de niveau CECRL dans le repli France Travail : la simple presence suffit (seuil A1).
+    expect(result.status).toBe('evaluated');
+    expect(result.score).toBe(100);
+  });
+
+  it('le repli France Travail signale une langue exigee absente du profil', () => {
+    const job = baseJob({ languages: [{ label: 'Allemand', required: true }] });
+    const result = scoreLanguages(baseProfile(), job, baseRequirements(), NOW);
+    expect(result.score).toBe(0);
+  });
+
+  it('ignore les exigences France Travail non requises et reste unknown', () => {
+    const job = baseJob({ languages: [{ label: 'Espagnol', required: false }] });
+    const result = scoreLanguages(baseProfile(), job, baseRequirements(), NOW);
+    expect(result.status).toBe('unknown');
+  });
+
+  it('privilegie les langues de l_analyse sur le repli France Travail quand les deux sont presentes', () => {
+    const profile = baseProfile({ languages: [{ name: 'Anglais', level: 'B2' }] });
+    const job = baseJob({ languages: [{ label: 'Allemand', required: true }] });
+    const requirements = baseRequirements({ languages: [{ name: 'Anglais', level: 'B2', required: true }] });
+    const result = scoreLanguages(profile, job, requirements, NOW);
+    expect(result.score).toBe(100);
+  });
 });

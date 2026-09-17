@@ -11,22 +11,34 @@ export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {
   phd: 'Doctorat',
 };
 
-/** `true` si `key` (déjà passée par `normalizeForKey`) contient l'un des motifs. */
+/**
+ * `true` si `key` (déjà passée par `normalizeForKey`) correspond à l'un des
+ * motifs : un motif à un seul mot (« bac », « cap »…) doit correspondre à un
+ * mot entier de `key` — sinon « handicap » matcherait le motif « cap » — un
+ * motif à plusieurs mots (« sans diplome », « bac 5»…) reste une simple
+ * sous-chaîne, suffisamment spécifique pour ne pas avoir besoin de bornes.
+ */
 function includesAny(key: string, needles: readonly string[]): boolean {
-  return needles.some((needle) => key.includes(needle));
+  const words = key.split(' ');
+  return needles.some((needle) => (needle.includes(' ') ? key.includes(needle) : words.includes(needle)));
 }
 
 /**
  * Motifs de reconnaissance d'un `degree` libre (formulaire « Formation » du
  * profil) vers un `EducationLevel`, testés dans cet ordre : les motifs les
  * plus spécifiques d'abord (« bac 5 » avant « bac »), pour qu'un diplôme
- * « Master » ne retombe jamais sur le niveau générique `bac`.
+ * « Master » ne retombe jamais sur le niveau générique `bac`. « Bac+4 » n'a
+ * pas de palier dédié dans `EDUCATION_LEVELS` : il est rattaché au palier
+ * inférieur le plus proche, `bac3`. Les niveaux RNCP 6 et 7 correspondent
+ * respectivement à une licence (bac3) et un master (bac5) dans la
+ * nomenclature nationale des certifications professionnelles.
  */
 const DEGREE_PATTERNS: readonly { level: EducationLevel; needles: readonly string[] }[] = [
+  { level: 'none', needles: ['cap', 'bep', 'sans diplome'] },
   { level: 'phd', needles: ['doctorat', 'phd'] },
-  { level: 'bac5', needles: ['master', 'ingenieur', 'mba', 'bac 5', 'bac5'] },
-  { level: 'bac3', needles: ['licence', 'bachelor', 'bac 3', 'bac3'] },
-  { level: 'bac2', needles: ['bts', 'dut', 'bac 2', 'bac2'] },
+  { level: 'bac5', needles: ['master', 'ingenieur', 'mba', 'bac 5', 'bac5', 'rncp niveau 7'] },
+  { level: 'bac3', needles: ['licence', 'bachelor', 'bac 3', 'bac3', 'bac 4', 'bac4', 'rncp niveau 6'] },
+  { level: 'bac2', needles: ['bts', 'dut', 'deug', 'bac 2', 'bac2'] },
   { level: 'bac', needles: ['baccalaureat', 'bac'] },
 ];
 

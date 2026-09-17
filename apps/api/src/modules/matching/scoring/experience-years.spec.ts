@@ -62,4 +62,17 @@ describe('computeExperienceYears', () => {
     );
     expect(years).toBe(0);
   });
+
+  it('borne une date de fin future a aujourd_hui, sans gonfler l_experience', () => {
+    const withFutureEnd = computeExperienceYears(
+      [{ startDate: new Date('2024-09-17'), endDate: new Date('2030-09-17'), isCurrent: false }],
+      NOW,
+    );
+    const withTodayEnd = computeExperienceYears(
+      [{ startDate: new Date('2024-09-17'), endDate: NOW, isCurrent: false }],
+      NOW,
+    );
+    expect(withFutureEnd).toBe(withTodayEnd);
+    expect(withFutureEnd).toBeCloseTo(2, 1);
+  });
 });

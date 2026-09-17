@@ -35,6 +35,29 @@ describe('educationLevelFromDegree', () => {
     expect(educationLevelFromDegree('Certificat de plongée')).toBeNull();
   });
 
+  it('reconnait CAP, BEP et sans diplome comme none', () => {
+    expect(educationLevelFromDegree('CAP Cuisine')).toBe('none');
+    expect(educationLevelFromDegree('BEP Vente')).toBe('none');
+    expect(educationLevelFromDegree('Sans diplôme')).toBe('none');
+  });
+
+  it('ne matche pas le motif cap a l_interieur d_un autre mot', () => {
+    expect(educationLevelFromDegree('Formation handicap et inclusion')).toBeNull();
+  });
+
+  it('reconnait DEUG comme bac2', () => {
+    expect(educationLevelFromDegree('DEUG Sciences')).toBe('bac2');
+  });
+
+  it('rattache Bac+4 au palier inferieur le plus proche, bac3', () => {
+    expect(educationLevelFromDegree('Bac+4')).toBe('bac3');
+  });
+
+  it('reconnait les niveaux RNCP 6 et 7 comme bac3 et bac5', () => {
+    expect(educationLevelFromDegree('Titre RNCP niveau 6')).toBe('bac3');
+    expect(educationLevelFromDegree('Titre RNCP niveau 7')).toBe('bac5');
+  });
+
   it('est insensible aux accents et a la casse', () => {
     expect(educationLevelFromDegree('MASTER')).toBe('bac5');
     expect(educationLevelFromDegree('ingénieur')).toBe('bac5');

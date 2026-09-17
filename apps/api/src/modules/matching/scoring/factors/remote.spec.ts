@@ -23,10 +23,12 @@ describe('scoreRemote', () => {
     expect(result.score).toBe(30);
   });
 
-  it('considere un profil sans preference comme compatible avec tout mode', () => {
+  it('est unknown quand le profil n_a indique aucune preference de teletravail, jamais 100 par defaut', () => {
     const requirements = baseRequirements({ remoteMode: 'onsite' });
     const result = scoreRemote(baseProfile(), baseJob(), requirements, NOW);
-    expect(result.score).toBe(100);
+    expect(result.status).toBe('unknown');
+    expect(result.score).toBeNull();
+    expect(result.evidence[0]?.text).toBe("Vous n'avez pas indiqué de préférence de télétravail.");
   });
 
   it('se rabat sur le mode deduit de l_offre (tranche 3) quand l_analyse n_a rien d_explicite', () => {

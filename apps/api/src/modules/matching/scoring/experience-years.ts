@@ -24,11 +24,15 @@ export function computeExperienceYears(
 ): number {
   if (experiences.length === 0) return 0;
 
+  const nowMs = now.getTime();
   const intervals: ExperienceInterval[] = experiences
-    .map((experience) => ({
-      start: experience.startDate.getTime(),
-      end: (experience.isCurrent || experience.endDate === null ? now : experience.endDate).getTime(),
-    }))
+    .map((experience) => {
+      const rawEnd = experience.isCurrent || experience.endDate === null ? now : experience.endDate;
+      // Bornée à `now` : une date de fin future (saisie erronée, horloge
+      // décalée) ne doit jamais gonfler l'expérience au-delà d'aujourd'hui.
+      const end = Math.min(rawEnd.getTime(), nowMs);
+      return { start: experience.startDate.getTime(), end };
+    })
     .filter((interval) => interval.end > interval.start)
     .sort((a, b) => a.start - b.start);
 

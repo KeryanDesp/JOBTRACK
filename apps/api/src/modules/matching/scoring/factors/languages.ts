@@ -52,15 +52,37 @@ function levelIndex(level: LanguageLevel): number {
   return LANGUAGE_LEVEL_ORDER.indexOf(level);
 }
 
+interface RequiredLanguage {
+  name: string;
+  level: LanguageLevelReq | null;
+}
+
 /**
- * Facteur Langues (poids 5, spec §5) : chaque langue exigée par l'analyse est
- * recherchée dans les langues du profil (noms comparés via une petite table
- * d'alias fr/en) — présente au niveau demandé (100), présente en dessous
- * (60), absente (0) — la moyenne des langues exigées donne le score.
- * `unknown` si l'offre n'exige aucune langue.
+ * Langues exigées à évaluer : celles de l'analyse (`requirements.languages`)
+ * si elle en a extrait au moins une, sinon un repli sur les exigences France
+ * Travail brutes (`JobInputs.languages`, `JobRequirement` Prisma de kind
+ * `LANGUAGE`) — même principe de repli que le facteur Compétences. Ces
+ * dernières n'ont pas de niveau CECRL (seulement un libellé et un booléen
+ * `required`) : `level: null` retombe sur le seuil minimal `A1`, donc leur
+ * simple présence dans le profil suffit à satisfaire l'exigence.
  */
-export function scoreLanguages(profile: ProfileInputs, _job: JobInputs, requirements: JobRequirements, _now: Date): MatchFactorDto {
-  const required = requirements.languages.filter((language) => language.required);
+function effectiveRequiredLanguages(job: JobInputs, requirements: JobRequirements): RequiredLanguage[] {
+  const fromAnalysis = requirements.languages.filter((language) => language.required);
+  if (fromAnalysis.length > 0) {
+    return fromAnalysis.map((language) => ({ name: language.name, level: language.level }));
+  }
+  return job.languages.filter((language) => language.required).map((language) => ({ name: language.label, level: null }));
+}
+
+/**
+ * Facteur Langues (poids 5, spec §5) : chaque langue exigée est recherchée
+ * dans les langues du profil (noms comparés via une petite table d'alias
+ * fr/en) — présente au niveau demandé (100), présente en dessous (60),
+ * absente (0) — la moyenne des langues exigées donne le score. `unknown` si
+ * ni l'analyse ni l'offre n'exigent de langue.
+ */
+export function scoreLanguages(profile: ProfileInputs, job: JobInputs, requirements: JobRequirements, _now: Date): MatchFactorDto {
+  const required = effectiveRequiredLanguages(job, requirements);
   if (required.length === 0) {
     return unknownFactor('languages', "L'offre n'indique pas d'exigence de langue.");
   }

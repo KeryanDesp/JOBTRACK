@@ -2,14 +2,30 @@ import { normalizeForKey } from '../../jobs/lib/text';
 import { SYNONYM_GROUPS } from './synonyms';
 
 /**
+ * Retire un numéro de version isolé en fin de chaîne (« Vue 3 » → « Vue »,
+ * « PHP 8 » → « PHP », « Java 11 » → « Java », « Node 20 » → « Node ») avant
+ * toute autre transformation : une compétence versionnée dans un intitulé
+ * libre doit rester équivalente à sa forme non versionnée.
+ */
+function stripTrailingVersion(name: string): string {
+  return name.replace(/\s+\d+(?:\.\d+)?$/, '');
+}
+
+/**
  * Prétraitements ponctuels avant `normalizeForKey`, pour des formes que la
  * normalisation générique (accents/casse/ponctuation) transformerait de façon
- * ambiguë : `normalizeForKey('C#')` vaut `'c'` (le `#` est retiré comme toute
- * ponctuation), ce qui confondrait le langage C# avec le langage C. On
- * réécrit ces formes en toutes lettres avant normalisation.
+ * ambiguë : `normalizeForKey('C#')` et `normalizeForKey('C++')` valent toutes
+ * deux `'c'` (`#` et `+` sont retirés comme toute ponctuation), ce qui
+ * confondrait ces deux langages avec le langage C. On réécrit ces formes en
+ * toutes lettres avant normalisation, pour que `canonicalSkill('C')`,
+ * `canonicalSkill('C#')` et `canonicalSkill('C++')` restent trois clés
+ * distinctes.
  */
 function preprocess(name: string): string {
-  return name.replace(/c#/gi, 'csharp').replace(/\.net/gi, 'dotnet');
+  return stripTrailingVersion(name)
+    .replace(/c\+\+/gi, 'cplusplus')
+    .replace(/c#/gi, 'csharp')
+    .replace(/\.net/gi, 'dotnet');
 }
 
 /**

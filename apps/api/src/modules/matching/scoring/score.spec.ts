@@ -50,39 +50,84 @@ describe('scoreJob', () => {
     expect(result.relevance).toBeNull();
   });
 
-  it('calcule un score quand au moins 50% du poids est evalue, renormalise sur les facteurs evalues', () => {
-    const result = scoreJob(fullyEvaluatedProfile(), fullyEvaluatedJob(), fullyEvaluatedRequirements(), NOW);
-    expect(result.insufficientData).toBe(false);
-    expect(result.score).not.toBeNull();
-    expect(result.score).toBeGreaterThanOrEqual(0);
-    expect(result.score).toBeLessThanOrEqual(100);
-  });
-
-  it('classe en bande EXCELLENT a partir de 85', () => {
-    const result = scoreJob(fullyEvaluatedProfile(), fullyEvaluatedJob(), fullyEvaluatedRequirements(), NOW);
-    expect(result.score).not.toBeNull();
-    if ((result.score ?? 0) >= 85) expect(result.band).toBe('EXCELLENT');
-  });
-
-  it('classe en bande GOOD entre 70 et 84', () => {
-    // Un profil moins bien aligne, mais toujours au-dessus du seuil de 50% de poids evalue.
-    const profile = baseProfile({
-      skills: [{ name: 'React', level: 'ADVANCED' }],
-      experienceYears: 2,
-      educationLevel: 'bac2',
-      preferredDepartmentCodes: ['57'],
-      salaryMin: 40000,
-      contractTypes: ['CDI'],
-    });
-    const job = baseJob({ communeCode: '57463', departmentCode: '57', contractType: 'CDI', salaryMinAnnual: 42000, salaryMaxAnnual: 48000 });
+  it('calcule le score par moyenne ponderee renormalisee : skills 35@100 + experience 15@70 -> 91', () => {
+    // Seuls Competences (35) et Experience (15) sont evalues : poids evalue
+    // exactement 50, la limite du seuil (>= 50 % passe, jamais < 50 %).
+    const profile = baseProfile({ skills: [{ name: 'React', level: 'ADVANCED' }], experienceYears: 2 });
+    const job = baseJob({ publishedAt: NOW });
     const requirements = baseRequirements({
       technologies: [{ name: 'React', required: true, category: 'framework' }],
       experienceYearsMin: 3,
-      educationLevel: 'bac3',
     });
     const result = scoreJob(profile, job, requirements, NOW);
-    expect(result.score).not.toBeNull();
-    expect(result.band).not.toBeNull();
+    // skills : 1 technologie exigee, entierement couverte -> 100.
+    // experience : 3 ans demandes, 2 ans au profil -> il manque 1 an -> 70.
+    // (35*100 + 15*70) / 50 = (3500 + 1050) / 50 = 91.
+    expect(result.insufficientData).toBe(false);
+    expect(result.score).toBe(91);
+    expect(result.band).toBe('EXCELLENT');
+    expect(result.relevance).toBe(91);
+    // >= 85, toutes les technologies exigees couvertes, publiee aujourd'hui.
+    expect(result.priority).toBe('VERY_HIGH');
+  });
+
+  it('classe en bande EXCELLENT quand tous les facteurs evalues valent 100 (score exact 100)', () => {
+    const result = scoreJob(fullyEvaluatedProfile(), fullyEvaluatedJob(), fullyEvaluatedRequirements(), NOW);
+    // Les 8 facteurs sont evalues et valent chacun 100 (competence exigee couverte,
+    // experience suffisante, commune souhaitee, salaire au-dessus de l'attente,
+    // contrat et teletravail souhaites, niveau de formation et langue couverts) :
+    // moyenne ponderee = 100.
+    expect(result.insufficientData).toBe(false);
+    expect(result.score).toBe(100);
+    expect(result.band).toBe('EXCELLENT');
+  });
+
+  it('classe en bande GOOD : skills 35@70 + experience 15@100 + salary 10@75 -> 78', () => {
+    // Un profil partiellement aligne : la technologie souhaitee (AWS) manque,
+    // les autres facteurs (localisation, contrat, teletravail, formation,
+    // langues) restent unknown faute de donnee, mais le poids evalue (60)
+    // reste au-dessus du seuil de 50 %.
+    const profile = baseProfile({ skills: [{ name: 'React', level: 'ADVANCED' }], experienceYears: 5, salaryMin: 40000 });
+    const job = baseJob({ publishedAt: NOW, salaryMinAnnual: 35000, salaryMaxAnnual: 42000 });
+    const requirements = baseRequirements({
+      technologies: [
+        { name: 'React', required: true, category: 'framework' },
+        { name: 'AWS', required: false, category: 'cloud' },
+      ],
+      experienceYearsMin: 3,
+    });
+    const result = scoreJob(profile, job, requirements, NOW);
+    // skills : React exige (couvert) 70 + AWS souhaite (absent) 0 -> 70.
+    // experience : 3 ans demandes, 5 ans au profil -> 100.
+    // salary : le maximum de l'offre (42000) couvre l'attente (40000) mais pas
+    // le minimum (35000) -> 75.
+    // (35*70 + 15*100 + 10*75) / 60 = (2450 + 1500 + 750) / 60 = 4700 / 60 = 78,33 -> 78.
+    expect(result.insufficientData).toBe(false);
+    expect(result.score).toBe(78);
+    expect(result.band).toBe('GOOD');
+  });
+
+  it('explanation.top et explanation.weak contiennent exactement les lignes attendues (cas GOOD a 78)', () => {
+    const profile = baseProfile({ skills: [{ name: 'React', level: 'ADVANCED' }], experienceYears: 5, salaryMin: 40000 });
+    const job = baseJob({ publishedAt: NOW, salaryMinAnnual: 35000, salaryMaxAnnual: 42000 });
+    const requirements = baseRequirements({
+      technologies: [
+        { name: 'React', required: true, category: 'framework' },
+        { name: 'AWS', required: false, category: 'cloud' },
+      ],
+      experienceYearsMin: 3,
+    });
+    const result = scoreJob(profile, job, requirements, NOW);
+    // Ordre par score decroissant : experience (100), salary (75), skills (70),
+    // puis la ligne de fraicheur (offre publiee a l'instant).
+    expect(result.explanation.top).toEqual([
+      '3 an(s) demandé(s), vous en avez 5',
+      "La fourchette de salaire de l'offre couvre partiellement votre attente.",
+      'React correspond',
+      "Publiée aujourd'hui",
+    ]);
+    // Seule ligne warn/missing disponible : AWS souhaite, absent du profil (skills).
+    expect(result.explanation.weak).toEqual(['AWS souhaité, absent de votre profil']);
   });
 
   it('classe en bande WEAK sous 50', () => {
@@ -118,12 +163,6 @@ describe('scoreJob', () => {
     const first = scoreJob(profile, job, requirements, NOW);
     const second = scoreJob(profile, job, requirements, NOW);
     expect(second).toEqual(first);
-  });
-
-  it('renvoie une explication avec des lignes top et weak', () => {
-    const result = scoreJob(fullyEvaluatedProfile(), fullyEvaluatedJob(), fullyEvaluatedRequirements(), NOW);
-    expect(Array.isArray(result.explanation.top)).toBe(true);
-    expect(Array.isArray(result.explanation.weak)).toBe(true);
   });
 
   it('calcule une pertinence quand le score est defini', () => {
