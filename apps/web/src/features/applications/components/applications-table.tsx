@@ -112,7 +112,7 @@ function SourceCell({ application }: { application: ApplicationDto }) {
       aria-label={`Ouvrir l'offre ${application.jobTitle} sur ${label}`}
       className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5"
     >
-      <span className="hidden lg:inline">{label}</span>
+      <span className="hidden xl:inline">{label}</span>
       <ExternalLink aria-hidden="true" className="size-3.5" />
     </a>
   );
@@ -215,7 +215,7 @@ export function ApplicationsTable({
           réduite par cellule (spec §7, revue visuelle tranche 6) — la table
           débordait de ~41 px à 1024 px (colonne Actions rognée) ; combiné au
           sélecteur de statut resserré (`w-36` ci-dessous) et à la disparition
-          du libellé de la colonne Source sous `lg`, elle tient désormais dans
+          du libellé de la colonne Source sous `xl`, elle tient désormais dans
           les ~720 px disponibles à côté du menu latéral. */}
       <div className="hidden md:block [&_[data-slot=table-cell]]:px-1.5 [&_[data-slot=table-head]]:px-1.5">
         {/* `table-fixed` : les largeurs ci-dessous sont respectées et les cellules texte
@@ -225,12 +225,12 @@ export function ApplicationsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Poste</TableHead>
-              <TableHead className="w-[24%]">Entreprise</TableHead>
+              <TableHead className="w-[21%]">Entreprise</TableHead>
               <TableHead className="w-24">Date</TableHead>
-              <TableHead className="hidden lg:table-cell lg:w-[16%]">CV utilisé</TableHead>
-              <TableHead className="w-12 lg:w-28">Source</TableHead>
-              <TableHead className="w-32">Statut</TableHead>
-              <TableHead className="w-16">
+              <TableHead className="hidden xl:table-cell xl:w-[16%]">CV utilisé</TableHead>
+              <TableHead className="w-16 xl:w-28">Source</TableHead>
+              <TableHead className="w-28">Statut</TableHead>
+              <TableHead className="w-20">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
@@ -252,9 +252,9 @@ export function ApplicationsTable({
                   {application.company ?? EMPTY_VALUE}
                 </TableCell>
                 <TableCell className="text-muted-foreground tabular-nums">{formatApplicationDate(application.appliedAt)}</TableCell>
-                {/* Le CV utilisé reste visible dans la fiche et sur les cartes mobiles ; sous `lg`
+                {/* Le CV utilisé reste visible dans la fiche et sur les cartes mobiles ; sous `xl`
                     (≈ 720 px de contenu avec le menu latéral) la colonne ne tient pas. */}
-                <TableCell className="hidden truncate lg:table-cell">
+                <TableCell className="hidden truncate xl:table-cell">
                   <ResumeCell application={application} />
                 </TableCell>
                 <TableCell className="text-muted-foreground">
