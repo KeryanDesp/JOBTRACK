@@ -6,25 +6,17 @@ import {
   isCreateFromJob,
   type ApplicationBoardDto,
   type ApplicationDetailDto,
-  type ApplicationDto,
-  type ApplicationEventDto,
   type ApplicationListQuery,
   type ApplicationListResponseDto,
-  type ApplicationSort,
-  type ApplicationSource,
   type ApplicationStatsDto,
   type ApplicationStatus,
   type CreateApplicationInput,
-  type CreateManualInput,
-  type MatchScoreSummaryDto,
   type MoveApplicationInput,
   type UpdateApplicationInput,
 } from '@jobtrack/shared';
 import { PrismaService } from '../../common/prisma.service';
-import { stripControlChars, type StripControlCharsOptions } from '../../common/text/control-chars';
-import { toMatchSummary } from '../jobs/jobs.service';
-import { JOB_ANALYSIS_VERSION } from '../matching/job-analysis.prompt';
 import { ProfileInputsService } from '../matching/profile-inputs.service';
+import { ApplicationsBoardService } from './applications-board.service';
 import {
   applicationExists,
   applicationNotFound,
@@ -33,30 +25,27 @@ import {
   letterNotFound,
   resumeNotFound,
 } from './applications.errors';
-
-/** Cartes chargées par colonne du Kanban (spec §6 : « 200 cartes max par colonne »). */
-const BOARD_COLUMN_TAKE = 200;
-/** Évènements renvoyés par la fiche de détail, les plus récents d'abord (l'historique d'une
- * candidature est court par nature ; la borne évite qu'une fiche très ancienne devienne
- * lourde à charger). */
-const EVENT_TAKE = 100;
-
-// Bornes du contrat partagé (`applications.ts`) appliquées aussi à l'instantané pris depuis
-// une offre : le titre d'une offre France Travail peut dépasser `jobTitle` (160), et un DTO
-// renvoyé doit toujours rester dans les bornes que le `PATCH` accepterait ensuite.
-const MAX_JOB_TITLE = 160;
-const MAX_COMPANY = 120;
-const MAX_LOCATION_LABEL = 120;
-const MAX_SALARY_LABEL = 80;
-const MAX_CONTRACT_LABEL = 80;
-const MAX_NOTES = 4000;
-const MAX_SOURCE_URL = 500;
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/** Les notes sont le seul champ multi-paragraphes d'une candidature : leurs sauts de ligne
- * sont conservés, les autres caractères de contrôle retirés comme ailleurs. */
-const NOTES_OPTIONS: StripControlCharsOptions = { keepNewlines: true };
+import { parseIsoDate, startOfWeekUtc, todayUtc } from './lib/dates';
+import { APPLICATION_INCLUDE, toApplicationDto } from './lib/dto';
+import { shiftPositionsAfterRemoval } from './lib/positions';
+import { buildOrderBy, escapeLikePattern } from './lib/query';
+import { loadApplicationDetail } from './lib/read';
+import {
+  boundedOptionalText,
+  boundedText,
+  formatSalarySnapshot,
+  isDisplayableHttpUrl,
+  pickSourceUrl,
+  snapshotFromInput,
+  MAX_COMPANY,
+  MAX_CONTRACT_LABEL,
+  MAX_JOB_TITLE,
+  MAX_LOCATION_LABEL,
+  MAX_NOTES,
+  MAX_SALARY_LABEL,
+  NOTES_OPTIONS,
+  type ApplicationSnapshot,
+} from './lib/snapshot';
 
 const EMPTY_BY_STATUS: Record<ApplicationStatus, number> = {
   TO_APPLY: 0,
@@ -66,159 +55,13 @@ const EMPTY_BY_STATUS: Record<ApplicationStatus, number> = {
   REJECTED: 0,
 };
 
-/** Relations exposées par `ApplicationDto` : l'offre (catalogue partagé), le CV adapté et la
- * lettre (tous deux personnels — `userId` sélectionné pour ne jamais rendre la référence d'un
- * autre utilisateur, spec §8). */
-const APPLICATION_INCLUDE = {
-  job: { select: { id: true, title: true, company: true } },
-  resume: { select: { id: true, title: true, currentVersion: true, userId: true } },
-  coverLetter: { select: { id: true, tone: true, userId: true } },
-} satisfies Prisma.ApplicationInclude;
-
-type ApplicationRow = Prisma.ApplicationGetPayload<{ include: typeof APPLICATION_INCLUDE }>;
-type ApplicationEventRow = Prisma.ApplicationEventGetPayload<Record<string, never>>;
-
-/** Instantané figé à la création (spec §5) : jamais mis à jour ensuite, l'offre pouvant
- * expirer ou disparaître du catalogue. */
-interface ApplicationSnapshot {
-  jobId: string | null;
-  jobTitle: string;
-  company: string | null;
-  locationLabel: string | null;
-  salaryLabel: string | null;
-  contractLabel: string | null;
-  source: ApplicationSource;
-  sourceUrl: string | null;
-  notes: string | null;
-}
-
-/** Date calendaire `AAAA-MM-JJ` (jamais d'heure : `appliedAt` est un jour, spec §4). */
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-/** `AAAA-MM-JJ` → minuit UTC. Le format est déjà validé par `isoDateSchema` (contrat partagé). */
-function parseIsoDate(value: string): Date {
-  return new Date(`${value}T00:00:00.000Z`);
-}
-
-/** Minuit UTC du jour courant : valeur de `appliedAt` posée automatiquement (spec §5). */
-function todayUtc(now: Date = new Date()): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
-
-/**
- * Lundi 00:00 de la semaine courante, calculé **en UTC** à partir de la date du jour
- * (`appliedThisWeek`, spec §4). Choix documenté : `appliedAt` est un jour stocké à minuit UTC,
- * jamais un instant — comparer en UTC compare donc deux jours entre eux, sans décalage de
- * fuseau ni surprise au changement d'heure. La semaine commence le lundi (usage français) :
- * `getUTCDay()` renvoie 0 pour dimanche, d'où le `+ 6 % 7`.
- */
-function startOfWeekUtc(now: Date = new Date()): Date {
-  const today = todayUtc(now);
-  const daysSinceMonday = (today.getUTCDay() + 6) % 7;
-  return new Date(today.getTime() - daysSinceMonday * MS_PER_DAY);
-}
-
-/** Texte d'une candidature : caractères de contrôle/bidi retirés (helper commun de l'API,
- * déjà utilisé par l'import de CV et les offres), espaces extérieurs coupés, borne appliquée
- * (spec §5). Le contrat partagé applique déjà ce nettoyage aux corps de requête ; le service
- * le refait pour ses propres entrées (instantané d'une offre, appel direct du service) —
- * jamais de texte non nettoyé écrit en base. `keepNewlines` pour les seules notes, un champ
- * multi-lignes ; tous les autres restent sur une seule ligne affichée. */
-function sanitizeText(value: string, max: number, options: StripControlCharsOptions = {}): string {
-  return stripControlChars(value, options).trim().slice(0, max);
-}
-
-/** Même nettoyage, une chaîne vide (ou absente) devenant `null` : une colonne optionnelle ne
- * porte jamais `''`, qui s'afficherait comme une valeur présente mais vide. */
-function sanitizeOptionalText(
-  value: string | null | undefined,
-  max: number,
-  options: StripControlCharsOptions = {},
-): string | null {
-  if (value === null || value === undefined) return null;
-  const cleaned = sanitizeText(value, max, options);
-  return cleaned === '' ? null : cleaned;
-}
-
-/**
- * Neutralise les métacaractères LIKE/ILIKE (`%`, `_`, `\`) avant un `contains` Prisma — même
- * précaution que `JobsService.buildWhere` : sans elle, `q=%` redeviendrait le joker « tout »
- * plutôt qu'une recherche littérale.
- */
-function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, '\\$&');
-}
-
-/** Lien externe affichable (spec §5) : `http(s)` uniquement, borné — un `javascript:`/`data:`
- * n'est jamais enregistré, même issu d'une source. */
-function isDisplayableHttpUrl(value: string | null | undefined): value is string {
-  if (value === null || value === undefined || value.length > MAX_SOURCE_URL) return false;
-  try {
-    const protocol = new URL(value).protocol;
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-/** Lien de candidature de l'offre : le premier `applyUrl` exploitable, sinon le premier `url`
- * (spec §5), les sources étant fournies de la plus récente à la plus ancienne. */
-function pickSourceUrl(sources: ReadonlyArray<{ applyUrl: string | null; url: string }>): string | null {
-  for (const source of sources) {
-    if (isDisplayableHttpUrl(source.applyUrl)) return source.applyUrl;
-  }
-  for (const source of sources) {
-    if (isDisplayableHttpUrl(source.url)) return source.url;
-  }
-  return null;
-}
-
-/**
- * Salaire de l'instantané : le libellé de l'offre quand elle en porte un, sinon une fourchette
- * reconstruite côté serveur à partir des bornes annuelles — et seulement si les **deux** sont
- * connues (spec §5 : une borne seule ne fait pas une fourchette, la candidature affiche alors
- * « — »).
- */
-function formatSalarySnapshot(minAnnual: number | null, maxAnnual: number | null): string | null {
-  if (minAnnual === null || maxAnnual === null) return null;
-  return `${minAnnual}–${maxAnnual} € brut/an`;
-}
-
-function toEventDto(row: ApplicationEventRow): ApplicationEventDto {
-  return {
-    id: row.id,
-    type: row.type,
-    fromStatus: row.fromStatus,
-    toStatus: row.toStatus,
-    note: row.note,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-/**
- * Tri de la vue table (spec §4/§6). `nulls: 'last'` sur les colonnes optionnelles : une
- * candidature sans date de candidature (« À postuler ») ou sans entreprise ne doit jamais
- * occuper le haut de la liste. Un second critère stable (`updatedAt`, puis `id`) évite qu'une
- * page 2 réordonne des ex æquo déjà affichés en page 1.
- */
-function buildOrderBy(sort: ApplicationSort): Prisma.ApplicationOrderByWithRelationInput[] {
-  switch (sort) {
-    case 'applied_desc':
-      return [{ appliedAt: { sort: 'desc', nulls: 'last' } }, { updatedAt: 'desc' }, { id: 'desc' }];
-    case 'company_asc':
-      return [{ company: { sort: 'asc', nulls: 'last' } }, { jobTitle: 'asc' }, { id: 'desc' }];
-    case 'updated_desc':
-      return [{ updatedAt: 'desc' }, { id: 'desc' }];
-  }
-}
-
 /**
  * Suivi des candidatures (spec §5/§6, tranche 6) : CRUD strictement filtré par `userId`
  * (jamais un `update`/`delete` par seul identifiant), instantané figé de l'offre à la
- * création, historique (`ApplicationEvent`) écrit dans la même transaction que la
- * modification qui le justifie, et réindexation transactionnelle des colonnes du Kanban.
+ * création, et historique (`ApplicationEvent`) écrit dans la même transaction que la
+ * modification qui le justifie. Le Kanban et les déplacements de cartes vivent dans
+ * `ApplicationsBoardService`, à qui les deux routes correspondantes sont simplement
+ * transmises — le contrôleur ne connaît qu'un service.
  *
  * Journaux : identifiants et statuts seulement — jamais une note, un titre de poste ni un nom
  * d'entreprise (spec §5/§8).
@@ -230,6 +73,7 @@ export class ApplicationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly profileInputs: ProfileInputsService,
+    private readonly boardService: ApplicationsBoardService,
   ) {}
 
   /** Vue table (spec §6) : onglet → statut, recherche insensible à la casse sur le poste et
@@ -253,7 +97,7 @@ export class ApplicationsService {
     // lire coûterait une lecture de profil + une jointure `MatchScore` par page. Le Kanban
     // (`board`) et la fiche (`get`), qui l'affichent, le renseignent.
     return {
-      items: rows.map((row) => this.toDto(userId, row, null)),
+      items: rows.map((row) => toApplicationDto(userId, row, null)),
       page: query.page,
       limit: query.limit,
       total,
@@ -283,39 +127,14 @@ export class ApplicationsService {
     return { total, byStatus, appliedThisWeek, interviewRate };
   }
 
-  /** Kanban (spec §6) : les cinq colonnes, toujours présentes même vides, triées par
-   * `position` puis par ancienneté pour départager deux positions égales (jamais un ordre
-   * indéterminé après une écriture concurrente). */
-  async board(userId: string): Promise<ApplicationBoardDto> {
-    const perStatus = await Promise.all(
-      APPLICATION_STATUSES.map((status) =>
-        this.prisma.application.findMany({
-          where: { userId, status },
-          include: APPLICATION_INCLUDE,
-          orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
-          take: BOARD_COLUMN_TAKE,
-        }),
-      ),
-    );
+  /** Kanban (spec §6) — `ApplicationsBoardService`. */
+  board(userId: string): Promise<ApplicationBoardDto> {
+    return this.boardService.board(userId);
+  }
 
-    const rows = perStatus.flat();
-    const matches = await this.loadMatchSummaries(
-      userId,
-      rows.flatMap((row) => (row.jobId === null ? [] : [row.jobId])),
-    );
-
-    const columns: Record<ApplicationStatus, ApplicationDto[]> = {
-      TO_APPLY: [],
-      APPLIED: [],
-      INTERVIEW: [],
-      OFFER: [],
-      REJECTED: [],
-    };
-    APPLICATION_STATUSES.forEach((status, index) => {
-      columns[status] = (perStatus[index] ?? []).map((row) => this.toDto(userId, row, this.matchOf(matches, row)));
-    });
-
-    return { columns };
+  /** Déplacement d'une carte du Kanban (spec §6) — `ApplicationsBoardService`. */
+  move(userId: string, id: string, input: MoveApplicationInput): Promise<ApplicationDetailDto> {
+    return this.boardService.move(userId, id, input);
   }
 
   /**
@@ -329,20 +148,21 @@ export class ApplicationsService {
     this.assertCvExclusivity(input.usedBaseResume, resumeId);
     await this.assertOwnedDocuments(userId, resumeId, coverLetterId);
 
-    const snapshot = isCreateFromJob(input)
-      ? await this.snapshotFromJob(input.jobId)
-      : this.snapshotFromInput(input);
+    const snapshot = isCreateFromJob(input) ? await this.snapshotFromJob(input.jobId) : snapshotFromInput(input);
 
     const status = input.status;
     // `appliedAt` explicite s'il est fourni, sinon le jour courant dès que le statut initial
     // n'est plus « À postuler » (spec §5) — une candidature déjà envoyée porte toujours une date.
     const appliedAt =
       input.appliedAt != null ? parseIsoDate(input.appliedAt) : status === 'TO_APPLY' ? null : todayUtc();
-    // Ajout en fin de colonne : la nouvelle carte apparaît sous les existantes du Kanban.
-    const position = await this.prisma.application.count({ where: { userId, status } });
 
     try {
       const created = await this.prisma.$transaction(async (tx) => {
+        // Comptage **dans** la transaction : la position d'ajout est lue et écrite d'un seul
+        // tenant. Le décalage que permettait un comptage antérieur restait cosmétique (le
+        // Kanban départage deux positions égales par ancienneté), mais rien ne justifie de
+        // laisser une lecture hors transaction décider d'une écriture.
+        const position = await tx.application.count({ where: { userId, status } });
         const row = await tx.application.create({
           data: {
             userId,
@@ -369,31 +189,17 @@ export class ApplicationsService {
     }
   }
 
-  /** Fiche de détail (spec §6) : historique antéchronologique, référence d'offre (avec le
-   * score de correspondance de CET utilisateur, `null` s'il n'en a pas), CV et lettre. */
-  async get(userId: string, id: string): Promise<ApplicationDetailDto> {
-    const row = await this.prisma.application.findFirst({ where: { id, userId }, include: APPLICATION_INCLUDE });
-    if (!row) throw applicationNotFound();
-
-    const [events, matches] = await Promise.all([
-      this.prisma.applicationEvent.findMany({
-        where: { applicationId: row.id },
-        // `id` en second critère : deux évènements écrits dans la même transaction (changement
-        // de statut + notes) partagent la même milliseconde, leur ordre doit rester stable.
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: EVENT_TAKE,
-      }),
-      this.loadMatchSummaries(userId, row.jobId === null ? [] : [row.jobId]),
-    ]);
-
-    return { ...this.toDto(userId, row, this.matchOf(matches, row)), events: events.map(toEventDto) };
+  /** Fiche de détail (spec §6). */
+  get(userId: string, id: string): Promise<ApplicationDetailDto> {
+    return loadApplicationDetail(this.prisma, this.profileInputs, userId, id);
   }
 
   /**
    * Modification de la fiche (spec §6) : écriture filtrée par `userId` (`updateMany`, jamais
    * un `update` par seul identifiant) et évènements d'historique écrits dans la même
    * transaction. Un changement de statut depuis la fiche ou la table ajoute la carte **en fin**
-   * de la colonne cible — seul `move` (Kanban) choisit une position précise.
+   * de la colonne cible — seul `move` (Kanban) choisit une position précise — et referme la
+   * colonne d'origine derrière elle, pour que ses positions restent une suite sans trou.
    */
   async update(userId: string, id: string, input: UpdateApplicationInput): Promise<ApplicationDetailDto> {
     const current = await this.prisma.application.findFirst({ where: { id, userId } });
@@ -409,7 +215,6 @@ export class ApplicationsService {
     const statusChanged = nextStatus !== current.status;
     if (statusChanged) {
       data.status = nextStatus;
-      data.position = await this.prisma.application.count({ where: { userId, status: nextStatus } });
       events.push({ applicationId: id, type: 'STATUS_CHANGED', fromStatus: current.status, toStatus: nextStatus });
     }
 
@@ -425,8 +230,13 @@ export class ApplicationsService {
     this.applySnapshotChanges(input, data);
 
     await this.prisma.$transaction(async (tx) => {
+      // Position de fin de colonne cible comptée dans la transaction, comme à la création.
+      if (statusChanged) data.position = await tx.application.count({ where: { userId, status: nextStatus } });
       const updated = await tx.application.updateMany({ where: { id, userId }, data });
       if (updated.count === 0) throw applicationNotFound();
+      // La carte a quitté sa colonne : les suivantes remontent d'un cran (écriture ensembliste,
+      // une seule requête quelle que soit la taille de la colonne).
+      if (statusChanged) await shiftPositionsAfterRemoval(tx, userId, current.status, current.position);
       if (events.length > 0) await tx.applicationEvent.createMany({ data: events });
     });
 
@@ -436,73 +246,21 @@ export class ApplicationsService {
     return this.get(userId, id);
   }
 
-  /**
-   * Déplacement Kanban (spec §5/§6) : tout se joue dans une seule transaction — retrait de la
-   * colonne source (réindexée `0..n-1`), insertion à la position demandée (bornée à la taille
-   * de la colonne cible), réindexation `0..n-1` de la cible. Les positions restent donc
-   * toujours une suite continue sans trou ni doublon, quelle que soit la valeur envoyée.
-   */
-  async move(userId: string, id: string, input: MoveApplicationInput): Promise<ApplicationDetailDto> {
-    const fromStatus = await this.prisma.$transaction(async (tx) => {
+  /** Suppression (évènements en cascade, spec §5) : 404 plutôt que 204 sur une seconde
+   * suppression, et jamais un 403 sur la candidature d'un autre utilisateur. La colonne se
+   * referme derrière la carte, comme pour un déplacement. */
+  async remove(userId: string, id: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
       const current = await tx.application.findFirst({
         where: { id, userId },
-        select: { id: true, status: true, appliedAt: true },
+        select: { status: true, position: true },
       });
       if (!current) throw applicationNotFound();
 
-      const sameColumn = current.status === input.status;
-      const orderBy: Prisma.ApplicationOrderByWithRelationInput[] = [{ position: 'asc' }, { createdAt: 'asc' }];
-      // La carte déplacée est toujours retirée des deux listes avant réinsertion : elle n'y
-      // apparaît jamais deux fois, même dans un déplacement à l'intérieur de sa colonne.
-      const sourceIds = await tx.application
-        .findMany({ where: { userId, status: current.status, id: { not: id } }, orderBy, select: { id: true } })
-        .then((rows) => rows.map((row) => row.id));
-      const targetIds = sameColumn
-        ? sourceIds
-        : await tx.application
-            .findMany({ where: { userId, status: input.status, id: { not: id } }, orderBy, select: { id: true } })
-            .then((rows) => rows.map((row) => row.id));
-
-      const index = Math.min(Math.max(input.position, 0), targetIds.length);
-      const ordered = [...targetIds];
-      ordered.splice(index, 0, id);
-
-      if (!sameColumn) {
-        for (const [position, rowId] of sourceIds.entries()) {
-          await tx.application.update({ where: { id: rowId }, data: { position } });
-        }
-      }
-      for (const [position, rowId] of ordered.entries()) {
-        if (rowId === id) continue;
-        await tx.application.update({ where: { id: rowId }, data: { position } });
-      }
-
-      const movedData: Prisma.ApplicationUncheckedUpdateInput = {
-        position: ordered.indexOf(id),
-        status: input.status,
-      };
-      if (!sameColumn && input.status !== 'TO_APPLY' && current.appliedAt === null) {
-        movedData.appliedAt = todayUtc();
-      }
-      await tx.application.update({ where: { id }, data: movedData });
-
-      if (!sameColumn) {
-        await tx.applicationEvent.create({
-          data: { applicationId: id, type: 'STATUS_CHANGED', fromStatus: current.status, toStatus: input.status },
-        });
-      }
-      return current.status;
+      const deleted = await tx.application.deleteMany({ where: { id, userId } });
+      if (deleted.count === 0) throw applicationNotFound();
+      await shiftPositionsAfterRemoval(tx, userId, current.status, current.position);
     });
-
-    this.logger.log(`Candidature ${id} déplacée ${fromStatus} → ${input.status} (${input.position}) user:${userId}`);
-    return this.get(userId, id);
-  }
-
-  /** Suppression (évènements en cascade, spec §5) : 404 plutôt que 204 sur une seconde
-   * suppression, et jamais un 403 sur la candidature d'un autre utilisateur. */
-  async remove(userId: string, id: string): Promise<void> {
-    const result = await this.prisma.application.deleteMany({ where: { id, userId } });
-    if (result.count === 0) throw applicationNotFound();
     this.logger.log(`Candidature supprimée ${id} user:${userId}`);
   }
 
@@ -540,6 +298,7 @@ export class ApplicationsService {
         salaryLabel: true,
         salaryMinAnnual: true,
         salaryMaxAnnual: true,
+        currency: true,
         contractLabel: true,
         sources: { select: { applyUrl: true, url: true }, orderBy: { publishedAt: 'desc' } },
       },
@@ -548,34 +307,22 @@ export class ApplicationsService {
 
     return {
       jobId: job.id,
-      jobTitle: sanitizeText(job.title, MAX_JOB_TITLE),
-      company: sanitizeOptionalText(job.company, MAX_COMPANY),
-      locationLabel: sanitizeOptionalText(job.locationLabel, MAX_LOCATION_LABEL),
+      jobTitle: boundedText(job.title, MAX_JOB_TITLE),
+      company: boundedOptionalText(job.company, MAX_COMPANY),
+      locationLabel: boundedOptionalText(job.locationLabel, MAX_LOCATION_LABEL),
       salaryLabel:
-        sanitizeOptionalText(job.salaryLabel, MAX_SALARY_LABEL) ??
-        sanitizeOptionalText(formatSalarySnapshot(job.salaryMinAnnual, job.salaryMaxAnnual), MAX_SALARY_LABEL),
-      contractLabel: sanitizeOptionalText(job.contractLabel, MAX_CONTRACT_LABEL),
+        boundedOptionalText(job.salaryLabel, MAX_SALARY_LABEL) ??
+        boundedOptionalText(
+          formatSalarySnapshot(job.salaryMinAnnual, job.salaryMaxAnnual, job.currency),
+          MAX_SALARY_LABEL,
+        ),
+      contractLabel: boundedOptionalText(job.contractLabel, MAX_CONTRACT_LABEL),
       // Seule source branchée aujourd'hui (spec §5) ; une candidature créée manuellement porte
       // la source choisie par l'utilisateur.
       source: 'FRANCE_TRAVAIL',
       sourceUrl: pickSourceUrl(job.sources),
       // Aucune note à la création depuis une offre : le formulaire court n'en propose pas.
       notes: null,
-    };
-  }
-
-  /** Candidature saisie à la main (spec §2) : les champs tels que fournis, nettoyés et bornés. */
-  private snapshotFromInput(input: CreateManualInput): ApplicationSnapshot {
-    return {
-      jobId: null,
-      jobTitle: sanitizeText(input.jobTitle, MAX_JOB_TITLE),
-      company: sanitizeOptionalText(input.company, MAX_COMPANY),
-      locationLabel: sanitizeOptionalText(input.locationLabel, MAX_LOCATION_LABEL),
-      salaryLabel: sanitizeOptionalText(input.salaryLabel, MAX_SALARY_LABEL),
-      contractLabel: sanitizeOptionalText(input.contractLabel, MAX_CONTRACT_LABEL),
-      source: input.source,
-      sourceUrl: isDisplayableHttpUrl(input.sourceUrl) ? input.sourceUrl : null,
-      notes: sanitizeOptionalText(input.notes, MAX_NOTES, NOTES_OPTIONS),
     };
   }
 
@@ -636,8 +383,7 @@ export class ApplicationsService {
   ): void {
     if (input.resumeId === undefined && input.usedBaseResume === undefined) return;
 
-    const nextUsedBaseResume =
-      input.usedBaseResume ?? (input.resumeId != null ? false : current.usedBaseResume);
+    const nextUsedBaseResume = input.usedBaseResume ?? (input.resumeId != null ? false : current.usedBaseResume);
     const nextResumeId =
       input.resumeId !== undefined ? input.resumeId : nextUsedBaseResume ? null : current.resumeId;
     if (nextUsedBaseResume && nextResumeId !== null) throw cvExclusivityError();
@@ -656,7 +402,7 @@ export class ApplicationsService {
     events: Prisma.ApplicationEventCreateManyInput[],
   ): void {
     if (input.notes === undefined) return;
-    const nextNotes = sanitizeOptionalText(input.notes, MAX_NOTES, NOTES_OPTIONS);
+    const nextNotes = boundedOptionalText(input.notes, MAX_NOTES, NOTES_OPTIONS);
     if (nextNotes === current.notes) return;
     data.notes = nextNotes;
     // Jamais le contenu de la note dans l'historique (spec §5/§8) : seul le fait qu'elle a
@@ -672,93 +418,19 @@ export class ApplicationsService {
     input: UpdateApplicationInput,
     data: Prisma.ApplicationUncheckedUpdateManyInput,
   ): void {
-    if (input.jobTitle !== undefined) data.jobTitle = sanitizeText(input.jobTitle, MAX_JOB_TITLE);
-    if (input.company !== undefined) data.company = sanitizeOptionalText(input.company, MAX_COMPANY);
+    if (input.jobTitle !== undefined) data.jobTitle = boundedText(input.jobTitle, MAX_JOB_TITLE);
+    if (input.company !== undefined) data.company = boundedOptionalText(input.company, MAX_COMPANY);
     if (input.locationLabel !== undefined) {
-      data.locationLabel = sanitizeOptionalText(input.locationLabel, MAX_LOCATION_LABEL);
+      data.locationLabel = boundedOptionalText(input.locationLabel, MAX_LOCATION_LABEL);
     }
-    if (input.salaryLabel !== undefined) data.salaryLabel = sanitizeOptionalText(input.salaryLabel, MAX_SALARY_LABEL);
+    if (input.salaryLabel !== undefined) data.salaryLabel = boundedOptionalText(input.salaryLabel, MAX_SALARY_LABEL);
     if (input.contractLabel !== undefined) {
-      data.contractLabel = sanitizeOptionalText(input.contractLabel, MAX_CONTRACT_LABEL);
+      data.contractLabel = boundedOptionalText(input.contractLabel, MAX_CONTRACT_LABEL);
     }
     if (input.coverLetterId !== undefined) data.coverLetterId = input.coverLetterId;
     if (input.source !== undefined) data.source = input.source;
     if (input.sourceUrl !== undefined) {
       data.sourceUrl = isDisplayableHttpUrl(input.sourceUrl) ? input.sourceUrl : null;
     }
-  }
-
-  /**
-   * Scores de correspondance déjà calculés pour CE profil (spec §4) : lecture seule de
-   * `MatchScore`, filtrée par l'empreinte courante du profil et la version d'analyse — comme
-   * `JobsService`, une simple consultation ne recalcule jamais de score (`POST /jobs/analyses`
-   * et `GET /jobs/:id/match` sont les seules routes qui le font).
-   */
-  private async loadMatchSummaries(
-    userId: string,
-    jobIds: readonly string[],
-  ): Promise<Map<string, MatchScoreSummaryDto>> {
-    const unique = [...new Set(jobIds)];
-    const summaries = new Map<string, MatchScoreSummaryDto>();
-    if (unique.length === 0) return summaries;
-
-    const profile = await this.profileInputs.build(userId);
-    if (!profile || !profile.complete) return summaries;
-
-    const rows = await this.prisma.matchScore.findMany({
-      where: {
-        profileId: profile.profileId,
-        profileFingerprint: profile.fingerprint,
-        analysisVersion: JOB_ANALYSIS_VERSION,
-        jobId: { in: unique },
-      },
-      select: { jobId: true, score: true, band: true, priority: true, factors: true },
-    });
-    for (const row of rows) {
-      const summary = toMatchSummary(row);
-      if (summary) summaries.set(row.jobId, summary);
-    }
-    return summaries;
-  }
-
-  private matchOf(
-    summaries: Map<string, MatchScoreSummaryDto>,
-    row: { jobId: string | null },
-  ): MatchScoreSummaryDto | null {
-    return row.jobId === null ? null : (summaries.get(row.jobId) ?? null);
-  }
-
-  private toDto(userId: string, row: ApplicationRow, match: MatchScoreSummaryDto | null): ApplicationDto {
-    return {
-      id: row.id,
-      jobId: row.jobId,
-      status: row.status,
-      position: row.position,
-      jobTitle: row.jobTitle,
-      company: row.company,
-      locationLabel: row.locationLabel,
-      salaryLabel: row.salaryLabel,
-      contractLabel: row.contractLabel,
-      source: row.source,
-      sourceUrl: row.sourceUrl,
-      appliedAt: row.appliedAt === null ? null : toIsoDate(row.appliedAt),
-      usedBaseResume: row.usedBaseResume,
-      resumeId: row.resumeId,
-      coverLetterId: row.coverLetterId,
-      notes: row.notes,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-      job: row.job ? { id: row.job.id, title: row.job.title, company: row.job.company, match } : null,
-      // Filet défensif (spec §8) : un CV ou une lettre qui ne serait pas de cet utilisateur
-      // n'est jamais exposé — en pratique impossible, les écritures vérifiant la propriété.
-      resume:
-        row.resume && row.resume.userId === userId
-          ? { id: row.resume.id, title: row.resume.title, currentVersion: row.resume.currentVersion }
-          : null,
-      coverLetter:
-        row.coverLetter && row.coverLetter.userId === userId
-          ? { id: row.coverLetter.id, tone: row.coverLetter.tone }
-          : null,
-    };
   }
 }

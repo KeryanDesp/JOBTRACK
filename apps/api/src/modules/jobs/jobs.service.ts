@@ -1,6 +1,5 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma, type MatchBand, type MatchPriority } from '@prisma/client';
-import { z } from 'zod';
+import { Prisma, type MatchPriority } from '@prisma/client';
 import type {
   JobApplicationRefDto,
   JobDetailDto,
@@ -10,7 +9,6 @@ import type {
   JobSyncInfoDto,
   JobTab,
   JobsCapabilitiesDto,
-  MatchScoreSummaryDto,
 } from '@jobtrack/shared';
 import { PrismaService } from '../../common/prisma.service';
 import { RateLimiterService } from '../../common/rate-limiter.service';
@@ -19,6 +17,7 @@ import { RedisService } from '../../common/redis.service';
 import { JobAnalysisService } from '../matching/job-analysis.service';
 import { JOB_ANALYSIS_VERSION } from '../matching/job-analysis.prompt';
 import { ProfileInputsService } from '../matching/profile-inputs.service';
+import { toMatchSummary, type StoredMatchScoreRow } from './lib/match-summary';
 import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, isConfigured, type JobSourceConnector } from './sources/job-source.connector';
 
@@ -58,24 +57,6 @@ const PRIORITY_TAB_VALUES: MatchPriority[] = ['VERY_HIGH', 'HIGH'];
 // classées par « Meilleur match »/« Pertinence » — les 500 offres les plus récentes sont classées.
 const RELEVANCE_CANDIDATE_CAP = 500;
 
-/** Reflet minimal de `MatchScore.factors` (Json) utile à la liste : seule l'explication du
- * classement est nécessaire ici (`MatchScoreSummaryDto`), jamais le détail par facteur — validée
- * pour ne jamais faire confiance aveuglément à une colonne `Json` (revue sécurité). */
-const storedMatchExplanationSchema = z.object({
-  explanation: z.object({ top: z.array(z.string()), weak: z.array(z.string()) }),
-});
-
-/** Champs de `MatchScore` nécessaires à `toMatchSummary` ci-dessous — un sous-ensemble minimal
- * plutôt que le type Prisma complet, pour que les deux points d'appel (tri normal, tri par score)
- * puissent construire cette valeur à partir de sélections différentes. */
-export interface StoredMatchScoreRow {
-  jobId: string;
-  score: number | null;
-  band: MatchBand | null;
-  priority: MatchPriority | null;
-  factors: Prisma.JsonValue;
-}
-
 /**
  * Identité de profil utilisée pour lire/filtrer `MatchScore` (spec §6, tâche 6 — amendement
  * revue tâche 5) : `profileId` seul ne suffit pas — une ligne `MatchScore` dont
@@ -90,20 +71,6 @@ export interface StoredMatchScoreRow {
 interface ProfileScoreContext {
   profileId: string | null;
   fingerprint: string | null;
-}
-
-/** Traduit une ligne `MatchScore` (ou son absence) en `MatchScoreSummaryDto` pour `JobSummaryDto.match`
- * (spec §6) : l'explication du classement est relue depuis `factors` (colonne `Json`, jamais écrite
- * que par `MatchService`) et validée — un contenu inattendu retombe sur `null` plutôt que de faire
- * échouer toute la liste (même précaution que `MatchService.fromStoredPayload`, dupliquée ici :
- * `JobsService` lit `MatchScore` directement via Prisma plutôt que d'appeler `MatchService`, pour
- * ne jamais recalculer de score sur une simple lecture de liste).
- */
-export function toMatchSummary(row: StoredMatchScoreRow | undefined): MatchScoreSummaryDto | null {
-  if (!row) return null;
-  const parsed = storedMatchExplanationSchema.safeParse(row.factors);
-  if (!parsed.success) return null;
-  return { score: row.score, band: row.band, priority: row.priority, explanation: parsed.data.explanation };
 }
 
 /**

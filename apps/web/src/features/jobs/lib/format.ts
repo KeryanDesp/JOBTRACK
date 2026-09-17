@@ -44,53 +44,13 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
 
 /**
  * Fourchette de salaire annuel (spec §7 : « 45–70 k€ », « à partir de 30 k€ »,
- * « jusqu'à 40 k€ »). `null` quand aucune des deux bornes n'est connue —
- * jamais une estimation inventée (cahier des charges §55, cf. spec §5).
- *
- * EUR reçoit un format compact maison plutôt que `Intl.NumberFormat` : la
- * notation compacte de cette locale répéterait le symbole sur chaque borne
- * (« 45 k€–70 k€ ») au lieu du regroupement attendu par la maquette
- * (« 45–70 k€ »). Les autres devises (peu probables ici, cf. spec §4 — seule
- * l'API France Travail en EUR est branchée) passent par `Intl.NumberFormat`
- * en notation compacte, qui gère alors elle-même le symbole propre à chacune.
+ * « jusqu'à 40 k€ ») : l'implémentation vit désormais dans le contrat partagé
+ * (`@jobtrack/shared`), l'API s'en servant aussi pour l'instantané de salaire
+ * d'une candidature — un même montant s'affiche donc à l'identique sur une
+ * offre et sur la candidature qui en est née. Ré-export plutôt que suppression :
+ * les écrans d'offres continuent d'importer toute leur mise en forme d'ici.
  */
-export function formatSalaryRange(min: number | null, max: number | null, currency = 'EUR'): string | null {
-  if (min === null && max === null) return null;
-
-  if (currency !== 'EUR') {
-    const formatter = new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency,
-      notation: 'compact',
-      maximumFractionDigits: 0,
-    });
-    if (min !== null && max !== null) {
-      return min === max ? formatter.format(min) : `${formatter.format(min)}–${formatter.format(max)}`;
-    }
-    if (min !== null) return `à partir de ${formatter.format(min)}`;
-    if (max !== null) return `jusqu'à ${formatter.format(max)}`;
-    // Inatteignable : le premier retour couvre déjà le cas des deux bornes nulles.
-    return null;
-  }
-
-  // La borne de référence pour décider de l'unité (k€ ou brut) est toujours
-  // `max` quand elle est connue, même si `min` est seul sous 1000 : les deux
-  // bornes d'une même fourchette partagent une seule unité, jamais l'une en
-  // milliers et l'autre brute.
-  const reference = max ?? min;
-  const compact = reference !== null && Math.abs(reference) >= 1000;
-  const unit = compact ? 'k€' : '€';
-  const boundText = (value: number) => (compact ? String(Math.round(value / 1000)) : String(value));
-
-  if (min !== null && max !== null) {
-    return min === max ? `${boundText(min)} ${unit}` : `${boundText(min)}–${boundText(max)} ${unit}`;
-  }
-  if (min !== null) return `à partir de ${boundText(min)} ${unit}`;
-  if (max !== null) return `jusqu'à ${boundText(max)} ${unit}`;
-
-  // Inatteignable : le premier retour couvre déjà le cas des deux bornes nulles.
-  return null;
-}
+export { formatSalaryRange } from '@jobtrack/shared';
 
 /**
  * Lieu affiché sur une carte/un détail d'offre. `locationLabel` porte déjà un

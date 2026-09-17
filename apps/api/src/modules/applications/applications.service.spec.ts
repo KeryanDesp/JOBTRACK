@@ -8,10 +8,13 @@ import type {
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaService } from '../../common/prisma.service';
 import { ProfileInputsService } from '../matching/profile-inputs.service';
+import { ApplicationsBoardService } from './applications-board.service';
 import { ApplicationsService } from './applications.service';
 
 const prisma = new PrismaService();
-const applications = new ApplicationsService(prisma, new ProfileInputsService(prisma));
+const profileInputs = new ProfileInputsService(prisma);
+const board = new ApplicationsBoardService(prisma, profileInputs);
+const applications = new ApplicationsService(prisma, profileInputs, board);
 
 // Préfixes propres à CETTE spec, distingués par pid : deux workers vitest ne partagent jamais
 // les mêmes lignes, et le nettoyage par préfixe n'atteint jamais celles d'une autre suite
@@ -21,6 +24,20 @@ const EMAIL_PREFIX = `e2e-app-unit-${process.pid}-`;
 
 /** Jeudi 17/09/2026, 10 h UTC — la semaine courante commence le lundi 14/09/2026. */
 const NOW = new Date('2026-09-17T10:00:00.000Z');
+
+/**
+ * Jour courant **a Paris** au format `AAAA-MM-JJ` : exactement la valeur que le service pose sur
+ * `appliedAt`. Jamais `todayInParis()` — entre minuit et 2 h a Paris,
+ * l'UTC est encore la veille, et cette suite echouerait une nuit sur douze.
+ */
+function todayInParis(): string {
+  return new Intl.DateTimeFormat('fr-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 async function cleanup(): Promise<void> {
   await prisma.application.deleteMany({ where: { jobTitle: { startsWith: PREFIX } } });
@@ -147,18 +164,27 @@ describe('ApplicationsService.create — depuis une offre', () => {
     expect(created.events[0]?.toStatus).toBe('TO_APPLY');
   });
 
-  it('reconstruit la fourchette de salaire quand l_offre n_a pas de libelle', async () => {
+  it('reconstruit la fourchette de salaire comme les ecrans d_offres quand l_offre n_a pas de libelle', async () => {
     const userId = await createUser();
     const jobId = await createJob({ salaryLabel: null, salaryMinAnnual: 45000, salaryMaxAnnual: 55000 });
 
     const created = await applications.create(userId, fromJob(jobId));
 
-    expect(created.salaryLabel).toBe('45000–55000 € brut/an');
+    expect(created.salaryLabel).toBe('45–55 k€');
   });
 
-  it('laisse le salaire vide quand une seule borne est connue', async () => {
+  it('garde une borne unique de salaire plutot que de l_effacer', async () => {
     const userId = await createUser();
     const jobId = await createJob({ salaryLabel: null, salaryMinAnnual: 45000, salaryMaxAnnual: null });
+
+    const created = await applications.create(userId, fromJob(jobId));
+
+    expect(created.salaryLabel).toBe('à partir de 45 k€');
+  });
+
+  it('laisse le salaire vide quand aucune borne n_est connue', async () => {
+    const userId = await createUser();
+    const jobId = await createJob({ salaryLabel: null, salaryMinAnnual: null, salaryMaxAnnual: null });
 
     const created = await applications.create(userId, fromJob(jobId));
 
@@ -172,6 +198,36 @@ describe('ApplicationsService.create — depuis une offre', () => {
     const created = await applications.create(userId, fromJob(jobId));
 
     expect(created.sourceUrl).toBe('https://exemple.test/offre-42');
+  });
+
+  it('ignore un lien de candidature a identifiants embarques et retombe sur l_url de la source', async () => {
+    const userId = await createUser();
+    // « http://banque.example@piege.example/ » : le navigateur visite `piege.example`, mais un
+    // lecteur presse ne lit que ce qui precede l_arobase — refuse comme a la saisie (contrat
+    // partage `httpUrlSchema`), et non seulement parce qu_il n_est pas en http(s).
+    const jobId = await createJob({
+      applyUrl: 'http://banque.example@piege.example/',
+      url: 'https://exemple.test/offre-77',
+    });
+
+    const created = await applications.create(userId, fromJob(jobId));
+
+    expect(created.sourceUrl).toBe('https://exemple.test/offre-77');
+  });
+
+  it('retire d_un instantane les caracteres invisibles que seul le contrat partage connait', async () => {
+    const userId = await createUser();
+    // Controle C1, espace de largeur nulle et BOM : invisibles a l_affichage, absents de
+    // l_ancien nettoyage de l_API (qui ne couvrait que la plage C0 et les remplacements bidi).
+    const c1 = String.fromCharCode(0x9b);
+    const zeroWidth = String.fromCharCode(0x200b);
+    const bom = String.fromCharCode(0xfeff);
+    const jobId = await createJob({ title: `${PREFIX}Data${c1} Analyst${zeroWidth}`, company: `${bom}Orion` });
+
+    const created = await applications.create(userId, fromJob(jobId));
+
+    expect(created.jobTitle).toBe(`${PREFIX}Data Analyst`);
+    expect(created.company).toBe('Orion');
   });
 
   it('refuse une offre inconnue avec JOB_NOT_FOUND', async () => {
@@ -223,7 +279,7 @@ describe('ApplicationsService.create — manuelle', () => {
     const applied = await applications.create(userId, manual({ status: 'APPLIED' }));
     const toApply = await applications.create(userId, manual({ status: 'TO_APPLY' }));
 
-    expect(applied.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(applied.appliedAt).toBe(todayInParis());
     expect(toApply.appliedAt).toBeNull();
   });
 
@@ -274,7 +330,7 @@ describe('ApplicationsService.update', () => {
 
     expect(updated.status).toBe('INTERVIEW');
     expect(updated.position).toBe(1);
-    expect(updated.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(updated.appliedAt).toBe(todayInParis());
     const statusEvent = updated.events.find((event) => event.type === 'STATUS_CHANGED');
     expect(statusEvent?.fromStatus).toBe('TO_APPLY');
     expect(statusEvent?.toStatus).toBe('INTERVIEW');
@@ -329,6 +385,59 @@ describe('ApplicationsService.update', () => {
   });
 });
 
+describe('ApplicationsService — positions de colonne', () => {
+  it('referme la colonne d_origine quand un changement de statut retire une carte', async () => {
+    const userId = await createUser();
+    const first = await createIn(userId, 'TO_APPLY', 'a');
+    const second = await createIn(userId, 'TO_APPLY', 'b');
+    const third = await createIn(userId, 'TO_APPLY', 'c');
+
+    await applications.update(userId, first, { status: 'APPLIED' });
+
+    expect(await positionsOf(userId, 'TO_APPLY')).toEqual([
+      { id: second, position: 0 },
+      { id: third, position: 1 },
+    ]);
+  });
+
+  it('referme la colonne quand une carte est supprimee', async () => {
+    const userId = await createUser();
+    const first = await createIn(userId, 'APPLIED', 'a');
+    const second = await createIn(userId, 'APPLIED', 'b');
+    const third = await createIn(userId, 'APPLIED', 'c');
+
+    await applications.remove(userId, second);
+
+    expect(await positionsOf(userId, 'APPLIED')).toEqual([
+      { id: first, position: 0 },
+      { id: third, position: 1 },
+    ]);
+  });
+
+  it('repare une colonne dont les positions ont des trous et des doublons', async () => {
+    const userId = await createUser();
+    const first = await createIn(userId, 'OFFER', 'a');
+    const second = await createIn(userId, 'OFFER', 'b');
+    const third = await createIn(userId, 'OFFER', 'c');
+    // Positions incoherentes ecrites directement en base (etat herite d_avant la reindexation
+    // ensembliste) : un trou, puis deux cartes a la meme position.
+    await prisma.application.update({ where: { id: first }, data: { position: 7 } });
+    await prisma.application.update({ where: { id: second }, data: { position: 7 } });
+    await prisma.application.update({ where: { id: third }, data: { position: 3 } });
+
+    const changed = await board.reindexColumn(userId, 'OFFER');
+
+    expect(changed).toBe(3);
+    expect((await positionsOf(userId, 'OFFER')).map((row) => row.position)).toEqual([0, 1, 2]);
+    // L_ordre d_affichage est conserve : a position egale, la plus ancienne reste devant.
+    expect(await positionsOf(userId, 'OFFER')).toEqual([
+      { id: third, position: 0 },
+      { id: first, position: 1 },
+      { id: second, position: 2 },
+    ]);
+  });
+});
+
 describe('ApplicationsService.move', () => {
   it('reindexe la colonne 0..n-1 lors d_un deplacement interne', async () => {
     const userId = await createUser();
@@ -362,7 +471,7 @@ describe('ApplicationsService.move', () => {
       { id: second, position: 0 },
       { id: target, position: 1 },
     ]);
-    expect(moved.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(moved.appliedAt).toBe(todayInParis());
     const statusEvent = moved.events.find((event) => event.type === 'STATUS_CHANGED');
     expect(statusEvent?.fromStatus).toBe('TO_APPLY');
     expect(statusEvent?.toStatus).toBe('INTERVIEW');
@@ -458,7 +567,7 @@ describe('ApplicationsService.list et board', () => {
     expect(paged.items).toHaveLength(1);
   });
 
-  it('trie par date de candidature en reléguant les candidatures sans date', async () => {
+  it('trie par date de candidature en releguant les candidatures sans date', async () => {
     const userId = await createUser();
     await applications.create(userId, manual({ jobTitle: `${PREFIX}Sans date`, status: 'TO_APPLY' }));
     await applications.create(userId, manual({ jobTitle: `${PREFIX}Ancienne`, status: 'APPLIED', appliedAt: '2026-08-01' }));
@@ -471,6 +580,17 @@ describe('ApplicationsService.list et board', () => {
       `${PREFIX}Ancienne`,
       `${PREFIX}Sans date`,
     ]);
+  });
+
+  it('trie par entreprise de A a Z en releguant les candidatures sans entreprise', async () => {
+    const userId = await createUser();
+    await applications.create(userId, manual({ jobTitle: `${PREFIX}Sans entreprise`, company: null }));
+    await applications.create(userId, manual({ jobTitle: `${PREFIX}Zephyr`, company: 'Zephyr SAS' }));
+    await applications.create(userId, manual({ jobTitle: `${PREFIX}Alpha`, company: 'Alpha SARL' }));
+
+    const list = await applications.list(userId, { tab: 'all', page: 1, limit: 20, sort: 'company_asc' });
+
+    expect(list.items.map((item) => item.company)).toEqual(['Alpha SARL', 'Zephyr SAS', null]);
   });
 
   it('renvoie les cinq colonnes du kanban, triees par position', async () => {

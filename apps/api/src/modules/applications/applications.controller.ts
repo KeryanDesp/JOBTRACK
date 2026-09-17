@@ -70,6 +70,10 @@ export class ApplicationsController {
    * Création (spec §5) : 60 par heure et par utilisateur. Une garde de route suffit ici —
    * contrairement à l'adaptation de CV, aucune ressource coûteuse n'est engagée avant les
    * contrôles, et le budget ne protège que d'un remplissage massif de la table.
+   *
+   * Budget distinct des deux budgets d'écriture ci-dessous (`application-write`,
+   * `application-move`) : créer 60 candidatures par heure est déjà beaucoup, alors que
+   * corriger une fiche ou réordonner un tableau se fait par dizaines en quelques minutes.
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -87,7 +91,14 @@ export class ApplicationsController {
     return this.applications.get(user.id, id);
   }
 
+  /**
+   * Modification (spec §6) : 600 par heure et par utilisateur. Chaque appel écrit une ligne et
+   * peut ajouter un évènement d'historique — large de très loin pour un usage réel (une fiche
+   * enregistrée à chaque champ quitté), mais borné, là où la route n'avait aucune limite.
+   */
   @Patch(':id')
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit({ bucket: 'application-write', limit: 600, windowSeconds: 3600 })
   update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(updateApplicationSchema)) body: UpdateApplicationInput,
@@ -96,7 +107,15 @@ export class ApplicationsController {
     return this.applications.update(user.id, id, body);
   }
 
+  /**
+   * Déplacement Kanban (spec §6) : budget propre (`application-move`, 600 par heure et par
+   * utilisateur) plutôt que celui des modifications de fiche — un glisser-déposer part par
+   * rafales, et ne doit pas consommer le budget qui protège l'enregistrement d'une fiche. Le
+   * déplacement reste borné : chacun écrit dans une transaction qui touche toute une colonne.
+   */
   @Patch(':id/move')
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit({ bucket: 'application-move', limit: 600, windowSeconds: 3600 })
   move(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(moveApplicationSchema)) body: MoveApplicationInput,

@@ -27,9 +27,25 @@ const TITLE_PREFIX = 'E2E-APP-';
 const USER_EMAIL_PREFIX = 'e2e-app-';
 const JOB_FINGERPRINT_PREFIX = 'E2E-APP-JOB-';
 const EXTERNAL_ID_PREFIX = 'E2E-APP-';
-// Seau de la garde de débit posée sur `POST /applications` (`applications.controller.ts`).
+// Seaux des gardes de débit posées sur les écritures (`applications.controller.ts`) : la
+// création a le sien, les modifications de fiche et les déplacements Kanban chacun le leur.
 const CREATE_BUCKET = 'application-create';
 const CREATE_LIMIT = 60;
+const WRITE_BUCKETS = ['application-write', 'application-move'];
+
+/**
+ * Jour courant **à Paris** au format `AAAA-MM-JJ` : la valeur que l'API pose sur `appliedAt`.
+ * Jamais `todayInParis()` — entre minuit et 2 h à Paris, l'UTC est
+ * encore la veille, et ces assertions échoueraient une nuit sur douze.
+ */
+function todayInParis(): string {
+  return new Intl.DateTimeFormat('fr-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 let app: NestFastifyApplication;
 let prisma: PrismaService;
@@ -60,14 +76,14 @@ async function clearUsers(): Promise<void> {
   await prisma.user.deleteMany({ where: { email: { startsWith: USER_EMAIL_PREFIX } } });
 }
 
-/** Le seul seau de cette suite (`application-create`) et le budget d'inscription, partagé
- * avec les autres suites e2e du même run (20 inscriptions/h par IP) — jamais un
- * `ratelimit:*` en bloc, qui toucherait les compteurs d'un développeur. */
+/** Les seuls seaux de cette suite (`application-create`, `application-write`,
+ * `application-move`) et le budget d'inscription, partagé avec les autres suites e2e du même
+ * run (20 inscriptions/h par IP) — jamais un `ratelimit:*` en bloc, qui toucherait les
+ * compteurs d'un développeur. */
 async function clearRateLimits(): Promise<void> {
-  const keys = [
-    ...(await redis.client.keys(`ratelimit:${CREATE_BUCKET}:*`)),
-    ...(await redis.client.keys('ratelimit:*auth/register*')),
-  ];
+  const buckets = [CREATE_BUCKET, ...WRITE_BUCKETS];
+  const perBucket = await Promise.all(buckets.map((bucket) => redis.client.keys(`ratelimit:${bucket}:*`)));
+  const keys = [...perBucket.flat(), ...(await redis.client.keys('ratelimit:*auth/register*'))];
   if (keys.length > 0) await redis.client.del(...keys);
 }
 
@@ -244,7 +260,7 @@ describe('POST /applications', () => {
     expect(body.jobTitle).toBe(`${TITLE_PREFIX}Ingenieure logicielle`);
     expect(body.company).toBe('Solaris Ingénierie');
     expect(body.locationLabel).toBe('Metz (57)');
-    expect(body.salaryLabel).toBe('45000–55000 € brut/an');
+    expect(body.salaryLabel).toBe('45–55 k€');
     expect(body.source).toBe('FRANCE_TRAVAIL');
     expect(body.sourceUrl).toBe('https://exemple.test/postuler');
     expect(body.status).toBe('TO_APPLY');
@@ -264,7 +280,7 @@ describe('POST /applications', () => {
     expect(body.jobId).toBeNull();
     expect(body.source).toBe('LINKEDIN');
     expect(body.status).toBe('INTERVIEW');
-    expect(body.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(body.appliedAt).toBe(todayInParis());
     expect(body.notes).toBe('Entretien le 20 septembre.');
   });
 
@@ -484,7 +500,7 @@ describe('GET /applications/board et PATCH /applications/:id/move', () => {
 
     const body = JSON.parse(response.body) as ApplicationDetailDto;
     expect(body.status).toBe('OFFER');
-    expect(body.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(body.appliedAt).toBe(todayInParis());
     expect(body.events.map((event) => event.type)).toEqual(['STATUS_CHANGED', 'CREATED']);
   });
 
@@ -544,7 +560,7 @@ describe('GET, PATCH et DELETE /applications/:id', () => {
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body) as ApplicationDetailDto;
     expect(body.status).toBe('APPLIED');
-    expect(body.appliedAt).toBe(new Date().toISOString().slice(0, 10));
+    expect(body.appliedAt).toBe(todayInParis());
     const statusEvent = body.events.find((event) => event.type === 'STATUS_CHANGED');
     expect(statusEvent?.fromStatus).toBe('TO_APPLY');
     expect(statusEvent?.toStatus).toBe('APPLIED');

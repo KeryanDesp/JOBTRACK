@@ -611,7 +611,11 @@ model Application {
   contractLabel  String?
   source         ApplicationSource
   sourceUrl      String?
-  appliedAt      DateTime?
+  // Un **jour**, jamais un instant (spec §4) : colonne `DATE` côté Postgres, et non un
+  // `timestamp` dont l'heure serait toujours 00:00 UTC. Prisma rend une `Date` à minuit UTC,
+  // que le DTO expose en `AAAA-MM-JJ` — la colonne ne peut donc plus porter d'heure trompeuse
+  // écrite par un autre chemin, et un filtre par date se lit sans conversion.
+  appliedAt      DateTime?         @db.Date
   usedBaseResume Boolean           @default(false)
   notes          String?
   createdAt      DateTime          @default(now())
