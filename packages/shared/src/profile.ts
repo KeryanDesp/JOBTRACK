@@ -21,6 +21,13 @@ export const optionalText = (max: number) =>
  * à http(s) sur la branche non vide — un `javascript:` ou `data:` bien formé
  * pour `new URL()` mais dangereux une fois affiché en lien cliquable ne doit
  * jamais être accepté.
+ *
+ * Un seul `superRefine` (plutôt qu'un `.url()` suivi d'un `.refine()`) : les « checks » Zod
+ * (dont `.url()`) s'accumulent sur le même schéma sans jamais l'interrompre (statut « dirty »,
+ * pas « aborted ») — un `.refine()`/`.superRefine()` chaîné après s'exécute donc même quand
+ * `.url()` a déjà échoué, et `new URL(value)` y lève alors une `TypeError` non interceptée
+ * (500, jamais un 400). Voir la même correction, plus complète (identifiants embarqués,
+ * caractères de contrôle/bidi), sur `httpUrlSchema` (applications.ts).
  */
 export const optionalUrl = z
   .union([
@@ -29,8 +36,18 @@ export const optionalUrl = z
     z
       .string()
       .max(2000, 'Maximum 2000 caractères.')
-      .url('URL invalide.')
-      .refine((value) => /^https?:$/.test(new URL(value).protocol), 'URL invalide.'),
+      .superRefine((value, ctx) => {
+        let url: URL;
+        try {
+          url = new URL(value);
+        } catch {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'URL invalide.' });
+          return;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'URL invalide.' });
+        }
+      }),
   ])
   .optional()
   .transform((value) => (value === '' || value === null ? null : value));
