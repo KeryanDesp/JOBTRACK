@@ -178,11 +178,6 @@ describe('CoverLetterService', () => {
     }
   }
 
-  it('isConfigured reflète la présence du client', () => {
-    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), null).isConfigured()).toBe(false);
-    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(fakeParse())).isConfigured()).toBe(true);
-  });
-
   it("génère une lettre à partir de la fixture livrée : signature forcée au nom complet du profil", async () => {
     const profile = await createProfile();
     const job = await createJob();

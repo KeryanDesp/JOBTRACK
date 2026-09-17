@@ -18,12 +18,12 @@ function formatDate(iso: string): string {
 }
 
 /**
- * Liste des lettres de motivation (`/resume`, spec §2, tâche 7) : carte par
- * lettre (offre, ton, date), « Ouvrir » (→ `/resume/letter/:jobId?lettre=:id`,
- * route livrée par la tâche 8 — le lien existe déjà, spec §7), « Supprimer »
- * avec confirmation et suppression optimiste (`useDeleteLetter`), même
- * principe que `ResumeList`. Une lettre dont l'offre a été supprimée
- * (`jobId: null`) n'a plus de destination : « Ouvrir » reste alors désactivé.
+ * Liste des lettres de motivation (`/resume`, spec §2) : carte par lettre
+ * (offre, ton, date), « Ouvrir » (→ `/resume/letter/:jobId?lettre=:id`, spec
+ * §7), « Supprimer » avec confirmation et suppression optimiste
+ * (`useDeleteLetter`), même principe que `ResumeList`. Une lettre dont
+ * l'offre a été supprimée (`jobId: null`) n'a plus de destination :
+ * « Ouvrir » reste alors désactivé.
  */
 export function LetterList({ letters }: LetterListProps) {
   const [pendingDelete, setPendingDelete] = useState<CoverLetterSummaryDto | null>(null);

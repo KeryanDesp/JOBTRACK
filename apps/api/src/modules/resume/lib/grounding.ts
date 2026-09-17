@@ -368,7 +368,13 @@ export function groundTailoring(base: ResumeContent, tailoring: ResumeTailoringI
     }
   }
 
-  const content = resumeContentSchema.parse({
+  // `parseAiOutputOrThrow` (jamais `.parse` nu, revue sécurité tâche 5) : dernière garantie de
+  // forme avant retour à l'appelant, même principe que `groundLetter` ci-dessous — la
+  // reformulation/l'ancrage ci-dessus ne peuvent aujourd'hui produire un contenu hors schéma (les
+  // bornes de `resumeTailoringWireSchema` correspondent à celles de `resumeContentSchema`), donc ce
+  // chemin n'est actuellement jamais atteint, mais un futur écart entre les deux schémas doit
+  // remonter en 502 `AI_OUTPUT_INVALID`, jamais en `ZodError` brute (500).
+  const content = parseAiOutputOrThrow(resumeContentSchema, {
     ...base,
     identity: { ...base.identity, title },
     summary,

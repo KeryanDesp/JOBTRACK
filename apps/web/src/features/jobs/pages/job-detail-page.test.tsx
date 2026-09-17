@@ -1,4 +1,4 @@
-import type { JobDetailDto, MatchScoreDto } from '@jobtrack/shared';
+import type { CoverLetterSummaryDto, JobDetailDto, MatchScoreDto, ResumeSummaryDto } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -31,6 +31,56 @@ vi.mock('@/services/api/matching', () => ({
   retryJobAnalysis,
 }));
 
+// `ResumeActionsRow` (revue finale, spec §2 : « CV adapté disponible ») appelle `useResumes`/
+// `useLetters`, qui importent ce module — surface complete requise même si seuls `fetchResumes`/
+// `fetchLetters` sont exercés par les tests de cette page.
+const fetchResumes = vi.hoisted(() => vi.fn());
+const fetchLetters = vi.hoisted(() => vi.fn());
+
+vi.mock('@/services/api/resume', () => ({
+  fetchBaseResume: vi.fn(),
+  updateResumeTemplate: vi.fn(),
+  fetchResumes,
+  fetchResume: vi.fn(),
+  tailorResume: vi.fn(),
+  updateResume: vi.fn(),
+  deleteResume: vi.fn(),
+  fetchLetters,
+  fetchLetter: vi.fn(),
+  createLetter: vi.fn(),
+  updateLetter: vi.fn(),
+  deleteLetter: vi.fn(),
+}));
+
+function makeResumeSummary(overrides: Partial<ResumeSummaryDto> = {}): ResumeSummaryDto {
+  return {
+    id: 'resume-1',
+    title: 'CV Développeuse full-stack — Acme',
+    jobId: 'job-1',
+    jobTitle: 'Développeuse full-stack',
+    company: 'Acme',
+    template: 'CLASSIC',
+    currentVersion: 1,
+    createdAt: '2026-09-17T00:00:00.000Z',
+    updatedAt: '2026-09-17T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeLetterSummary(overrides: Partial<CoverLetterSummaryDto> = {}): CoverLetterSummaryDto {
+  return {
+    id: 'letter-1',
+    jobId: 'job-1',
+    jobTitle: 'Développeuse full-stack',
+    company: 'Acme',
+    resumeId: null,
+    tone: 'PROFESSIONAL',
+    createdAt: '2026-09-17T00:00:00.000Z',
+    updatedAt: '2026-09-17T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function makeMatchScore(overrides: Partial<MatchScoreDto> = {}): MatchScoreDto {
   return {
     score: null,
@@ -50,6 +100,10 @@ function makeMatchScore(overrides: Partial<MatchScoreDto> = {}): MatchScoreDto {
 // cours — les tests qui ne portent pas sur le score n'ont pas à s'en soucier.
 beforeEach(() => {
   fetchJobMatch.mockResolvedValue(makeMatchScore());
+  // Repli par défaut : aucun CV adapté ni lettre pour l_offre — les tests qui ne portent pas sur
+  // `ResumeActionsRow` n_ont pas à s_en soucier.
+  fetchResumes.mockResolvedValue([]);
+  fetchLetters.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -59,6 +113,8 @@ afterEach(() => {
   fetchJobMatch.mockReset();
   analyzeJobs.mockReset();
   retryJobAnalysis.mockReset();
+  fetchResumes.mockReset();
+  fetchLetters.mockReset();
 });
 
 function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
@@ -284,5 +340,67 @@ describe('JobDetailPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Analyser cette offre' }));
 
     expect(await screen.findByText('Trop de requêtes.')).toBeInTheDocument();
+  });
+
+  it("affiche CV adapte disponible et remplace Adapter mon CV par Adapter a nouveau quand un CV adapte existe pour l_offre (revue finale)", async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    fetchResumes.mockResolvedValue([makeResumeSummary({ id: 'resume-1', jobId: 'job-1' })]);
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+
+    expect(screen.queryByRole('link', { name: 'Adapter mon CV' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Adapter à nouveau/ })).toHaveAttribute('href', '/resume/create/job-1');
+    expect(screen.getByRole('link', { name: /CV adapté disponible/ })).toHaveAttribute('href', '/resume/resume-1');
+  });
+
+  it('choisit le CV le plus recent quand plusieurs existent pour l_offre (revue finale)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    // Deja trie par date de mise a jour decroissante cote API (`resume.service.ts`) : le premier
+    // element du tableau est le plus recent.
+    fetchResumes.mockResolvedValue([
+      makeResumeSummary({ id: 'resume-recent', jobId: 'job-1' }),
+      makeResumeSummary({ id: 'resume-ancien', jobId: 'job-1' }),
+    ]);
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+
+    expect(screen.getByRole('link', { name: /CV adapté disponible/ })).toHaveAttribute('href', '/resume/resume-recent');
+  });
+
+  it("affiche Lettre disponible en plus de Generer une lettre quand une lettre existe pour l_offre (revue finale)", async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    fetchLetters.mockResolvedValue([makeLetterSummary({ id: 'letter-1', jobId: 'job-1' })]);
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+
+    expect(screen.getByRole('link', { name: 'Générer une lettre' })).toHaveAttribute('href', '/resume/letter/job-1');
+    expect(screen.getByRole('link', { name: /Lettre disponible/ })).toHaveAttribute('href', '/resume/letter/job-1?lettre=letter-1');
+  });
+
+  it('n_affiche aucun indicateur pour un CV/une lettre d_une autre offre (revue finale)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    fetchResumes.mockResolvedValue([makeResumeSummary({ id: 'resume-autre-offre', jobId: 'job-2' })]);
+    fetchLetters.mockResolvedValue([makeLetterSummary({ id: 'letter-autre-offre', jobId: 'job-2' })]);
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+
+    expect(screen.getByRole('link', { name: 'Adapter mon CV' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /CV adapté disponible/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Lettre disponible/ })).not.toBeInTheDocument();
+  });
+
+  it('ignore silencieusement une erreur de chargement des CV/lettres, sans faire echouer la page (revue finale)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    fetchResumes.mockRejectedValue(new ApiError('Panne serveur.', 500));
+    fetchLetters.mockRejectedValue(new ApiError('Panne serveur.', 500));
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: 'Développeuse full-stack' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Adapter mon CV' })).toHaveAttribute('href', '/resume/create/job-1');
+    expect(screen.getByRole('link', { name: 'Générer une lettre' })).toHaveAttribute('href', '/resume/letter/job-1');
   });
 });

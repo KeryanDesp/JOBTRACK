@@ -104,19 +104,17 @@ export class CoverLetterStoreService {
    * (400 `VALIDATION_ERROR` plutôt qu'une `ZodError` brute si le nettoyage réduit un champ requis
    * à une chaîne vide — ex. `subject` composé uniquement de caractères de contrôle, revue
    * sécurité tâche 5), aucune vérification d'identifiant (la lettre n'en porte aucun issu du
-   * profil, contrairement au CV). */
+   * profil, contrairement au CV). `updateMany` filtré par `userId` (même principe que
+   * `ResumeService.update`, revue finale) plutôt qu'un `findFirst` puis un `update` par seul `id` —
+   * élimine la fenêtre entre la vérification et l'écriture pendant laquelle la lettre pourrait être
+   * supprimée par ailleurs. */
   async update(userId: string, id: string, input: UpdateCoverLetterInput): Promise<CoverLetterDto> {
-    const row = await this.prisma.coverLetter.findFirst({ where: { id, userId }, select: { id: true } });
-    if (!row) throw this.notFound();
-
     const sanitized = parseSanitizedOrThrow(coverLetterContentSchema, sanitizeLetterContent(input.content));
 
-    const updated = await this.prisma.coverLetter.update({
-      where: { id },
-      data: { content: sanitized },
-      include: { job: { select: { title: true, company: true } } },
-    });
-    return this.toDto(updated);
+    const updated = await this.prisma.coverLetter.updateMany({ where: { id, userId }, data: { content: sanitized } });
+    if (updated.count === 0) throw this.notFound();
+
+    return this.get(userId, id);
   }
 
   /** Suppression d'une lettre (spec §6 : `DELETE /resume/letters/:id`) — 404 plutôt que 204 sur une

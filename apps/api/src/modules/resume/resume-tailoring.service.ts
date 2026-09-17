@@ -61,8 +61,9 @@ export interface ResumeTailoringResult {
   promptVersion: number;
   inputTokens: number;
   outputTokens: number;
-  /** Titre de CV suggéré (« CV {offre} — {entreprise} », spec §2) ; la persistance (tâche 5)
-   * reste libre de le reprendre tel quel ou de laisser l'utilisateur le modifier. */
+  /** Titre de CV suggéré (« CV {offre} — {entreprise} », spec §2) ; la persistance
+   * (`ResumeService`) reste libre de le reprendre tel quel ou de laisser l'utilisateur le
+   * modifier. */
   title: string;
 }
 
@@ -82,8 +83,9 @@ interface TailoringJob extends ResumeJobInput {
  * Adaptation d'un CV à une offre par Claude (spec §5), même socle que l'analyse d'offre
  * (tranche 4) et l'extraction de CV (tranche 2) : `messages.parse` + `zodOutputFormat`, prompt
  * système en cache, verrou Redis par (utilisateur, offre), jetons comptés, aucune écriture en
- * base (persistance laissée à la tâche 5). Ne journalise jamais le contenu du profil, de l'offre
- * ou de l'adaptation — seulement des identifiants, jetons et compteurs.
+ * base ici (persistance réalisée par `ResumeService`, qui appelle ce service). Ne journalise
+ * jamais le contenu du profil, de l'offre ou de l'adaptation — seulement des identifiants, jetons
+ * et compteurs.
  */
 @Injectable()
 export class ResumeTailoringService {

@@ -8,10 +8,10 @@ import { ResumeService } from './resume.service';
 
 // `ANTHROPIC_CLIENT`/`PrismaService`/`RedisService` viennent de `CommonModule` (`@Global()`) :
 // pas besoin de l'importer ici (même remarque que `MatchingModule`/`CvImportModule`). Contrôleur
-// et services de persistance posés par la tâche 5 (routes `/resume/*`, spec §6).
+// et services de persistance des routes `/resume/*` (spec §6). Aucun autre module n'important
+// `ResumeModule`, ces services n'ont pas besoin d'être exportés (revue finale).
 @Module({
   controllers: [ResumeController],
   providers: [ResumeSourceService, ResumeTailoringService, CoverLetterService, ResumeService, CoverLetterStoreService],
-  exports: [ResumeSourceService, ResumeTailoringService, CoverLetterService],
 })
 export class ResumeModule {}

@@ -142,7 +142,7 @@ describe('ResumeSourceService', () => {
     expect(result?.content.certifications[0]?.issuedAt).toBe('2023-05-01');
   });
 
-  it("l_identifiant renvoye est celui du profil, reutilisable pour l_ancrage (memes ids que les collections)", async () => {
+  it('les identifiants renvoyes sont ceux du profil, reutilisables pour l_ancrage', async () => {
     const user = await prisma.user.create({
       data: {
         email: EMAIL,
@@ -155,10 +155,13 @@ describe('ResumeSourceService', () => {
         },
       },
     });
-    const profile = await prisma.profile.findUniqueOrThrow({ where: { userId: user.id } });
+    const profile = await prisma.profile.findUniqueOrThrow({
+      where: { userId: user.id },
+      include: { skills: true },
+    });
 
     const result = await service.loadBase(user.id);
 
-    expect(result?.profileId).toBe(profile.id);
+    expect(result?.content.skills[0]?.id).toBe(profile.skills[0]?.id);
   });
 });

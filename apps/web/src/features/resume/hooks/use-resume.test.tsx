@@ -160,6 +160,19 @@ describe('useDeleteResume', () => {
     expect(list?.map((item) => item.id)).toEqual(['resume-1']);
     expect(toastError).toHaveBeenCalledWith('Suppression impossible.');
   });
+
+  it('purge le detail en cache apres la suppression (revue finale item 1)', async () => {
+    deleteResume.mockResolvedValue(undefined);
+    const client = makeClient();
+    client.setQueryData(resumeKeys.list, [makeSummary({ id: 'resume-1' })]);
+    client.setQueryData(resumeKeys.detail('resume-1'), makeResumeDto({ id: 'resume-1' }));
+
+    const { result } = renderHook(() => useDeleteResume(), { wrapper: wrapperFor(client) });
+    act(() => result.current.mutate('resume-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(resumeKeys.detail('resume-1'))).toBeUndefined();
+  });
 });
 
 describe('useResumeTemplate', () => {
@@ -269,6 +282,19 @@ describe('useDeleteLetter', () => {
     const list = client.getQueryData<CoverLetterSummaryDto[]>(resumeKeys.letters);
     expect(list?.map((item) => item.id)).toEqual(['letter-1']);
     expect(toastError).toHaveBeenCalledWith('Suppression impossible.');
+  });
+
+  it('purge le detail en cache apres la suppression (revue finale item 1)', async () => {
+    deleteLetter.mockResolvedValue(undefined);
+    const client = makeClient();
+    client.setQueryData(resumeKeys.letters, [makeLetterSummary({ id: 'letter-1' })]);
+    client.setQueryData(resumeKeys.letter('letter-1'), makeLetterDto({ id: 'letter-1' }));
+
+    const { result } = renderHook(() => useDeleteLetter(), { wrapper: wrapperFor(client) });
+    act(() => result.current.mutate('letter-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData(resumeKeys.letter('letter-1'))).toBeUndefined();
   });
 });
 

@@ -73,8 +73,9 @@ interface LetterJob extends ResumeJobInput {
 /**
  * Génération de lettre de motivation par Claude (spec §5), même socle que l'adaptation de CV
  * (`ResumeTailoringService`) : `messages.parse` + `zodOutputFormat`, prompt système en cache,
- * verrou Redis par (utilisateur, offre), jetons comptés, aucune écriture en base (persistance
- * laissée à la tâche 5). Ne journalise jamais le contenu du profil, de l'offre ou de la lettre.
+ * verrou Redis par (utilisateur, offre), jetons comptés, aucune écriture en base ici (persistance
+ * réalisée par `CoverLetterStoreService`, qui appelle ce service). Ne journalise jamais le contenu
+ * du profil, de l'offre ou de la lettre.
  */
 @Injectable()
 export class CoverLetterService {
@@ -88,15 +89,11 @@ export class CoverLetterService {
     @Inject(ANTHROPIC_CLIENT) private readonly client: AnthropicClient,
   ) {}
 
-  isConfigured(): boolean {
-    return this.client !== null;
-  }
-
   /**
    * Génère une lettre de motivation pour `userId` et l'offre `jobId`, dans le ton demandé.
    * `resumeId` (CV adapté déjà enregistré, optionnel) n'influence jamais la génération elle-même
-   * dans cette tranche — il n'est ici accepté que pour compatibilité avec la signature attendue
-   * par la persistance (tâche 5, qui l'utilisera comme clé étrangère `CoverLetter.resumeId`).
+   * — il n'est ici accepté que pour compatibilité avec la signature attendue par
+   * `CoverLetterStoreService.create`, qui l'utilise comme clé étrangère `CoverLetter.resumeId`.
    * Mêmes erreurs que `ResumeTailoringService.tailor` (profil incomplet, offre introuvable,
    * service IA non configuré/indisponible, sortie inexploitable, verrou déjà détenu).
    */

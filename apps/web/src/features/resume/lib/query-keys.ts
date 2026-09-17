@@ -4,7 +4,6 @@
  * jour le cache de l'extérieur (même principe que `features/jobs/lib/query-keys.ts`).
  */
 export const resumeKeys = {
-  all: ['resume'] as const,
   base: ['resume', 'base'] as const,
   list: ['resume', 'list'] as const,
   detail: (id: string) => ['resume', 'detail', id] as const,

@@ -10,12 +10,10 @@ import { PrismaService } from '../../common/prisma.service';
  * nécessaires à l'ancrage et à la sélection par id de l'adaptation IA.
  */
 export interface ResumeBase {
-  profileId: string;
   content: ResumeContent;
   aiContent: ResumeContent;
   /** Au moins une expérience ou une compétence : sinon rien d'exploitable à adapter (spec §5). */
   complete: boolean;
-  email: string;
 }
 
 /** `Date` (colonne `@db.Date`) → `'AAAA-MM-JJ'`, comme `toApi` (`profile/collection.service.ts`) —
@@ -121,11 +119,9 @@ export class ResumeSourceService {
     };
 
     return {
-      profileId: profile.id,
       content: buildBaseResume(source, { includeContact: true }),
       aiContent: buildBaseResume(source, { includeContact: false }),
       complete: source.experiences.length > 0 || source.skills.length > 0,
-      email: profile.user.email,
     };
   }
 }

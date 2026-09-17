@@ -150,8 +150,13 @@ export function useDeleteResume() {
       if (context?.previous) queryClient.setQueryData(resumeKeys.list, context.previous);
       toast.error(errorMessage(error, 'La suppression du CV a échoué.'));
     },
-    onSettled: () => {
+    // `removeQueries` (pas seulement `invalidateQueries`) : le détail (`resumeKeys.detail(id)`)
+    // doit disparaître du cache, pas juste être marqué obsolète — sinon `staleTime: 60_000` (config
+    // globale) le laisse survivre et un retour sur `/resume/:id` réaffiche l'objet supprimé sans
+    // refetch avant la minute suivante.
+    onSettled: (_data, _error, id) => {
       void queryClient.invalidateQueries({ queryKey: resumeKeys.list });
+      queryClient.removeQueries({ queryKey: resumeKeys.detail(id) });
     },
   });
 }
@@ -215,8 +220,11 @@ export function useDeleteLetter() {
       if (context?.previous) queryClient.setQueryData(resumeKeys.letters, context.previous);
       toast.error(errorMessage(error, 'La suppression de la lettre a échoué.'));
     },
-    onSettled: () => {
+    // Même principe que `useDeleteResume` : purge du détail (`resumeKeys.letter(id)`), pas
+    // seulement invalidation, sinon `staleTime: 60_000` le laisse survivre à la suppression.
+    onSettled: (_data, _error, id) => {
       void queryClient.invalidateQueries({ queryKey: resumeKeys.letters });
+      queryClient.removeQueries({ queryKey: resumeKeys.letter(id) });
     },
   });
 }

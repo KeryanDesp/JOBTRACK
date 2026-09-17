@@ -13,7 +13,7 @@ export interface TemplatePickerProps {
 }
 
 // Radix ne typant `onValueChange` qu'en `string` (n'importe quelle valeur
-// portee par un `value` de `RadioGroupItem`), une simple assertion `as
+// portée par un `value` de `RadioGroupItem`), une simple assertion `as
 // ResumeTemplate` accepterait sans vérification une valeur qui ne serait pas
 // l'un des deux modèles. `RESUME_TEMPLATES` (contrat partagé) sert ici de
 // garde d'exécution réelle : la conversion en `readonly string[]` élargit
@@ -35,7 +35,7 @@ export function TemplatePicker({ value, onChange, disabled, className }: Templat
         if (isResumeTemplate(next)) onChange(next);
       }}
       disabled={disabled}
-      className={cn('grid grid-cols-2 gap-3', className)}
+      className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2', className)}
       aria-label="Modèle de CV"
     >
       {RESUME_TEMPLATE_OPTIONS.map((option) => (

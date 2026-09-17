@@ -585,3 +585,13 @@ describe('groundLetter — plafond de longueur avec separateurs de paragraphe (i
     expect(textLength + separatorsLength).toBeLessThanOrEqual(900);
   });
 });
+
+describe('groundTailoring — garde AI_OUTPUT_INVALID (revue finale item 2)', () => {
+  it('leve AiOutputInvalidError si le contenu assemble ne respecte plus resumeContentSchema', () => {
+    // Contorsion volontaire : `schemaVersion` n'est jamais modifie par `groundTailoring`, donc ce
+    // chemin n'est aujourd'hui jamais atteint en pratique (voir le commentaire dans grounding.ts) —
+    // seul un cast permet de forcer un `base` deja hors schema pour exercer la garde elle-meme.
+    const base = { ...baseContent(), schemaVersion: 2 } as unknown as ResumeContent;
+    expect(() => groundTailoring(base, baseTailoring())).toThrow(AiOutputInvalidError);
+  });
+});

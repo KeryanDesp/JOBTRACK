@@ -2,13 +2,11 @@ import { readFileSync } from 'node:fs';
 import { expect, test, type Cookie, type Page } from '@playwright/test';
 
 /**
- * Tâche 9 (spec §9, plan tâche 9) : recette Playwright du CV adapté et de la lettre de
- * motivation, *sans IA* — sur cette machine, `ANTHROPIC_API_KEY` est absente, donc toute
- * adaptation/génération répond `AI_NOT_CONFIGURED` (503) une fois `POST /resume/tailor` /
- * `POST /resume/letters` disponibles. Ces routes (tâche 5) sont développées en parallèle de
- * cette suite : chaque test sonde l'état réel de l'API avant d'affirmer un texte précis, et se
- * contente d'une annotation quand une route répond encore un statut inattendu — jamais un
- * contenu de CV/lettre inventé.
+ * Recette Playwright du CV adapté et de la lettre de motivation (spec §9), *sans IA* — sur
+ * cette machine, `ANTHROPIC_API_KEY` est absente, donc toute adaptation/génération répond
+ * `AI_NOT_CONFIGURED` (503) via `POST /resume/tailor` / `POST /resume/letters`. Chaque test
+ * sonde l'état réel de l'API avant d'affirmer un texte précis, et se contente d'une annotation
+ * quand une route répond encore un statut inattendu — jamais un contenu de CV/lettre inventé.
  */
 
 const API_BASE = 'http://localhost:3001/api/v1';
@@ -123,10 +121,10 @@ async function parseProbeResponse(response: { status(): number; json: () => Prom
 }
 
 /**
- * Sonde `POST /resume/tailor` (tâche 5, en cours de développement en parallèle de cette suite)
- * sans dépendre du rendu : sur cette machine (sans `ANTHROPIC_API_KEY`), le contrôleur répond
- * `AI_NOT_CONFIGURED` (503) — `AiNotConfiguredError` est vérifiée avant tout comptage de
- * budget (`resume.errors.ts`), donc cet appel ne consomme jamais le quota d'adaptation.
+ * Sonde `POST /resume/tailor` sans dépendre du rendu : sur cette machine (sans
+ * `ANTHROPIC_API_KEY`), le contrôleur répond `AI_NOT_CONFIGURED` (503) — `AiNotConfiguredError`
+ * est vérifiée avant tout comptage de budget (`resume.errors.ts`), donc cet appel ne consomme
+ * jamais le quota d'adaptation.
  */
 async function probeTailor(page: Page, jobId: string): Promise<ProbeResult> {
   const response = await page.request.post(`${API_BASE}/resume/tailor`, {

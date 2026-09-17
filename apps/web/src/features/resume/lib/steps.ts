@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 /**
@@ -31,8 +32,24 @@ const DEFAULT_STEP: ResumeCreateStep = RESUME_STEPS[0];
  */
 export function useResumeStep(): { step: ResumeCreateStep; goToStep: (next: ResumeCreateStep) => void } {
   const [searchParams, setSearchParams] = useSearchParams();
-  const raw = searchParams.get('etape') ?? DEFAULT_STEP;
-  const step: ResumeCreateStep = isResumeCreateStep(raw) ? raw : DEFAULT_STEP;
+  const raw = searchParams.get('etape');
+  const step: ResumeCreateStep = raw !== null && isResumeCreateStep(raw) ? raw : DEFAULT_STEP;
+
+  // Une valeur presente mais invalide (`?etape=bogus`) retombe deja sur `DEFAULT_STEP` ci-dessus
+  // en memoire, mais l'URL garde la valeur invalide tant qu'elle n'est pas remplacee : un lien
+  // partage ou un retour arriere la referait apparaitre (revue finale). `replace: true` (meme
+  // principe que `goToStep`) : cette correction silencieuse n'empile pas d'entree d'historique.
+  useEffect(() => {
+    if (raw === null || isResumeCreateStep(raw)) return;
+    setSearchParams(
+      (previous) => {
+        const params = new URLSearchParams(previous);
+        params.set('etape', DEFAULT_STEP);
+        return params;
+      },
+      { replace: true },
+    );
+  }, [raw, setSearchParams]);
 
   function goToStep(next: ResumeCreateStep): void {
     setSearchParams(
