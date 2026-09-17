@@ -97,6 +97,9 @@ Revue : schémas conformes (§4), sondes adversariales rejetées, schémas fil c
 Note d'exécution initiale :
 Contrat livré (48 tests). Constat : le profil ne porte aucun champ de lien (LinkedIn, site) — `identity.links` existe dans le document mais `buildBaseResume` ne le remplit jamais ; `email` vient de `User`, à fournir par l'API. shared 182 → 230.
 
+### Task 6 — amendement après revue (`d1a8006` + correctif `5c4ca61`)
+`@react-pdf/renderer@4.9.0` installé (épinglé, commenté) sans exclusion pnpm ; chargé paresseusement (chunk `react-pdf.browser` ≈ 1,2 Mo / 454 Ko gzip séparé du bundle principal, un chunk de ~5 Ko par modèle) ; `resumeSections()` source unique de l'ordre des sections pour les deux jumeaux. Critiques corrigés : `project.url` et `identity.links` n'étaient rendus nulle part → rendus dans les quatre rendus (PDF via `Link`, césure des mots longs enregistrée) ; le modèle Moderne n'avait aucune marge de page (pied de page « Page n / N » sur le texte) → marges haut/bas, bandeau d'en-tête compensé en page 1. Importants : aperçu recalculé au changement de contenu (observation de la page, hauteur en état), séparateurs de pages approximés tous les 297 mm avec libellé, région défilable focusable et nom accessible « Aperçu du CV, page n », tests de l'aperçu, test de parité sur un document complet (ordre des titres sur les deux jumeaux, champs de chaque section), URL d'objet révoquée après le clic, erreur journalisée avant le toast, `useTailorResume`/`useCreateLetter` sans toast pour `AI_NOT_CONFIGURED`/`PROFILE_INCOMPLETE`/`RATE_LIMITED` (états rendus par la page), tests des hooks manquants. Mineurs : plus de `as` dans le sélecteur de modèle, `enabled` sur les requêtes par id, clé de détail de lettre hors de la clé de liste. Décision documentée : les compétences sont une liste plate (pas de regroupement par catégorie) ; `lib/pdf.ts` du plan fondu dans `templates.ts` + le bouton. web 295 → 380 (avec les pages).
+
 ---
 
 ## Limites assumées
