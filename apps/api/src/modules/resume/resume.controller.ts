@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpException, HttpStatus, Param, Patch, Post } from '@nestjs/common';
 import {
   createCoverLetterSchema,
   createTailoredResumeSchema,
@@ -18,17 +18,13 @@ import {
   type UpdateResumeTemplateInput,
 } from '@jobtrack/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { UserRateLimit, UserRateLimitGuard } from '../../common/user-rate-limit.guard';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 import { CoverLetterStoreService } from './cover-letter-store.service';
-import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
+import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError, RateLimitedError } from './resume.errors';
 import { ResumeService } from './resume.service';
 
 const AI_NOT_CONFIGURED_MESSAGE = "Le service IA n'est pas configuré.";
 const AI_UNAVAILABLE_MESSAGE = 'Le service IA ne répond pas. Réessayez.';
-
-const RESUME_TAILORING_RATE_LIMIT = { limit: 20, windowSeconds: 3600, bucket: 'resume-tailoring' } as const;
-const COVER_LETTER_RATE_LIMIT = { limit: 10, windowSeconds: 3600, bucket: 'cover-letter' } as const;
 
 /**
  * Routes du CV adapté et des lettres de motivation (spec §6, tâche 5) : le contrôleur traduit les
@@ -66,8 +62,6 @@ export class ResumeController {
 
   @Post('letters')
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(UserRateLimitGuard)
-  @UserRateLimit(COVER_LETTER_RATE_LIMIT)
   createLetter(
     @Body(new ZodValidationPipe(createCoverLetterSchema)) body: CreateCoverLetterInput,
     @CurrentUser() user: SessionUser,
@@ -102,8 +96,6 @@ export class ResumeController {
 
   @Post('tailor')
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(UserRateLimitGuard)
-  @UserRateLimit(RESUME_TAILORING_RATE_LIMIT)
   tailor(
     @Body(new ZodValidationPipe(createTailoredResumeSchema)) body: CreateTailoredResumeInput,
     @CurrentUser() user: SessionUser,
@@ -148,6 +140,9 @@ export class ResumeController {
     }
     if (error instanceof AiOutputInvalidError) {
       throw new HttpException({ code: error.code, message: error.message }, HttpStatus.BAD_GATEWAY);
+    }
+    if (error instanceof RateLimitedError) {
+      throw new HttpException({ code: error.code, message: error.message }, HttpStatus.TOO_MANY_REQUESTS);
     }
     throw error;
   }

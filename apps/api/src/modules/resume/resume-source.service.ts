@@ -34,8 +34,8 @@ function toIsoDateOrNull(date: Date | null): string | null {
  * Résout et construit le CV de base d'un utilisateur (spec §4/§5) : lecture du profil (+ ses six
  * collections et l'email du compte, `User.email` — absent du profil) en une seule requête,
  * conversion des dates `@db.Date` en chaînes `AAAA-MM-JJ`, puis `buildBaseResume` (fonction pure,
- * partagée web/API). Utilisé par `ResumeTailoringService`/`CoverLetterService` (entrée IA) et,
- * plus tard, par les routes `/resume/base` (tâche 5).
+ * partagée web/API). Utilisé par `ResumeTailoringService`/`CoverLetterService` (entrée IA) et par
+ * la route `GET /resume/base` (`ResumeService.getBase`).
  */
 @Injectable()
 export class ResumeSourceService {

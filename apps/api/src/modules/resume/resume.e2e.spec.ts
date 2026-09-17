@@ -17,7 +17,7 @@ import { ANTHROPIC_CLIENT } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
 import { SessionService } from '../auth/session.service';
-import { defaultTailoringOutput, FakeAnthropicClient, toAnthropicClient } from './testing/fake-anthropic';
+import { defaultLetterOutput, defaultTailoringOutput, FakeAnthropicClient, toAnthropicClient } from './testing/fake-anthropic';
 
 const BASE = '/api/v1/resume';
 
@@ -26,6 +26,13 @@ const BASE = '/api/v1/resume';
 // `E2E-RESUME-`.
 const EXTERNAL_ID_PREFIX = 'E2E-RESUME-';
 const USER_EMAIL_PREFIX = 'e2e-resume-';
+// Empreinte des offres créées par CETTE suite (revue, item 8) : distincte de
+// `E2E-RESUME-TAILOR-`/`E2E-RESUME-LETTER-` (préfixes des offres des specs unitaires
+// `resume-tailoring.service.spec.ts`/`cover-letter.service.spec.ts`, exécutées en parallèle dans
+// un worker Vitest différent) — sans cette distinction, `clearJobs` ci-dessous (`sources: none`)
+// supprimait aussi leurs offres, jamais recréées entre deux tests unitaires d'une même exécution
+// (flakiness). Aucun des trois préfixes n'est le préfixe d'un autre : jamais de recouvrement.
+const JOB_FINGERPRINT_PREFIX = 'E2E-RESUME-JOB-';
 
 let app: NestFastifyApplication;
 let unconfiguredApp: NestFastifyApplication;
@@ -51,7 +58,11 @@ async function buildApp(client: FakeAnthropicClient | null): Promise<NestFastify
 
 async function clearJobs(): Promise<void> {
   await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: EXTERNAL_ID_PREFIX } } });
-  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
+  // `fingerprint: { startsWith: JOB_FINGERPRINT_PREFIX }` (revue, item 8) : sans cette condition,
+  // `sources: { none: {} }` seul supprimait aussi les offres sans source des specs unitaires du
+  // module (`resume-tailoring.service.spec.ts`/`cover-letter.service.spec.ts`), qui n'en créent
+  // jamais — flaky quand ce fichier et ces specs tournent dans la même exécution Vitest.
+  await prisma.job.deleteMany({ where: { sources: { none: {} }, fingerprint: { startsWith: JOB_FINGERPRINT_PREFIX } } });
 }
 
 /** Supprime les comptes de cette suite : `Resume`/`ResumeVersion`/`CoverLetter`/`Profile`
@@ -68,13 +79,17 @@ async function clearUsers(): Promise<void> {
 /** Les seaux `resume-tailoring`/`cover-letter` (clé `ratelimit:<seau>:user:<id>`) et le budget
  * d'inscription (`ratelimit:*auth/register*`, partagé avec les autres suites e2e exécutées dans
  * le même run) — jamais un `ratelimit:*` en bloc. Les verrous Redis (`resume:tailor:*`,
- * `resume:letter:*`) portent un TTL court (2 min) et une clé par (utilisateur, offre) toujours
- * neuve : aucun nettoyage nécessaire (même remarque que `matching.e2e.spec.ts`). */
+ * `resume:letter:*`) portent normalement une clé par (utilisateur, offre) toujours neuve (TTL de
+ * 5 min, `LOCK_TTL_MS` des deux services — aucun nettoyage nécessaire, même remarque que
+ * `matching.e2e.spec.ts`) ; nettoyés ici tout de même, un test (§ « Verrou déjà détenu ») en pose
+ * explicitement un pour un (utilisateur, offre) réutilisé par le test suivant si jamais laissé. */
 async function clearRateLimits(): Promise<void> {
   const keys = [
     ...(await redis.client.keys('ratelimit:resume-tailoring:*')),
     ...(await redis.client.keys('ratelimit:cover-letter:*')),
     ...(await redis.client.keys('ratelimit:*auth/register*')),
+    ...(await redis.client.keys('resume:tailor:*')),
+    ...(await redis.client.keys('resume:letter:*')),
   ];
   if (keys.length > 0) await redis.client.del(...keys);
 }
@@ -239,7 +254,7 @@ async function createJob(options: { title?: string; company?: string; descriptio
   const publishedAt = new Date();
   const job = await prisma.job.create({
     data: {
-      fingerprint: `${key}-fp`,
+      fingerprint: `${JOB_FINGERPRINT_PREFIX}${randomUUID()}`,
       title: options.title ?? 'Ingénieur logiciel senior',
       company: options.company ?? 'Solaris Ingénierie',
       description: options.description ?? "Poste d'ingénieur logiciel senior chez Solaris Ingénierie, à Metz.",
@@ -250,6 +265,21 @@ async function createJob(options: { title?: string; company?: string; descriptio
     },
   });
   return { id: job.id };
+}
+
+/** Forme d'un corps d'erreur (`HttpExceptionFilter`) — jamais garantie par le type déclaré de
+ * `tailor`/`createLetter` (`ResumeDto`/`CoverLetterDto`, le cas de succès), qui reste néanmoins le
+ * seul type utile dans l'immense majorité des tests. `errorCode` (revue, item 17) centralise le
+ * seul cast nécessaire pour lire `code` sur une réponse d'erreur, plutôt que de le répéter à
+ * chaque site d'appel. */
+interface ApiErrorBody {
+  code: string;
+  message?: string;
+  details?: Record<string, string>;
+}
+
+function errorCode(response: { body: unknown }): string {
+  return (response.body as ApiErrorBody).code;
 }
 
 async function tailor(
@@ -496,6 +526,71 @@ describe('GET /resume/:id, PATCH /resume/:id, DELETE /resume/:id', () => {
     expect(body.content.summary).toBe('Resumeavec un caractere de controle.');
   });
 
+  it("PATCH avec un prenom compose uniquement de caracteres de controle renvoie 400 VALIDATION_ERROR, jamais 500 (revue securite)", async () => {
+    // `firstName` (`resumeContentSchema.identity`, `.min(1)`) passe la garde d'entree
+    // (`ZodValidationPipe`, qui ne nettoie jamais) puisqu'il n'est pas vide a ce moment-la, puis
+    // se retrouve reduit a une chaine vide par `sanitizeResumeContent` — sans `parseSanitizedOrThrow`
+    // (`resume.service.ts`), un `.parse` nu laisserait alors une `ZodError` brute remonter en 500.
+    const session = await registerUser();
+    const experiences = await createCompleteProfile(session);
+    fake.setTailoringOutput(tailoringOutputFor(experiences));
+    const job = await createJob();
+    const created = await tailor(session, job.id);
+    const controlChar = String.fromCharCode(0);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `${BASE}/${created.body.id}`,
+      headers: authHeaders(session),
+      payload: { content: { ...created.body.content, identity: { ...created.body.content.identity, firstName: controlChar } } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json<{ code: string }>();
+    expect(body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('deux PATCH concurrents reussissent tous les deux (versions 2 et 3), jamais un 500 (revue securite, tache 5)', async () => {
+    const session = await registerUser();
+    const experiences = await createCompleteProfile(session);
+    fake.setTailoringOutput(tailoringOutputFor(experiences));
+    const job = await createJob();
+    const created = await tailor(session, job.id);
+
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'PATCH',
+        url: `${BASE}/${created.body.id}`,
+        headers: authHeaders(session),
+        payload: { content: { ...created.body.content, summary: 'Résumé modifié — premier PATCH concurrent.' } },
+      }),
+      app.inject({
+        method: 'PATCH',
+        url: `${BASE}/${created.body.id}`,
+        headers: authHeaders(session),
+        payload: { content: { ...created.body.content, summary: 'Résumé modifié — second PATCH concurrent.' } },
+      }),
+    ]);
+
+    for (const response of [first, second]) {
+      expect([200, 409]).toContain(response.statusCode);
+      expect(response.statusCode).not.toBe(500);
+    }
+    const successVersions = [first, second]
+      .filter((response) => response.statusCode === 200)
+      .map((response) => response.json<ResumeDto>().version.number)
+      .sort();
+    // Les deux PATCH partent de la version 1 : chacun doit obtenir un numéro de version distinct
+    // (2 et 3), jamais le même (la garantie que la revue sécurité vérifie ici) — sauf si l'un des
+    // deux a échoué en 409 (« ceinture et bretelles », en pratique jamais atteint).
+    if (successVersions.length === 2) expect(successVersions).toEqual([2, 3]);
+
+    const finalRow = await prisma.resume.findUniqueOrThrow({ where: { id: created.body.id } });
+    expect(finalRow.currentVersion).toBe(successVersions.length === 2 ? 3 : 2);
+    const versionCount = await prisma.resumeVersion.count({ where: { resumeId: created.body.id } });
+    expect(versionCount).toBe(1 + successVersions.length);
+  });
+
   it('DELETE renvoie 204 puis 404 sur une seconde suppression', async () => {
     const session = await registerUser();
     const experiences = await createCompleteProfile(session);
@@ -572,7 +667,7 @@ describe('Budgets', () => {
     const response = await tailor(session, job.id);
 
     expect(response.statusCode).toBe(429);
-    expect((response.body as unknown as { code: string }).code).toBe('RATE_LIMITED');
+    expect(errorCode(response)).toBe('RATE_LIMITED');
   });
 
   it('renvoie 429 des que le budget de 10 lettres/heure est deja epuise', async () => {
@@ -584,7 +679,61 @@ describe('Budgets', () => {
     const response = await createLetter(session, { jobId: job.id, tone: 'PROFESSIONAL' });
 
     expect(response.statusCode).toBe(429);
-    expect((response.body as unknown as { code: string }).code).toBe('RATE_LIMITED');
+    expect(errorCode(response)).toBe('RATE_LIMITED');
+  });
+
+  it("404 JOB_NOT_FOUND sur l_adaptation de CV ne consomme jamais le budget (compte manuellement apres le controle offre)", async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+
+    const response = await tailor(session, 'offre-inexistante-budget');
+
+    expect(response.statusCode).toBe(404);
+    expect(errorCode(response)).toBe('JOB_NOT_FOUND');
+    const counter = await redis.client.get(`ratelimit:resume-tailoring:user:${session.userId}`);
+    expect(counter).toBeNull();
+  });
+
+  it('404 JOB_NOT_FOUND sur la generation de lettre ne consomme jamais le budget', async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+
+    const response = await createLetter(session, { jobId: 'offre-inexistante-budget', tone: 'SHORT' });
+
+    expect(response.statusCode).toBe(404);
+    expect(errorCode(response)).toBe('JOB_NOT_FOUND');
+    const counter = await redis.client.get(`ratelimit:cover-letter:user:${session.userId}`);
+    expect(counter).toBeNull();
+  });
+});
+
+describe('Verrou deja detenu (tache 5, budget compte apres le controle du verrou)', () => {
+  it('409 TAILORING_IN_PROGRESS avec un verrou Redis reel deja pose, aucun appel au modele', async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+    const job = await createJob();
+    // Meme format de cle que `ResumeTailoringService`/`LOCK_PREFIX` (`resume:tailor:{userId}:{jobId}`).
+    await redis.client.set(`resume:tailor:${session.userId}:${job.id}`, 'un-autre-jeton', 'PX', 300_000, 'NX');
+
+    const response = await tailor(session, job.id);
+
+    expect(response.statusCode).toBe(409);
+    expect(errorCode(response)).toBe('TAILORING_IN_PROGRESS');
+    expect(fake.calls).toBe(0);
+  });
+
+  it('409 LETTER_IN_PROGRESS avec un verrou Redis reel deja pose, aucun appel au modele', async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+    const job = await createJob();
+    // Meme format de cle que `CoverLetterService`/`LOCK_PREFIX` (`resume:letter:{userId}:{jobId}`).
+    await redis.client.set(`resume:letter:${session.userId}:${job.id}`, 'un-autre-jeton', 'PX', 300_000, 'NX');
+
+    const response = await createLetter(session, { jobId: job.id, tone: 'SHORT' });
+
+    expect(response.statusCode).toBe(409);
+    expect(errorCode(response)).toBe('LETTER_IN_PROGRESS');
+    expect(fake.calls).toBe(0);
   });
 });
 
@@ -597,7 +746,7 @@ describe('Service IA non configure', () => {
     const response = await tailor(session, job.id, unconfiguredApp);
 
     expect(response.statusCode).toBe(503);
-    expect((response.body as unknown as { code: string }).code).toBe('AI_NOT_CONFIGURED');
+    expect(errorCode(response)).toBe('AI_NOT_CONFIGURED');
   });
 
   it('503 AI_NOT_CONFIGURED sur la generation de lettre', async () => {
@@ -608,7 +757,7 @@ describe('Service IA non configure', () => {
     const response = await createLetter(session, { jobId: job.id, tone: 'SHORT' }, unconfiguredApp);
 
     expect(response.statusCode).toBe(503);
-    expect((response.body as unknown as { code: string }).code).toBe('AI_NOT_CONFIGURED');
+    expect(errorCode(response)).toBe('AI_NOT_CONFIGURED');
   });
 });
 
@@ -620,7 +769,7 @@ describe('Profil incomplet', () => {
     const response = await tailor(session, job.id);
 
     expect(response.statusCode).toBe(409);
-    expect((response.body as unknown as { code: string }).code).toBe('PROFILE_INCOMPLETE');
+    expect(errorCode(response)).toBe('PROFILE_INCOMPLETE');
     const row = await prisma.resume.findFirst({ where: { userId: session.userId } });
     expect(row).toBeNull();
   });
@@ -637,7 +786,7 @@ describe('Sortie IA inexploitable', () => {
     const response = await tailor(session, job.id);
 
     expect(response.statusCode).toBe(502);
-    expect((response.body as unknown as { code: string }).code).toBe('AI_OUTPUT_INVALID');
+    expect(errorCode(response)).toBe('AI_OUTPUT_INVALID');
     expect(JSON.stringify(response.body)).not.toContain(secretMarker);
     const row = await prisma.resume.findFirst({ where: { userId: session.userId } });
     expect(row).toBeNull();
@@ -735,6 +884,97 @@ describe('Lettres de motivation', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json<CoverLetterSummaryDto[]>()).toEqual([]);
+  });
+
+  it("un identifiant de lettre envoye a /resume/:id (jamais /resume/letters/:id) renvoie 404 RESUME_NOT_FOUND, la lettre reste intacte", async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+    const job = await createJob();
+    const created = await createLetter(session, { jobId: job.id, tone: 'SHORT' });
+
+    const get = await app.inject({ method: 'GET', url: `${BASE}/${created.body.id}`, headers: authHeaders(session) });
+    expect(get.statusCode).toBe(404);
+    expect(get.json<{ code: string }>().code).toBe('RESUME_NOT_FOUND');
+
+    // Payload conforme à `updateResumeSchema` (`ZodValidationPipe` valide la forme avant même
+    // que le contrôleur ne s'exécute, quel que soit l'id dans l'URL) — jamais le contenu de la
+    // lettre elle-même (une autre forme, `CoverLetterContent`), qui serait rejeté en 400 par le
+    // pipe avant d'atteindre le 404 attendu ici.
+    const unrelatedResumeContent: ResumeContent = {
+      schemaVersion: 1,
+      identity: { firstName: 'Prénom', lastName: 'Nom', title: null },
+      summary: '',
+      experiences: [],
+      educations: [],
+      skills: [],
+      languages: [],
+      certifications: [],
+      projects: [],
+    };
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `${BASE}/${created.body.id}`,
+      headers: authHeaders(session),
+      payload: { content: unrelatedResumeContent },
+    });
+    expect(patch.statusCode).toBe(404);
+    expect(patch.json<{ code: string }>().code).toBe('RESUME_NOT_FOUND');
+
+    const del = await app.inject({ method: 'DELETE', url: `${BASE}/${created.body.id}`, headers: authHeaders(session) });
+    expect(del.statusCode).toBe(404);
+    expect(del.json<{ code: string }>().code).toBe('RESUME_NOT_FOUND');
+
+    // La lettre elle-même n'a jamais été touchée par ces trois appels égarés sur les routes `/resume/:id`.
+    const stillThere = await app.inject({ method: 'GET', url: `${BASE}/letters/${created.body.id}`, headers: authHeaders(session) });
+    expect(stillThere.statusCode).toBe(200);
+    expect(stillThere.json<CoverLetterDto>().content.closing).toBe(created.body.content.closing);
+  });
+
+  it("PATCH avec un sujet compose uniquement de caracteres de controle renvoie 400 VALIDATION_ERROR, jamais 500 (revue securite)", async () => {
+    const session = await registerUser();
+    await createCompleteProfile(session);
+    const job = await createJob();
+    const created = await createLetter(session, { jobId: job.id, tone: 'SHORT' });
+    const controlChar = String.fromCharCode(0);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `${BASE}/letters/${created.body.id}`,
+      headers: authHeaders(session),
+      payload: { content: { ...created.body.content, subject: controlChar } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ code: string }>().code).toBe('VALIDATION_ERROR');
+  });
+
+  it("sortie IA avec un sujet non vide mais entierement compose de caracteres de controle : 502 AI_OUTPUT_INVALID, jamais 500 (revue securite)", async () => {
+    // Un sujet de deux caracteres de controle est non vide et passe donc le premier controle de
+    // schema cote service (avant nettoyage) ; c_est seulement une fois nettoye par
+    // `stripControlChars` (`groundLetter`) que `subject` devient une chaine vide — doit toujours
+    // remonter en 502, jamais en 500.
+    const session = await registerUser();
+    await createCompleteProfile(session);
+    const job = await createJob();
+    fake.setLetterOutput({
+      recipient: null,
+      subject: String.fromCharCode(0).repeat(2),
+      greeting: 'Madame, Monsieur,',
+      paragraphs: ["Je vous propose d'échanger sur ma candidature."],
+      closing: 'Cordialement,',
+      signature: 'Prénom Nom',
+    });
+
+    const response = await createLetter(session, { jobId: job.id, tone: 'SHORT' });
+
+    expect(response.statusCode).toBe(502);
+    expect(errorCode(response)).toBe('AI_OUTPUT_INVALID');
+
+    // `fake.reset()` (`clearAll`, entre deux tests) ne remet jamais `letterOutput` à sa valeur
+    // par défaut (par conception — voir sa docstring) : rétabli explicitement ici, sinon tout
+    // test suivant de ce fichier qui génère une lettre sans poser sa propre sortie recevrait
+    // celle-ci, restée invalide.
+    fake.setLetterOutput(defaultLetterOutput());
   });
 });
 

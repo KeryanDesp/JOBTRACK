@@ -1,5 +1,6 @@
 import type { CoverLetterContent, ResumeContent, ResumeTailoringInput } from '@jobtrack/shared';
 import { describe, expect, it } from 'vitest';
+import { AiOutputInvalidError } from '../resume.errors';
 import { buildKnownNumbers, buildKnownTerms, groundLetter, groundTailoring, isGrounded } from './grounding';
 
 function baseContent(): ResumeContent {
@@ -410,6 +411,16 @@ describe('groundLetter', () => {
     const letter = baseLetter(['Kubernetes a permis de transformer nos livraisons chez Solaris Ingénierie.']);
     const { removedSentences } = groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL');
     expect(removedSentences).toHaveLength(1);
+  });
+
+  it('sujet compose uniquement de caracteres de controle : AiOutputInvalidError, jamais une ZodError brute (revue securite)', () => {
+    // `stripControlChars` reduit ce sujet a une chaine vide, qui viole `coverLetterContentSchema`
+    // (`subject` requis, `.min(1)` implicite via l_absence de valeur par defaut) — doit toujours
+    // remonter en `AiOutputInvalidError` (502), jamais en `ZodError` (500).
+    const letter = { ...baseLetter(['Paragraphe ancre chez Solaris Ingénierie.']), subject: '  ' };
+    expect(() => groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL')).toThrow(
+      AiOutputInvalidError,
+    );
   });
 });
 

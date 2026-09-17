@@ -92,7 +92,7 @@ notes                string ≤ 300   (une phrase : ce qui a été mis en avant)
 
 **`changes`** = diff par section calculé par le serveur (base vs résultat ancré), conservé sur la version `AI` ; l'utilisateur voit chaque puce avec sa source.
 
-**Budgets** : 20 adaptations / heure / utilisateur (seau `resume-tailoring`), 10 lettres / heure (`cover-letter`) ; une adaptation = un appel. Verrou par (utilisateur, offre) 2 min.
+**Budgets** : 20 adaptations / heure / utilisateur (seau `resume-tailoring`), 10 lettres / heure (`cover-letter`) ; une adaptation = un appel. Verrou par (utilisateur, offre) 5 min (couvre le pire cas d'un appel `messages.parse` avec ses tentatives : 90 s × 3 tentatives, avec marge).
 
 **Lettre** : entrée = profil (sans coordonnées), offre (titre, entreprise, description bornée, exigences), ton ; sortie `coverLetterWireSchema` ; ancrage : nombres et noms propres des paragraphes doivent exister dans le profil ou l'offre, sinon la phrase est retirée ; longueur par ton (Courte ≤ 900 caractères, Professionnelle ≤ 1800, Très personnalisée ≤ 2600).
 

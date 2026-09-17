@@ -57,7 +57,11 @@ const MAX_OFFER_DESCRIPTION_CHARS = 20_000;
 // d'être enveloppée dans sa balise — jamais l'assemblage final, pour ne jamais risquer de
 // tronquer une balise de fermeture elle-même (même principe que `resume-tailoring.prompt.ts`).
 export const MAX_PROFILE_SECTION_CHARS = 30_000;
-export const MAX_OFFER_SECTION_CHARS = 20_000;
+// 22 000, jamais 20 000 (revue, même raison que `resume-tailoring.prompt.ts`) : les quatre lignes
+// d'en-tête ajoutées par `buildOfferSection` avant la description brute (déjà bornée à
+// `MAX_OFFER_DESCRIPTION_CHARS`) faisaient toujours dépasser un plafond de section égal à cette
+// borne de description.
+export const MAX_OFFER_SECTION_CHARS = 22_000;
 
 /** Même précaution que `resume-tailoring.prompt.ts`/`sanitizeTags` : retire toute variante de
  * balise `<profil>`/`<offre>` présente dans les données elles-mêmes. */

@@ -11,9 +11,10 @@ import type { Prisma } from '@prisma/client';
 import { stripControlChars } from '../../common/text/control-chars';
 import { PrismaService } from '../../common/prisma.service';
 import { CoverLetterService } from './cover-letter.service';
+import { parseSanitizedOrThrow } from './lib/validation';
+import { RESUME_NOT_FOUND_MESSAGE } from './resume.errors';
 
 const LETTER_NOT_FOUND_MESSAGE = 'Lettre introuvable.';
-const RESUME_NOT_FOUND_MESSAGE = 'CV introuvable.';
 
 type LetterWithJob = Prisma.CoverLetterGetPayload<{ include: { job: { select: { title: true; company: true } } } }>;
 
@@ -99,13 +100,16 @@ export class CoverLetterStoreService {
     return this.toDto(row);
   }
 
-  /** Édition du contenu (spec §6/§8 : `PATCH /resume/letters/:id`) : texte nettoyé, aucune
-   * vérification d'identifiant (la lettre n'en porte aucun issu du profil, contrairement au CV). */
+  /** Édition du contenu (spec §6/§8 : `PATCH /resume/letters/:id`) : texte nettoyé puis revalidé
+   * (400 `VALIDATION_ERROR` plutôt qu'une `ZodError` brute si le nettoyage réduit un champ requis
+   * à une chaîne vide — ex. `subject` composé uniquement de caractères de contrôle, revue
+   * sécurité tâche 5), aucune vérification d'identifiant (la lettre n'en porte aucun issu du
+   * profil, contrairement au CV). */
   async update(userId: string, id: string, input: UpdateCoverLetterInput): Promise<CoverLetterDto> {
     const row = await this.prisma.coverLetter.findFirst({ where: { id, userId }, select: { id: true } });
     if (!row) throw this.notFound();
 
-    const sanitized = coverLetterContentSchema.parse(sanitizeLetterContent(input.content));
+    const sanitized = parseSanitizedOrThrow(coverLetterContentSchema, sanitizeLetterContent(input.content));
 
     const updated = await this.prisma.coverLetter.update({
       where: { id },

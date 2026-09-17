@@ -14,11 +14,14 @@ import {
 import type { JobAnalysis } from '@prisma/client';
 import { ANTHROPIC_CLIENT, ANTHROPIC_MODEL, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
+import { rateLimitKey } from '../../common/rate-limit.guard';
+import { RateLimiterService } from '../../common/rate-limiter.service';
 import { RedisService } from '../../common/redis.service';
 import { stripControlChars } from '../../common/text/control-chars';
 import { computeChanges } from './lib/changes';
 import { groundTailoring } from './lib/grounding';
-import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
+import { RESUME_TAILORING_RATE_LIMIT } from './resume.constants';
+import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError, RateLimitedError } from './resume.errors';
 import { buildTailoringDocument, RESUME_TAILORING_PROMPT_VERSION, RESUME_TAILORING_SYSTEM_PROMPT, type ResumeJobInput } from './resume-tailoring.prompt';
 import { ResumeSourceService } from './resume-source.service';
 
@@ -90,6 +93,7 @@ export class ResumeTailoringService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly resumeSource: ResumeSourceService,
+    private readonly rateLimiter: RateLimiterService,
     @Inject(ANTHROPIC_CLIENT) private readonly client: AnthropicClient,
   ) {}
 
@@ -125,6 +129,17 @@ export class ResumeTailoringService {
     try {
       const requirements = this.parseRequirements(job.analysis);
       const document = buildTailoringDocument({ base: base.aiContent, job, requirements });
+
+      // Compté manuellement, juste avant l'appel Claude (revue sécurité, tâche 5) : jamais par
+      // une garde posée sur la route, qui aurait déjà consommé le budget sur la 404/409/503
+      // ci-dessus.
+      const rateLimitHit = await this.rateLimiter.hit(
+        rateLimitKey(RESUME_TAILORING_RATE_LIMIT.bucket, `user:${userId}`),
+        RESUME_TAILORING_RATE_LIMIT.limit,
+        RESUME_TAILORING_RATE_LIMIT.windowSeconds,
+      );
+      if (!rateLimitHit.allowed) throw new RateLimitedError();
+
       const result = await this.callClaude(client, document, jobId);
 
       const ground = groundTailoring(base.content, result.tailoring);

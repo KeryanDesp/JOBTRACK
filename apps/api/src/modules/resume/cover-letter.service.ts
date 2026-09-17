@@ -14,10 +14,14 @@ import {
 import type { JobAnalysis } from '@prisma/client';
 import { ANTHROPIC_CLIENT, ANTHROPIC_MODEL, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
+import { rateLimitKey } from '../../common/rate-limit.guard';
+import { RateLimiterService } from '../../common/rate-limiter.service';
 import { RedisService } from '../../common/redis.service';
 import { buildKnownNumbers, buildKnownTerms, groundLetter } from './lib/grounding';
+import { parseAiOutputOrThrow } from './lib/validation';
 import { buildLetterDocument, COVER_LETTER_PROMPT_VERSION, COVER_LETTER_SYSTEM_PROMPT, type ResumeJobInput } from './cover-letter.prompt';
-import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
+import { COVER_LETTER_RATE_LIMIT } from './resume.constants';
+import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError, RateLimitedError } from './resume.errors';
 import { ResumeSourceService } from './resume-source.service';
 
 const LOCK_PREFIX = 'resume:letter:';
@@ -80,6 +84,7 @@ export class CoverLetterService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly resumeSource: ResumeSourceService,
+    private readonly rateLimiter: RateLimiterService,
     @Inject(ANTHROPIC_CLIENT) private readonly client: AnthropicClient,
   ) {}
 
@@ -114,6 +119,17 @@ export class CoverLetterService {
     try {
       const requirements = this.parseRequirements(job.analysis);
       const document = buildLetterDocument({ base: base.aiContent, job, requirements, tone });
+
+      // Compté manuellement, juste avant l'appel Claude (revue sécurité, tâche 5) : jamais par
+      // une garde posée sur la route, qui aurait déjà consommé le budget sur la 404/409/503
+      // ci-dessus.
+      const rateLimitHit = await this.rateLimiter.hit(
+        rateLimitKey(COVER_LETTER_RATE_LIMIT.bucket, `user:${userId}`),
+        COVER_LETTER_RATE_LIMIT.limit,
+        COVER_LETTER_RATE_LIMIT.windowSeconds,
+      );
+      if (!rateLimitHit.allowed) throw new RateLimitedError();
+
       const result = await this.callClaude(client, document, jobId);
 
       const sources = this.collectSources(base.aiContent, job, requirements);
@@ -129,7 +145,15 @@ export class CoverLetterService {
       // vérifié séparément, ici, contre le texte brut de l'offre ; jamais conservé sinon, même
       // assaini (`groundLetter` l'a déjà nettoyé des caractères de contrôle).
       const recipient = this.recipientAppearsInOffer(grounded.content.recipient, job) ? grounded.content.recipient : null;
-      const content: CoverLetterContent = coverLetterContentSchema.parse({ ...grounded.content, recipient, signature: fullName });
+      // `parseAiOutputOrThrow` (jamais `.parse` nu, revue sécurité tâche 5) : `signature`/
+      // `recipient` réassignés ici pourraient à eux seuls rendre la sortie non conforme au schéma
+      // (cas défensif — `fullName` provient du profil, déjà validé, mais jamais garanti non vide
+      // par ce schéma-ci) ; toujours un 502 `AI_OUTPUT_INVALID`, jamais une `ZodError` brute (500).
+      const content: CoverLetterContent = parseAiOutputOrThrow(coverLetterContentSchema, {
+        ...grounded.content,
+        recipient,
+        signature: fullName,
+      });
 
       this.logger.log(
         `Lettre de motivation générée — offre=${jobId} ton=${tone} modèle=${result.model} ` +

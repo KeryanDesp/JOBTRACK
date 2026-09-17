@@ -8,9 +8,12 @@ import type { Job, Prisma } from '@prisma/client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
+import { rateLimitKey } from '../../common/rate-limit.guard';
+import { RateLimiterService } from '../../common/rate-limiter.service';
 import type { RedisService } from '../../common/redis.service';
 import { CoverLetterService } from './cover-letter.service';
-import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
+import { COVER_LETTER_RATE_LIMIT } from './resume.constants';
+import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError, RateLimitedError } from './resume.errors';
 import { ResumeSourceService } from './resume-source.service';
 
 const prisma = new PrismaService();
@@ -110,16 +113,25 @@ function fakeParse(overrides: Partial<FakeParsedMessage> = {}): ReturnType<typeo
   });
 }
 
+/** Distingue les deux scripts Lua évalués par ce service : `UNLOCK_SCRIPT` (verrou, compare-and-
+ * delete par jeton) et `INCREMENT_SCRIPT` (`RateLimiterService.hit`, budget) — reconnus par leur
+ * commande Redis dominante (`DEL`/`INCR`). */
 function fakeRedis(): RedisService {
   const store = new Map<string, string>();
+  const counters = new Map<string, number>();
   const client = {
     set: vi.fn((key: string, value: string, ...args: unknown[]) => {
       if (args.includes('NX') && store.has(key)) return Promise.resolve(null);
       store.set(key, value);
       return Promise.resolve('OK');
     }),
-    eval: vi.fn((_script: string, _numKeys: number, key: string, token: string) => {
-      if (store.get(key) === token) {
+    eval: vi.fn((script: string, _numKeys: number, key: string, arg: string) => {
+      if (script.includes('INCR')) {
+        const next = (counters.get(key) ?? 0) + 1;
+        counters.set(key, next);
+        return Promise.resolve(next);
+      }
+      if (store.get(key) === arg) {
         store.delete(key);
         return Promise.resolve(1);
       }
@@ -127,6 +139,12 @@ function fakeRedis(): RedisService {
     }),
   };
   return { client } as unknown as RedisService;
+}
+
+/** `RateLimiterService` adossé à un `fakeRedis()` indépendant de celui du verrou de chaque test —
+ * budget toujours neuf, donc jamais épuisé par défaut. */
+function fakeRateLimiter(): RateLimiterService {
+  return new RateLimiterService(fakeRedis());
 }
 
 function lockKeyFor(userId: string, jobId: string): string {
@@ -161,15 +179,15 @@ describe('CoverLetterService', () => {
   }
 
   it('isConfigured reflète la présence du client', () => {
-    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, null).isConfigured()).toBe(false);
-    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(fakeParse())).isConfigured()).toBe(true);
+    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), null).isConfigured()).toBe(false);
+    expect(new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(fakeParse())).isConfigured()).toBe(true);
   });
 
   it("génère une lettre à partir de la fixture livrée : signature forcée au nom complet du profil", async () => {
     const profile = await createProfile();
     const job = await createJob();
     const parse = fakeParse({ parsed_output: loadLetterFixture() });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
 
@@ -185,7 +203,7 @@ describe('CoverLetterService', () => {
     const job = await createJob({ description: 'Contactez Madame Sophie Legrand pour toute question sur ce poste.' });
     const letter = { ...loadLetterFixture(), recipient: 'Madame Sophie Legrand' };
     const parse = fakeParse({ parsed_output: letter });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
 
@@ -197,7 +215,7 @@ describe('CoverLetterService', () => {
     const job = await createJob();
     const letter = { ...loadLetterFixture(), recipient: 'Madame Sophie Legrand' };
     const parse = fakeParse({ parsed_output: letter });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
 
@@ -216,7 +234,7 @@ describe('CoverLetterService', () => {
       signature: 'Alex Dupont',
     };
     const parse = fakeParse({ parsed_output: longLetter });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     const result = await service.write(profile.userId, job.id, 'SHORT');
 
@@ -239,7 +257,7 @@ describe('CoverLetterService', () => {
       signature: 'Alex Dupont',
     };
     const parse = fakeParse({ parsed_output: letter });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
 
@@ -252,7 +270,7 @@ describe('CoverLetterService', () => {
     const profile = await createProfile();
     const job = await createJob();
     const parse = fakeParse({ parsed_output: loadLetterFixture() });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await service.write(profile.userId, job.id, 'PROFESSIONAL');
 
@@ -265,7 +283,7 @@ describe('CoverLetterService', () => {
   it('service IA non configuré : AiNotConfiguredError, aucun appel au modèle', async () => {
     const profile = await createProfile();
     const job = await createJob();
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, null);
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), null);
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(AiNotConfiguredError);
   });
@@ -275,7 +293,7 @@ describe('CoverLetterService', () => {
     const job = await createJob();
     const connectionError = new Anthropic.APIConnectionError({ message: 'panne réseau' });
     const parse = vi.fn<Parse>().mockRejectedValue(connectionError);
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(AiUnavailableError);
   });
@@ -284,7 +302,7 @@ describe('CoverLetterService', () => {
     const profile = await createProfile();
     const job = await createJob();
     const parse = fakeParse({ stop_reason: 'max_tokens', parsed_output: null });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(AiOutputInvalidError);
   });
@@ -293,7 +311,22 @@ describe('CoverLetterService', () => {
     const profile = await createProfile();
     const job = await createJob();
     const parse = fakeParse({ parsed_output: { recipient: null, subject: '', greeting: '', paragraphs: [], closing: '', signature: '' } });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
+
+    await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(AiOutputInvalidError);
+  });
+
+  it('sujet compose uniquement de caracteres de controle (non vide, donc jamais retenu par callClaude) : AiOutputInvalidError une fois nettoye (revue securite)', async () => {
+    // `  ` (longueur 2) passe `coverLetterContentSchema.safeParse` dans `callClaude`
+    // (`.trim()` ne retire pas les caracteres de controle) ; c_est seulement une fois nettoye par
+    // `stripControlChars`, dans `groundLetter`, que `subject` devient une chaine vide — doit
+    // toujours remonter en `AiOutputInvalidError` (502), jamais une `ZodError` brute (500).
+    const profile = await createProfile();
+    const job = await createJob();
+    const fixture = loadLetterFixture();
+    fixture.subject = '  ';
+    const parse = fakeParse({ parsed_output: fixture });
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(AiOutputInvalidError);
   });
@@ -304,23 +337,50 @@ describe('CoverLetterService', () => {
     const redis = fakeRedis();
     await redis.client.set(lockKeyFor(profile.userId, job.id), 'un-autre-jeton', 'PX', 120_000, 'NX');
     const parse = fakeParse({ parsed_output: loadLetterFixture() });
-    const service = new CoverLetterService(prisma, redis, resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, redis, resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(ConflictException);
     expect(parse).not.toHaveBeenCalled();
   });
 
+  it('budget épuisé (seau cover-letter) : RateLimitedError, aucun appel au modèle', async () => {
+    const profile = await createProfile();
+    const job = await createJob();
+    const rateLimiter = new RateLimiterService(fakeRedis());
+    const key = rateLimitKey(COVER_LETTER_RATE_LIMIT.bucket, `user:${profile.userId}`);
+    for (let i = 0; i < COVER_LETTER_RATE_LIMIT.limit; i += 1) {
+      await rateLimiter.hit(key, COVER_LETTER_RATE_LIMIT.limit, COVER_LETTER_RATE_LIMIT.windowSeconds);
+    }
+    const parse = fakeParse({ parsed_output: loadLetterFixture() });
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, rateLimiter, fakeClient(parse));
+
+    await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(RateLimitedError);
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it('offre introuvable : ne consomme jamais le budget (compté après le contrôle offre)', async () => {
+    const profile = await createProfile();
+    const rateLimiter = new RateLimiterService(fakeRedis());
+    const key = rateLimitKey(COVER_LETTER_RATE_LIMIT.bucket, `user:${profile.userId}`);
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, rateLimiter, fakeClient(fakeParse()));
+
+    await expect(service.write(profile.userId, 'offre-inexistante-lettre', 'SHORT')).rejects.toBeInstanceOf(NotFoundException);
+
+    const check = await rateLimiter.hit(key, COVER_LETTER_RATE_LIMIT.limit, COVER_LETTER_RATE_LIMIT.windowSeconds);
+    expect(check.count).toBe(1);
+  });
+
   it('profil sans expérience ni compétence : ProfileIncompleteError', async () => {
     const profile = await createProfile({ withSkill: false });
     const job = await createJob();
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(fakeParse()));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(fakeParse()));
 
     await expect(service.write(profile.userId, job.id, 'SHORT')).rejects.toBeInstanceOf(ProfileIncompleteError);
   });
 
   it('offre introuvable : NotFoundException', async () => {
     const profile = await createProfile();
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(fakeParse()));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(fakeParse()));
 
     await expect(service.write(profile.userId, 'offre-inexistante-lettre', 'SHORT')).rejects.toBeInstanceOf(NotFoundException);
   });
@@ -329,7 +389,7 @@ describe('CoverLetterService', () => {
     const profile = await createProfile();
     const job = await createJob({ description: `Offre. ${SECRET_MARKER}` });
     const parse = fakeParse({ parsed_output: loadLetterFixture() });
-    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeRateLimiter(), fakeClient(parse));
 
     await service.write(profile.userId, job.id, 'PROFESSIONAL', 'un-resume-id');
 

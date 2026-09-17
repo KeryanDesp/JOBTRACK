@@ -10,6 +10,7 @@ import {
 } from '@jobtrack/shared';
 import { stripControlChars } from '../../../common/text/control-chars';
 import { canonicalSkill } from '../../matching/scoring/normalize';
+import { parseAiOutputOrThrow } from './validation';
 import { extractNumbers, extractNumbersDetailed, extractProperNounsDetailed, sentences } from './text-units';
 
 /**
@@ -469,7 +470,11 @@ export function groundLetter(
   const paragraphsToCap = paragraphSentences.length > 0 ? paragraphSentences : [[NEUTRAL_FALLBACK_PARAGRAPH]];
   const cappedParagraphs = capParagraphsLength(paragraphsToCap, COVER_LETTER_MAX_CHARS[tone]);
 
-  const content = coverLetterContentSchema.parse({
+  // `parseAiOutputOrThrow` (jamais `.parse` nu, revue sécurité tâche 5) : un champ requis (ex.
+  // `subject`) composé uniquement de caractères de contrôle/bidi est réduit à une chaîne vide par
+  // `stripControlChars` ci-dessus — une sortie IA alors non conforme au schéma doit toujours
+  // remonter en `AiOutputInvalidError` (502), jamais en `ZodError` brute (500).
+  const content = parseAiOutputOrThrow(coverLetterContentSchema, {
     recipient: letter.recipient === null ? null : stripControlChars(letter.recipient),
     subject: stripControlChars(letter.subject),
     greeting: stripControlChars(letter.greeting),

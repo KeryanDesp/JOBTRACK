@@ -72,7 +72,12 @@ const MAX_OFFER_DESCRIPTION_CHARS = 20_000;
 // AVANT d'être enveloppée dans sa balise — jamais l'assemblage final (`<profil>…</offre>`
 // complet), pour ne jamais risquer de tronquer une balise de fermeture elle-même.
 export const MAX_PROFILE_SECTION_CHARS = 30_000;
-export const MAX_OFFER_SECTION_CHARS = 20_000;
+// 22 000, jamais 20 000 (revue) : à défaut d'analyse structurée, `buildOfferSection` ajoute
+// systématiquement quatre lignes d'en-tête (titre/entreprise/contrat/expérience) avant la
+// description brute déjà bornée à `MAX_OFFER_DESCRIPTION_CHARS` (20 000) — un plafond de section
+// égal à cette borne de description faisait donc toujours dépasser la section de la longueur de
+// ces en-têtes, avant même toute troncature utile.
+export const MAX_OFFER_SECTION_CHARS = 22_000;
 
 /** Retire toute variante de balise `<profil>`/`</profil>`/`<offre>`/`</offre>` (espaces internes
  * tolérés, ouvrante ou fermante) présente dans les données elles-mêmes : sans cela, un profil ou
