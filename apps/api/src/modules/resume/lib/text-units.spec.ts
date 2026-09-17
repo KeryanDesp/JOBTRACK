@@ -133,4 +133,13 @@ describe('extractProperNouns', () => {
   it('renvoie un tableau vide pour un texte sans entite', () => {
     expect(extractProperNouns('gestion quotidienne des priorites.')).toEqual([]);
   });
+
+  it('limite connue : un mot ordinaire capitalise en milieu de phrase reste traite comme un nom propre', () => {
+    // L_exemption des mots ordinaires (« Pilotage », « Mise »...) ne s_applique qu_en tete
+    // de phrase (voir `extractSentenceProperNouns`) : capitalise ailleurs (ponctuation
+    // inhabituelle, mise en valeur...), le meme mot reste un candidat nom propre. Limite
+    // heuristique assumee (spec : « ne detecte pas une invention purement qualitative »).
+    const result = extractProperNouns('Elle a assure le Pilotage de projets transverses.');
+    expect(result).toContain('pilotage');
+  });
 });

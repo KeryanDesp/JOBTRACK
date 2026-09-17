@@ -1,6 +1,6 @@
 import type { CoverLetterContent, ResumeContent, ResumeTailoringInput } from '@jobtrack/shared';
 import { describe, expect, it } from 'vitest';
-import { buildKnownTerms, groundLetter, groundTailoring, isGrounded } from './grounding';
+import { buildKnownNumbers, buildKnownTerms, groundLetter, groundTailoring, isGrounded } from './grounding';
 
 function baseContent(): ResumeContent {
   return {
@@ -51,7 +51,7 @@ function baseContent(): ResumeContent {
     ],
     languages: [{ id: 'lang-1', name: 'Anglais', level: 'B2' }],
     certifications: [{ id: 'cert-1', name: 'AWS Certified', issuer: 'Amazon', issuedAt: '2022-01-01' }],
-    projects: [{ id: 'proj-1', name: 'Kubernetes Operator', description: null, url: null, technologies: ['Kubernetes'] }],
+    projects: [{ id: 'proj-1', name: 'Kubernetes Operator', description: null, url: null, technologies: ['Kubernetes', 'Docker'] }],
   };
 }
 
@@ -69,11 +69,23 @@ function baseTailoring(overrides: Partial<ResumeTailoringInput> = {}): ResumeTai
   };
 }
 
+function baseLetter(paragraphs: string[]): CoverLetterContent {
+  return {
+    recipient: 'Madame Dupont',
+    subject: 'Candidature',
+    greeting: 'Madame, Monsieur,',
+    paragraphs,
+    closing: 'Cordialement,',
+    signature: 'Camille Martin',
+  };
+}
+
 describe('isGrounded', () => {
   it('rejette un nombre invente absent des sources', () => {
     const result = isGrounded('Augmentation du chiffre d_affaires de 30 %.', ['Aucun chiffre mentionne ici.'], new Set());
     expect(result.ok).toBe(false);
-    expect(result.missingNumbers).toContain('30%');
+    // Forme de surface d'origine (revue) : pas la clé canonique.
+    expect(result.missingNumbers).toContain('30 %');
   });
 
   it('accepte un nombre present dans les sources, virgule ou point', () => {
@@ -84,7 +96,8 @@ describe('isGrounded', () => {
   it('rejette une entite inconnue absente des sources et des termes connus', () => {
     const result = isGrounded('Deploiement sur Kubernetes.', ['Mission realisee sans mention technique.'], new Set());
     expect(result.ok).toBe(false);
-    expect(result.missingTerms).toContain('kubernetes');
+    // Forme de surface d'origine (revue) : pas la clé canonique.
+    expect(result.missingTerms).toContain('Kubernetes');
   });
 
   it('accepte une entite presente dans les termes connus du profil', () => {
@@ -113,7 +126,7 @@ describe('buildKnownTerms', () => {
   });
 });
 
-describe('groundTailoring — expériences', () => {
+describe('groundTailoring — experiences', () => {
   it('conserve les puces de base quand la ligne ne propose aucune reformulation', () => {
     const base = baseContent();
     const tailoring = baseTailoring({ experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: [] }] });
@@ -237,7 +250,7 @@ describe('groundTailoring — expériences', () => {
   });
 });
 
-describe('groundTailoring — compétences, formations, certifications, projets', () => {
+describe('groundTailoring — competences, formations, certifications, projets', () => {
   it('ordonne les competences selon order puis ajoute les autres dans l_ordre de base', () => {
     const base = baseContent();
     const tailoring = baseTailoring({ skills: [{ id: 'skill-2', order: 0 }] });
@@ -276,7 +289,7 @@ describe('groundTailoring — compétences, formations, certifications, projets'
   });
 });
 
-describe('groundTailoring — résumé et titre', () => {
+describe('groundTailoring — resume et titre', () => {
   it('accepte un resume reformule ancre', () => {
     const base = baseContent();
     const tailoring = baseTailoring({ summary: 'Développeuse chez Solaris Ingénierie, experte React.' });
@@ -315,7 +328,7 @@ describe('groundTailoring — résumé et titre', () => {
   });
 });
 
-describe('groundTailoring — déterminisme', () => {
+describe('groundTailoring — determinisme', () => {
   it('produit le meme resultat pour la meme entree', () => {
     const base = baseContent();
     const tailoring = baseTailoring({
@@ -331,17 +344,6 @@ describe('groundTailoring — déterminisme', () => {
 });
 
 describe('groundLetter', () => {
-  function baseLetter(paragraphs: string[]): CoverLetterContent {
-    return {
-      recipient: 'Madame Dupont',
-      subject: 'Candidature',
-      greeting: 'Madame, Monsieur,',
-      paragraphs,
-      closing: 'Cordialement,',
-      signature: 'Camille Martin',
-    };
-  }
-
   it('retire une phrase non ancree et garde le reste du paragraphe', () => {
     const letter = baseLetter([
       'Je maitrise React. J_ai gere une equipe de 200 personnes chez Solaris Ingénierie.',
@@ -358,9 +360,11 @@ describe('groundLetter', () => {
   });
 
   it('supprime un paragraphe entierement non ancre', () => {
-    const letter = baseLetter(['Paragraphe valide chez Solaris Ingénierie.', 'Invente 500 recrutements.']);
+    // Le premier mot de phrase (« Mission ») n_est plus exempte par defaut (revue, item 1) :
+    // il doit donc etre repris identiquement dans la source pour rester ancre.
+    const letter = baseLetter(['Mission chez Solaris Ingénierie menée avec succès.', 'Invente 500 recrutements.']);
     const { content } = groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL');
-    expect(content.paragraphs).toEqual(['Paragraphe valide chez Solaris Ingénierie.']);
+    expect(content.paragraphs).toEqual(['Mission chez Solaris Ingénierie menée avec succès.']);
   });
 
   it('utilise la phrase de repli quand tout est retire', () => {
@@ -380,9 +384,18 @@ describe('groundLetter', () => {
 
   it('assainit les champs hors paragraphes des caracteres de controle', () => {
     const letter = baseLetter(['Paragraphe simple chez Solaris Ingénierie.']);
-    const withControlChars = { ...letter, subject: `Candidature ` };
+    const withControlChars = { ...letter, subject: `Candidature\u0000` };
     const { content } = groundLetter(withControlChars, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL');
     expect(content.subject).toBe('Candidature');
+  });
+
+  it('assainit un paragraphe des caracteres de controle avant de le decouper en phrases (item 6)', () => {
+    // Le caractere de controle est place au milieu de la phrase : s_il n_etait pas retire
+    // avant `sentences()`, il romprait la detection de fin de phrase ou laisserait un
+    // caractere indesirable dans le texte final.
+    const letter = baseLetter([`Mission\u0000 chez Solaris Ingénierie menée avec succès.`]);
+    const { content } = groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL');
+    expect(content.paragraphs).toEqual(['Mission chez Solaris Ingénierie menée avec succès.']);
   });
 
   it('est deterministe pour la meme entree', () => {
@@ -391,5 +404,173 @@ describe('groundLetter', () => {
     const first = groundLetter(letter, sources, new Set(), 'PERSONAL');
     const second = groundLetter(letter, sources, new Set(), 'PERSONAL');
     expect(first).toEqual(second);
+  });
+
+  it('rejette une entite inventee en tete de phrase dans un paragraphe de lettre (regression item 1)', () => {
+    const letter = baseLetter(['Kubernetes a permis de transformer nos livraisons chez Solaris Ingénierie.']);
+    const { removedSentences } = groundLetter(letter, ['Mission chez Solaris Ingénierie.'], new Set(), 'PROFESSIONAL');
+    expect(removedSentences).toHaveLength(1);
+  });
+});
+
+describe('isGrounded — regression : entite inventee en tete de phrase (item 1)', () => {
+  it('rejette une entite inventee qui ouvre la phrase, meme sans autre mot capitalise ensuite', () => {
+    // Avant la revue, seule la casse indiquait un debut de phrase et le premier mot etait
+    // toujours exempte : « Kubernetes déployé en production. » passait sans aucune verification.
+    const result = isGrounded('Kubernetes déployé en production.', ['Texte de reference neutre sans rapport.'], new Set());
+    expect(result.ok).toBe(false);
+    expect(result.missingTerms).toContain('Kubernetes');
+  });
+
+  it('rejette une entite inventee en tete de puce de CV', () => {
+    const base = baseContent();
+    // « Terraform » n_apparait nulle part dans ce profil (ne se termine pas non plus par
+    // une des terminaisons ordinaires reconnues, contrairement a « Azure » qui finit en
+    // « -ure » comme « structure » — piege deliberement evite ici).
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['Terraform deploye en production chez Solaris Ingénierie.'] }],
+    });
+    const { rejected } = groundTailoring(base, tailoring);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toContain('Terraform');
+  });
+});
+
+describe('isGrounded — mots ordinaires francais en tete de phrase restent ancres (item 1)', () => {
+  it('ne rejette aucune des dix formulations usuelles de puce de CV', () => {
+    const ordinaryOpeners = [
+      'Mise en place de nouveaux outils internes.',
+      'Conception de l architecture logicielle du produit.',
+      'Pilotage de projets transverses au sein de l equipe.',
+      'Développement de fonctionnalités clés du produit.',
+      'Gestion de la relation client au quotidien.',
+      'Formation de nouveaux collaborateurs sur les outils internes.',
+      'Réalisation de tests automatisés sur la plateforme.',
+      'Optimisation des performances du systeme.',
+      'Encadrement de l equipe technique au quotidien.',
+      'Direction de la feuille de route produit.',
+    ];
+    const neutralSource = ['Texte de reference neutre sans rapport avec les puces testees.'];
+
+    for (const opener of ordinaryOpeners) {
+      const result = isGrounded(opener, neutralSource, new Set());
+      expect(result.ok).toBe(true);
+    }
+  });
+});
+
+describe('groundTailoring — dates comme sources (item 2)', () => {
+  it('ancre un nombre present uniquement dans la date de debut de l_experience (depuis 2021)', () => {
+    const base = baseContent(); // exp-1.startDate === '2021-01-01'
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['En poste depuis 2021 chez Solaris Ingénierie.'] }],
+    });
+    const { rejected } = groundTailoring(base, tailoring);
+    expect(rejected).toHaveLength(0);
+  });
+
+  it('ancre un nombre present uniquement dans une date de formation ou de certification', () => {
+    const base = baseContent(); // edu-1.startDate === '2015-01-01', cert-1.issuedAt === '2022-01-01'
+    const tailoring = baseTailoring({
+      summary: 'Diplômée depuis 2015 et certifiée depuis 2022, experte chez Solaris Ingénierie.',
+    });
+    const { summaryRejected } = groundTailoring(base, tailoring);
+    expect(summaryRejected).toBe(false);
+  });
+});
+
+describe('buildKnownTerms — elargi a tout le profil (item 3)', () => {
+  it('inclut un terme present uniquement dans les puces d_une autre experience', () => {
+    const terms = buildKnownTerms(baseContent());
+    // « Java » n_apparait que dans les puces de exp-2, jamais dans les competences/projets.
+    expect(terms.has('java')).toBe(true);
+  });
+
+  it('inclut le nom d_une ecole et l_emetteur d_une certification', () => {
+    const terms = buildKnownTerms(baseContent());
+    expect(terms.has('universite paris')).toBe(true);
+    expect(terms.has('amazon')).toBe(true);
+  });
+
+  it('accepte, en ancrage, un terme connu uniquement via une autre experience', () => {
+    const base = baseContent();
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['Collaboration etroite avec les equipes Java.'] }],
+    });
+    const { rejected } = groundTailoring(base, tailoring);
+    expect(rejected).toHaveLength(0);
+  });
+});
+
+describe('buildKnownNumbers (item 4)', () => {
+  it('inclut un nombre present uniquement dans le nom d_une competence', () => {
+    const base = baseContent();
+    const withVersionedSkill = {
+      ...base,
+      skills: [...base.skills, { id: 'skill-3', name: 'React 18', category: 'TECHNICAL' as const, level: 'ADVANCED' as const }],
+    };
+    expect(buildKnownNumbers(withVersionedSkill).has('18')).toBe(true);
+  });
+
+  it('ancre, en ancrage, un nombre connu uniquement via le nom d_une competence (React 18)', () => {
+    const base = baseContent();
+    const withVersionedSkill = {
+      ...base,
+      skills: [...base.skills, { id: 'skill-3', name: 'React 18', category: 'TECHNICAL' as const, level: 'ADVANCED' as const }],
+    };
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['Utilisation de la version 18 de React.'] }],
+    });
+    const { rejected } = groundTailoring(withVersionedSkill, tailoring);
+    expect(rejected).toHaveLength(0);
+  });
+});
+
+describe('isGrounded — entite multi-mots : repli sur les composants (item 5)', () => {
+  it('ancre une entite multi-mots quand chaque composant est individuellement connu (Docker Java)', () => {
+    const base = baseContent(); // Docker via le projet, Java via les puces de exp-2 (item 3)
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['Développement de la stack Docker Java complete.'] }],
+    });
+    const { rejected } = groundTailoring(base, tailoring);
+    expect(rejected).toHaveLength(0);
+  });
+
+  it('rejette une entite multi-mots inconnue et ne signale que ses composants inconnus (Google Cloud)', () => {
+    const base = baseContent();
+    const tailoring = baseTailoring({
+      experiences: [{ id: 'exp-1', keep: true, order: 0, highlights: ['Migration vers Google Cloud effectuee.'] }],
+    });
+    const { rejected } = groundTailoring(base, tailoring);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toContain('Google');
+    expect(rejected[0]?.reason).toContain('Cloud');
+  });
+});
+
+describe('groundTailoring — table de lignes partagee (item 9)', () => {
+  it('utilise la meme ligne (premiere occurrence) pour la selection et pour les puces en cas d_id duplique', () => {
+    const base = baseContent();
+    const tailoring = baseTailoring({
+      experiences: [
+        { id: 'exp-2', keep: true, order: 0, highlights: ['Développement backend avec Java.'] },
+        // Meme id, seconde occurrence : keep/order/highlights differents, doit etre ignoree.
+        { id: 'exp-2', keep: false, order: 9, highlights: ['Devrait etre ignoree.'] },
+      ],
+    });
+    const { content } = groundTailoring(base, tailoring);
+    expect(content.experiences.map((e) => e.id)).toContain('exp-2');
+    expect(content.experiences.find((e) => e.id === 'exp-2')?.highlights).toEqual(['Développement backend avec Java.']);
+  });
+});
+
+describe('groundLetter — plafond de longueur avec separateurs de paragraphe (item 10)', () => {
+  it('compte les separateurs entre paragraphes dans le plafond de longueur', () => {
+    const sentenceText = 'Phrase ancree relativement longue pour approcher la limite du ton court sans la depasser.';
+    const letter = baseLetter([sentenceText, sentenceText, sentenceText]);
+    const { content } = groundLetter(letter, [sentenceText], new Set(), 'SHORT');
+    const textLength = content.paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0);
+    const separatorsLength = Math.max(content.paragraphs.length - 1, 0) * 2;
+    expect(textLength + separatorsLength).toBeLessThanOrEqual(900);
   });
 });
