@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
   PaginationLink,
   PaginationNext,
@@ -47,6 +48,32 @@ function listErrorMessage(error: unknown): string {
 /** `true` seulement pour un clic gauche sans modificateur (même règle que `JobList`). */
 function isPlainLeftClick(event: MouseEvent): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+type PaginationEntry = number | 'ellipsis';
+
+/**
+ * Fenêtre de pagination (spec §7) : toujours la première et la dernière
+ * page, plus les deux pages de chaque côté de la page courante — jamais
+ * chacune des pages une à une, illisible dès que `totalPages` dépasse une
+ * dizaine. Les trous entre deux pages retenues non consécutives deviennent
+ * une seule `PaginationEllipsis`.
+ */
+function paginationRange(current: number, totalPages: number): PaginationEntry[] {
+  const kept = new Set<number>([1, totalPages]);
+  for (let page = current - 2; page <= current + 2; page += 1) {
+    if (page >= 1 && page <= totalPages) kept.add(page);
+  }
+
+  const sorted = Array.from(kept).sort((a, b) => a - b);
+  const entries: PaginationEntry[] = [];
+  let previous: number | undefined;
+  for (const page of sorted) {
+    if (previous !== undefined && page - previous > 1) entries.push('ellipsis');
+    entries.push(page);
+    previous = page;
+  }
+  return entries;
 }
 
 /** Cellule « CV utilisé » : lien vers le CV adapté quand il existe encore, libellé simple sinon. */
@@ -304,21 +331,27 @@ export function ApplicationsTable({
               />
             </PaginationItem>
 
-            {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
-              <PaginationItem key={page}>
-                <PaginationLink
-                  href={hrefForPage(page)}
-                  isActive={page === data.page}
-                  onClick={(event) => {
-                    if (!isPlainLeftClick(event)) return;
-                    event.preventDefault();
-                    onPageChange(page);
-                  }}
-                >
-                  {page}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
+            {paginationRange(data.page, totalPages).map((entry, index) =>
+              entry === 'ellipsis' ? (
+                <PaginationItem key={`ellipsis-${index}`}>
+                  <PaginationEllipsis />
+                </PaginationItem>
+              ) : (
+                <PaginationItem key={entry}>
+                  <PaginationLink
+                    href={hrefForPage(entry)}
+                    isActive={entry === data.page}
+                    onClick={(event) => {
+                      if (!isPlainLeftClick(event)) return;
+                      event.preventDefault();
+                      onPageChange(entry);
+                    }}
+                  >
+                    {entry}
+                  </PaginationLink>
+                </PaginationItem>
+              ),
+            )}
 
             <PaginationItem>
               <PaginationNext

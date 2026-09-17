@@ -7,6 +7,7 @@ import type {
   ResumeSummaryDto,
 } from '@jobtrack/shared';
 import { APPLICATION_SOURCE_LABELS, APPLICATION_SOURCES, createFromJobSchema, createManualSchema } from '@jobtrack/shared';
+import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,34 @@ function existingApplicationId(error: unknown): string | undefined {
   return error.details?.applicationId;
 }
 
+/**
+ * Reporte une erreur `VALIDATION_ERROR.details` du contrat sur un champ du
+ * formulaire dont le nom diffère du sien — le cas de `resumeId`/`usedBaseResume`
+ * (exclusivité vérifiée par `refineCvExclusivity`, `@jobtrack/shared`) et de
+ * `coverLetterId` : le contrat les connaît sous ces noms, mais ce formulaire
+ * n'a que les sentinelles `resumeChoice`/`letterChoice` (voir plus haut) —
+ * `applyFieldErrors` ne peut donc pas les cibler directement, faute de champ
+ * de même nom. `serverFields` est parcouru dans l'ordre : le premier qui
+ * porte un message gagne.
+ */
+function applyAliasedFieldError<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  serverFields: readonly string[],
+  formField: Path<T>,
+): boolean {
+  if (!(error instanceof ApiError) || error.code !== 'VALIDATION_ERROR' || !error.details) return false;
+
+  for (const serverField of serverFields) {
+    const message = error.details[serverField];
+    if (message) {
+      setError(formField, { message });
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Mode manuel
 // ---------------------------------------------------------------------------
@@ -108,6 +137,8 @@ const MANUAL_DEFAULTS: ManualFormValues = {
 };
 
 const MANUAL_ERROR_FIELDS = ['jobTitle', 'company', 'source', 'sourceUrl', 'locationLabel', 'status', 'appliedAt', 'notes'] as const;
+/** `resumeId`/`usedBaseResume` (spec §5) : reportés sur `resumeChoice` via `applyAliasedFieldError`. */
+const MANUAL_RESUME_ERROR_FIELDS = ['resumeId', 'usedBaseResume'] as const;
 
 /**
  * Valeurs du formulaire manuel dans la forme attendue par `createManualSchema` :
@@ -146,6 +177,12 @@ const JOB_DEFAULTS: JobFormValues = {
 };
 
 const JOB_ERROR_FIELDS = ['status', 'appliedAt'] as const;
+/** `resumeId`/`usedBaseResume` (spec §5) : reportés sur `resumeChoice` via `applyAliasedFieldError`. */
+const JOB_RESUME_ERROR_FIELDS = ['resumeId', 'usedBaseResume'] as const;
+/** `coverLetterId` : reporté sur `letterChoice`. `jobId` n'a ici aucun champ à cibler (l'offre
+ * est fixée par `job`, pas saisie) — une erreur sur ce champ reste dans le toast générique de
+ * `useCreateApplication`. */
+const JOB_LETTER_ERROR_FIELDS = ['coverLetterId'] as const;
 
 function normalizeFromJob(raw: JobFormValues, jobId: string): unknown {
   const { resumeChoice, letterChoice, ...rest } = raw;
@@ -221,10 +258,13 @@ interface ResumeSelectFieldProps {
   resumes: ResumeSummaryDto[];
   /** « CV principal » et « Aucun » en tête (mode manuel) ou en fin (mode offre). */
   emptyChoicesFirst: boolean;
+  /** Message serveur reporté sur `resumeChoice` (`resumeId`/`usedBaseResume`, spec §5) —
+   * `applyAliasedFieldError`, faute de champ de même nom que celui du contrat. */
+  error?: string;
 }
 
 /** Sélecteur « CV utilisé » : « Aucun », « CV principal », puis chaque CV adapté (spec §2). */
-function ResumeSelectField({ value, onChange, resumes, emptyChoicesFirst }: ResumeSelectFieldProps) {
+function ResumeSelectField({ value, onChange, resumes, emptyChoicesFirst, error }: ResumeSelectFieldProps) {
   const emptyChoices = [
     <SelectItem key={RESUME_NONE} value={RESUME_NONE}>
       Aucun
@@ -243,11 +283,18 @@ function ResumeSelectField({ value, onChange, resumes, emptyChoicesFirst }: Resu
     <div className="space-y-2">
       <Label htmlFor="application-resume">CV utilisé</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id="application-resume" aria-label="CV utilisé" className="w-full">
+        <SelectTrigger
+          id="application-resume"
+          aria-label="CV utilisé"
+          className="w-full"
+          aria-describedby={error ? 'application-resume-error' : undefined}
+          aria-invalid={error ? true : undefined}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>{emptyChoicesFirst ? [...emptyChoices, ...resumeChoices] : [...resumeChoices, ...emptyChoices]}</SelectContent>
       </Select>
+      <FormFieldError id="application-resume-error" message={error} />
     </div>
   );
 }
@@ -303,6 +350,7 @@ function ManualApplicationForm({ onCreated, onOpenApplication, onClose }: ModeFo
           return;
         }
         applyFieldErrors<ManualFormValues>(error, form.setError, MANUAL_ERROR_FIELDS);
+        applyAliasedFieldError(error, form.setError, MANUAL_RESUME_ERROR_FIELDS, 'resumeChoice');
       },
     });
   }
@@ -324,8 +372,14 @@ function ManualApplicationForm({ onCreated, onOpenApplication, onClose }: ModeFo
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="application-company">Entreprise</Label>
-          <Input id="application-company" autoComplete="off" {...form.register('company')} />
-          <FormFieldError message={errors.company?.message} />
+          <Input
+            id="application-company"
+            autoComplete="off"
+            aria-describedby={errors.company ? 'application-company-error' : undefined}
+            aria-invalid={errors.company ? true : undefined}
+            {...form.register('company')}
+          />
+          <FormFieldError id="application-company-error" message={errors.company?.message} />
         </div>
 
         <div className="space-y-2">
@@ -362,8 +416,14 @@ function ManualApplicationForm({ onCreated, onOpenApplication, onClose }: ModeFo
 
         <div className="space-y-2">
           <Label htmlFor="application-locationLabel">Lieu</Label>
-          <Input id="application-locationLabel" autoComplete="off" {...form.register('locationLabel')} />
-          <FormFieldError message={errors.locationLabel?.message} />
+          <Input
+            id="application-locationLabel"
+            autoComplete="off"
+            aria-describedby={errors.locationLabel ? 'application-locationLabel-error' : undefined}
+            aria-invalid={errors.locationLabel ? true : undefined}
+            {...form.register('locationLabel')}
+          />
+          <FormFieldError id="application-locationLabel-error" message={errors.locationLabel?.message} />
         </div>
       </div>
 
@@ -380,12 +440,19 @@ function ManualApplicationForm({ onCreated, onOpenApplication, onClose }: ModeFo
         onChange={(next) => form.setValue('resumeChoice', next)}
         resumes={resumes.data ?? []}
         emptyChoicesFirst
+        error={errors.resumeChoice?.message}
       />
 
       <div className="space-y-2">
         <Label htmlFor="application-notes">Notes</Label>
-        <Textarea id="application-notes" rows={3} {...form.register('notes')} />
-        <FormFieldError message={errors.notes?.message} />
+        <Textarea
+          id="application-notes"
+          rows={3}
+          aria-describedby={errors.notes ? 'application-notes-error' : undefined}
+          aria-invalid={errors.notes ? true : undefined}
+          {...form.register('notes')}
+        />
+        <FormFieldError id="application-notes-error" message={errors.notes?.message} />
       </div>
 
       <DialogFooter>
@@ -431,6 +498,8 @@ function JobApplicationForm({ job, onCreated, onOpenApplication, onClose }: Mode
           return;
         }
         applyFieldErrors<JobFormValues>(error, form.setError, JOB_ERROR_FIELDS);
+        applyAliasedFieldError(error, form.setError, JOB_RESUME_ERROR_FIELDS, 'resumeChoice');
+        applyAliasedFieldError(error, form.setError, JOB_LETTER_ERROR_FIELDS, 'letterChoice');
       },
     });
   }
@@ -450,12 +519,19 @@ function JobApplicationForm({ job, onCreated, onOpenApplication, onClose }: Mode
         onChange={(next) => form.setValue('resumeChoice', next)}
         resumes={job.tailoredResumes}
         emptyChoicesFirst={false}
+        error={errors.resumeChoice?.message}
       />
 
       <div className="space-y-2">
         <Label htmlFor="application-letter">Lettre</Label>
         <Select value={form.watch('letterChoice')} onValueChange={(next) => form.setValue('letterChoice', next)}>
-          <SelectTrigger id="application-letter" aria-label="Lettre" className="w-full">
+          <SelectTrigger
+            id="application-letter"
+            aria-label="Lettre"
+            className="w-full"
+            aria-describedby={errors.letterChoice ? 'application-letter-error' : undefined}
+            aria-invalid={errors.letterChoice ? true : undefined}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -467,6 +543,7 @@ function JobApplicationForm({ job, onCreated, onOpenApplication, onClose }: Mode
             ))}
           </SelectContent>
         </Select>
+        <FormFieldError id="application-letter-error" message={errors.letterChoice?.message} />
       </div>
 
       <DialogFooter>

@@ -31,6 +31,9 @@ function Probe() {
       <button type="button" onClick={() => setState({ view: 'kanban' })}>
         vue
       </button>
+      <button type="button" onClick={() => setState({ sort: 'company_asc' })}>
+        tri
+      </button>
       <button type="button" onClick={() => setState({ applicationId: 'app_1' })}>
         ouvrir
       </button>
@@ -52,25 +55,45 @@ function currentState(): ApplicationsUrlState {
 
 describe('readApplicationsUrlState', () => {
   it('renvoie les valeurs par defaut sans parametre', () => {
-    expect(read('')).toEqual({ view: 'table', tab: 'all', q: '', page: 1, applicationId: null, adding: false });
+    expect(read('')).toEqual({
+      view: 'table',
+      tab: 'all',
+      q: '',
+      page: 1,
+      sort: 'updated_desc',
+      applicationId: null,
+      adding: false,
+    });
   });
 
   it('lit chaque parametre reconnu', () => {
-    expect(read('?vue=kanban&onglet=offer&q=data&page=4&candidature=app_7&ajouter=1')).toEqual({
+    expect(read('?vue=kanban&onglet=offer&q=data&page=4&tri=company_asc&candidature=app_7&ajouter=1')).toEqual({
       view: 'kanban',
       tab: 'offer',
       q: 'data',
       page: 4,
+      sort: 'company_asc',
       applicationId: 'app_7',
       adding: true,
     });
   });
 
-  it('ramene une vue, un onglet et une page invalides a leur defaut', () => {
-    expect(read('?vue=grille&onglet=inconnu&page=abc')).toMatchObject({ view: 'table', tab: 'all', page: 1 });
+  it('ramene une vue, un onglet, un tri et une page invalides a leur defaut', () => {
+    expect(read('?vue=grille&onglet=inconnu&tri=inconnu&page=abc')).toMatchObject({
+      view: 'table',
+      tab: 'all',
+      sort: 'updated_desc',
+      page: 1,
+    });
     expect(read('?page=0').page).toBe(1);
     expect(read('?page=-2').page).toBe(1);
     expect(read('?page=1.5').page).toBe(1);
+  });
+
+  it('plafonne une page trop elevee a la meme borne que le contrat (MAX_PAGE = 500)', () => {
+    expect(read('?page=9999').page).toBe(500);
+    expect(read('?page=500').page).toBe(500);
+    expect(read('?page=501').page).toBe(500);
   });
 
   it('borne la recherche a 120 caracteres et ignore une candidature vide', () => {
@@ -86,12 +109,21 @@ describe('writeApplicationsUrlState', () => {
   });
 
   it('ecrit uniquement ce qui differe du defaut', () => {
-    const state = { ...read(''), view: 'kanban' as const, tab: 'applied' as const, q: 'nantes', page: 2, adding: true };
+    const state = {
+      ...read(''),
+      view: 'kanban' as const,
+      tab: 'applied' as const,
+      q: 'nantes',
+      page: 2,
+      sort: 'company_asc' as const,
+      adding: true,
+    };
     const params = writeApplicationsUrlState(state);
     expect(params.get('vue')).toBe('kanban');
     expect(params.get('onglet')).toBe('applied');
     expect(params.get('q')).toBe('nantes');
     expect(params.get('page')).toBe('2');
+    expect(params.get('tri')).toBe('company_asc');
     expect(params.get('ajouter')).toBe('1');
     expect(params.get('candidature')).toBeNull();
   });
@@ -126,11 +158,28 @@ describe('useApplicationsUrlState', () => {
     expect(screen.getByTestId('search').textContent).toContain('candidature=app_1');
   });
 
+  it('ecrit le tri dans l_URL et remet la page a 1', async () => {
+    const user = userEvent.setup();
+    renderProbe('/applications?page=5');
+    await user.click(screen.getByRole('button', { name: 'tri' }));
+
+    expect(screen.getByTestId('search').textContent).toBe('?tri=company_asc');
+    expect(currentState()).toMatchObject({ sort: 'company_asc', page: 1 });
+  });
+
   it('corrige une valeur invalide directement dans l_URL', async () => {
     renderProbe('/applications?vue=grille&page=0');
     await screen.findByTestId('search');
 
     expect(screen.getByTestId('search').textContent).toBe('');
     expect(currentState()).toMatchObject({ view: 'table', page: 1 });
+  });
+
+  it('reecrit ?page=9999 sur la page 500 plutot que de la laisser telle quelle', async () => {
+    renderProbe('/applications?page=9999');
+    await screen.findByTestId('search');
+
+    expect(screen.getByTestId('search').textContent).toBe('?page=500');
+    expect(currentState()).toMatchObject({ page: 500 });
   });
 });

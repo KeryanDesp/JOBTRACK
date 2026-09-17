@@ -7,6 +7,7 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/services/api/client';
+import { applicationKeys } from '../lib/query-keys';
 import { ApplicationsTable } from './applications-table';
 
 const updateApplicationApi = vi.hoisted(() => vi.fn());
@@ -71,10 +72,13 @@ interface RenderOptions {
   onAdd?: () => void;
   onClearFilters?: () => void;
   onRetry?: () => void;
+  /** Fourni par l'appelant quand le test doit lire/ecrire d'autres entrees du
+   * cache (ex. une deuxieme page de liste deja chargee). */
+  queryClient?: QueryClient;
 }
 
 function renderTable(options: RenderOptions = {}) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const queryClient = options.queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const element: ReactElement = (
     <ApplicationsTable
       data={options.data}
@@ -224,5 +228,76 @@ describe('ApplicationsTable', () => {
 
     expect(screen.getByRole('navigation', { name: 'Pagination' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '3' })).toHaveAttribute('href', '?page=3');
+  });
+
+  it('fenetre la pagination (page courante +-2, premiere/derniere) plutot que chaque page', () => {
+    // 200 candidatures, limite 20 => 10 pages, page courante 5.
+    renderTable({ data: makeList([makeApplication()], { total: 200, limit: 20, page: 5 }) });
+
+    const nav = screen.getByRole('navigation', { name: 'Pagination' });
+    // Premiere, derniere, et seulement les pages a +-2 de la courante.
+    for (const page of [1, 3, 4, 5, 6, 7, 10]) {
+      expect(within(nav).getByRole('link', { name: String(page) })).toBeInTheDocument();
+    }
+    // Le reste (2, 8, 9) n'a jamais son propre lien : uniquement des ellipses.
+    for (const page of [2, 8, 9]) {
+      expect(within(nav).queryByRole('link', { name: String(page) })).not.toBeInTheDocument();
+    }
+    expect(within(nav).getAllByText('Plus de pages')).toHaveLength(2);
+  });
+
+  it('rend les memes donnees dans la liste de cartes mobile (md:hidden), actions comprises', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    updateApplicationApi.mockResolvedValue(makeApplication({ status: 'INTERVIEW' }));
+    renderTable({
+      data: makeList([makeApplication({ sourceUrl: 'https://exemple.fr/offre/1' })]),
+      onOpen,
+    });
+
+    // La liste de cartes rend d'abord `<ul>` (seul present : la pagination
+    // n'apparait pas pour une seule page, donc aucune ambiguite de role `list`).
+    const cardList = screen.getByRole('list');
+
+    expect(within(cardList).getByRole('button', { name: 'Business Analyst' })).toBeInTheDocument();
+    expect(within(cardList).getByText('Societe Generale')).toBeInTheDocument();
+    expect(within(cardList).getByText('15 sept. 2026')).toBeInTheDocument();
+    expect(
+      within(cardList).getByRole('link', { name: /Ouvrir l'offre Business Analyst sur LinkedIn/ }),
+    ).toBeInTheDocument();
+
+    await user.click(within(cardList).getByRole('button', { name: 'Ouvrir Business Analyst' }));
+    expect(onOpen).toHaveBeenCalledWith('app_1');
+
+    await user.click(within(cardList).getByRole('combobox', { name: 'Statut de Business Analyst' }));
+    await user.click(await screen.findByRole('option', { name: APPLICATION_STATUS_LABELS.INTERVIEW }));
+    await waitFor(() => expect(updateApplicationApi).toHaveBeenCalledWith('app_1', { status: 'INTERVIEW' }));
+  });
+
+  it('applique un changement de statut a une deuxieme page de liste deja en cache', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const pageOneQuery = { tab: 'all' as const, page: 1 };
+    const pageTwoQuery = { tab: 'all' as const, page: 2 };
+    const pageOneList = makeList([makeApplication()], { page: 1 });
+    // Meme candidature presente dans une autre page deja en cache (ex. un
+    // deuxieme onglet ouvert sur `/applications?page=2`) : l'optimisme de
+    // `useUpdateApplication` doit toucher chaque page de liste en cache, pas
+    // seulement celle qu'affiche cette table.
+    const pageTwoList = makeList([makeApplication()], { page: 2 });
+    queryClient.setQueryData(applicationKeys.list(pageOneQuery), pageOneList);
+    queryClient.setQueryData(applicationKeys.list(pageTwoQuery), pageTwoList);
+
+    const user = userEvent.setup();
+    updateApplicationApi.mockResolvedValue(makeApplication({ status: 'INTERVIEW' }));
+    renderTable({ data: pageOneList, queryClient });
+
+    await user.click(within(table()).getByRole('combobox', { name: 'Statut de Business Analyst' }));
+    await user.click(await screen.findByRole('option', { name: APPLICATION_STATUS_LABELS.INTERVIEW }));
+
+    await waitFor(() => expect(updateApplicationApi).toHaveBeenCalledWith('app_1', { status: 'INTERVIEW' }));
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<ApplicationListResponseDto>(applicationKeys.list(pageTwoQuery));
+      expect(cached?.items[0]?.status).toBe('INTERVIEW');
+    });
   });
 });

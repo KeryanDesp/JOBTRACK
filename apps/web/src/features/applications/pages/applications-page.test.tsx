@@ -301,6 +301,24 @@ describe('ApplicationsPage', () => {
     await waitFor(() => expect(screen.getByTestId('search').textContent).toBe(''));
   });
 
+  it('change le tri, l_ecrit dans ?tri= et le transmet a l_API', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('combobox', { name: 'Trier par' }));
+    await user.click(await screen.findByRole('option', { name: 'Entreprise A→Z' }));
+
+    expect(screen.getByTestId('search').textContent).toBe('?tri=company_asc');
+    await waitFor(() => expect(fetchApplications).toHaveBeenCalledWith(expect.objectContaining({ sort: 'company_asc' })));
+  });
+
+  it('lit ?tri= au chargement et affiche le libelle correspondant', async () => {
+    renderPage('/applications?tri=applied_desc');
+
+    expect(await screen.findByRole('combobox', { name: 'Trier par' })).toHaveTextContent('Date de candidature');
+    await waitFor(() => expect(fetchApplications).toHaveBeenCalledWith(expect.objectContaining({ sort: 'applied_desc' })));
+  });
+
   it('la page consultee est conservee en refermant le panneau de detail', async () => {
     const user = userEvent.setup();
     renderPage('/applications?page=3&candidature=app_1');

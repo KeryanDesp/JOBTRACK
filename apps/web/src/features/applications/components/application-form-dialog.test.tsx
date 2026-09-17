@@ -243,6 +243,24 @@ describe('ApplicationFormDialog en mode manuel', () => {
 
     expect(await screen.findByText('Titre déjà utilisé.')).toBeInTheDocument();
   });
+
+  it('reporte sous le selecteur CV une erreur serveur sur resumeId/usedBaseResume', async () => {
+    const user = userEvent.setup();
+    createApplicationApi.mockRejectedValue(
+      new ApiError('Requête invalide.', 400, 'VALIDATION_ERROR', {
+        resumeId: 'Choisissez soit le CV principal, soit un CV adapté.',
+      }),
+    );
+    renderDialog();
+
+    await user.type(screen.getByLabelText('Poste *'), 'Business Analyst');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+
+    const message = await screen.findByText('Choisissez soit le CV principal, soit un CV adapté.');
+    expect(message).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'CV utilisé' })).toHaveAttribute('aria-describedby', message.id);
+    expect(screen.getByRole('combobox', { name: 'CV utilisé' })).toHaveAttribute('aria-invalid', 'true');
+  });
 });
 
 describe('ApplicationFormDialog en mode offre', () => {
@@ -292,6 +310,19 @@ describe('ApplicationFormDialog en mode offre', () => {
 
     await waitFor(() => expect(onOpenApplication).toHaveBeenCalledWith('app_42'));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('reporte sous le selecteur Lettre une erreur serveur sur coverLetterId', async () => {
+    const user = userEvent.setup();
+    createApplicationApi.mockRejectedValue(
+      new ApiError('Requête invalide.', 400, 'VALIDATION_ERROR', { coverLetterId: 'Lettre introuvable.' }),
+    );
+    renderDialog({ job: JOB });
+
+    await user.click(screen.getByRole('button', { name: 'Suivre cette candidature' }));
+
+    const message = await screen.findByText('Lettre introuvable.');
+    expect(screen.getByRole('combobox', { name: 'Lettre' })).toHaveAttribute('aria-describedby', message.id);
   });
 
   it('previent du succes avec une action Voir vers la fiche creee', async () => {

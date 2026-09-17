@@ -1,9 +1,16 @@
-import type { ApplicationTab } from '@jobtrack/shared';
-import { APPLICATION_TAB_LABELS, APPLICATION_TAB_VALUES, applicationTabToStatus } from '@jobtrack/shared';
+import type { ApplicationSort, ApplicationTab } from '@jobtrack/shared';
+import {
+  APPLICATION_SORT_LABELS,
+  APPLICATION_SORT_VALUES,
+  APPLICATION_TAB_LABELS,
+  APPLICATION_TAB_VALUES,
+  applicationTabToStatus,
+} from '@jobtrack/shared';
 import { KanbanSquare, Rows3, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApplicationStats } from '../hooks/use-applications';
@@ -17,9 +24,12 @@ interface ApplicationsFiltersProps {
   tab: ApplicationTab;
   q: string;
   view: ApplicationsView;
+  /** Tri de la vue table (`?tri=`, spec §7). */
+  sort: ApplicationSort;
   onTabChange: (tab: ApplicationTab) => void;
   onQueryChange: (q: string) => void;
   onViewChange: (view: ApplicationsView) => void;
+  onSortChange: (sort: ApplicationSort) => void;
   onAdd: () => void;
 }
 
@@ -32,7 +42,17 @@ interface ApplicationsFiltersProps {
  * serait faux. Une erreur de `stats` n'est pas bloquante : les onglets restent
  * utilisables, simplement sans compteur.
  */
-export function ApplicationsFilters({ tab, q, view, onTabChange, onQueryChange, onViewChange, onAdd }: ApplicationsFiltersProps) {
+export function ApplicationsFilters({
+  tab,
+  q,
+  view,
+  sort,
+  onTabChange,
+  onQueryChange,
+  onViewChange,
+  onSortChange,
+  onAdd,
+}: ApplicationsFiltersProps) {
   const stats = useApplicationStats();
   const [draft, setDraft] = useState(q);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -44,6 +64,12 @@ export function ApplicationsFilters({ tab, q, view, onTabChange, onQueryChange, 
 
   useEffect(() => {
     if (q === lastEmittedRef.current) return;
+    // Un changement venu d'ailleurs (« Effacer les filtres », navigation vers
+    // un lien partagé) rend caduc tout minuteur de frappe encore en attente :
+    // sans cette annulation, il écrirait 300 ms plus tard la valeur en cours
+    // de saisie au moment du changement externe, effaçant ce que celui-ci
+    // vient justement de poser.
+    clearTimeout(timerRef.current);
     lastEmittedRef.current = q;
     setDraft(q);
   }, [q]);
@@ -104,6 +130,21 @@ export function ApplicationsFilters({ tab, q, view, onTabChange, onQueryChange, 
             className="pl-9"
           />
         </div>
+
+        {/* Sans effet visible en vue Kanban (l'ordre y vient des colonnes/positions),
+            mais reste réglable : la vue peut changer sans perdre le tri choisi. */}
+        <Select value={sort} onValueChange={(next) => onSortChange(next as ApplicationSort)}>
+          <SelectTrigger aria-label="Trier par" className="w-auto min-w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {APPLICATION_SORT_VALUES.map((value) => (
+              <SelectItem key={value} value={value}>
+                {APPLICATION_SORT_LABELS[value]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* Deux boutons `aria-pressed` plutôt qu'un `Tabs` : la vue n'est pas un
             filtre de contenu mais une présentation du même contenu. */}

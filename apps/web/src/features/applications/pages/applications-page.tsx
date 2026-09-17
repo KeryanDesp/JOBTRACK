@@ -18,8 +18,8 @@ export function ApplicationsPage() {
   const [state, setState] = useApplicationsUrlState();
 
   const query = useMemo<ApplicationListQueryInput>(
-    () => ({ tab: state.tab, q: state.q === '' ? undefined : state.q, page: state.page }),
-    [state.tab, state.q, state.page],
+    () => ({ tab: state.tab, q: state.q === '' ? undefined : state.q, page: state.page, sort: state.sort }),
+    [state.tab, state.q, state.page, state.sort],
   );
   const applications = useApplications(query);
 
@@ -48,9 +48,11 @@ export function ApplicationsPage() {
           tab={state.tab}
           q={state.q}
           view={state.view}
+          sort={state.sort}
           onTabChange={(tab) => setState({ tab })}
           onQueryChange={(q) => setState({ q })}
           onViewChange={(view) => setState({ view })}
+          onSortChange={(sort) => setState({ sort })}
           onAdd={() => setState({ adding: true })}
         />
 

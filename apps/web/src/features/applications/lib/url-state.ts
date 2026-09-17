@@ -1,11 +1,11 @@
-import type { ApplicationTab } from '@jobtrack/shared';
-import { APPLICATION_TAB_VALUES } from '@jobtrack/shared';
+import type { ApplicationSort, ApplicationTab } from '@jobtrack/shared';
+import { APPLICATION_SORT_VALUES, APPLICATION_TAB_VALUES } from '@jobtrack/shared';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 /**
  * Clés d'URL de `/applications` (spec §7), en français comme le reste des
- * écrans : `?vue=table|kanban`, `?onglet=`, `?q=`, `?page=`,
+ * écrans : `?vue=table|kanban`, `?onglet=`, `?q=`, `?page=`, `?tri=`,
  * `?candidature=<id>`, `?ajouter=1`.
  */
 export const APPLICATIONS_PARAM_KEYS = {
@@ -13,6 +13,7 @@ export const APPLICATIONS_PARAM_KEYS = {
   tab: 'onglet',
   q: 'q',
   page: 'page',
+  sort: 'tri',
   application: 'candidature',
   add: 'ajouter',
 } as const;
@@ -23,6 +24,14 @@ export type ApplicationsView = (typeof APPLICATION_VIEWS)[number];
 /** Bornes reprises du contrat partagé (`applicationListQuerySchema`, `q` ≤ 120 ; identifiants ≤ 64). */
 const MAX_QUERY_LENGTH = 120;
 const MAX_ID_LENGTH = 64;
+/**
+ * Même plafond que `MAX_PAGE` (`applicationListQuerySchema`, `packages/shared/src/applications.ts`) :
+ * sans lui, `?page=9999` traverserait cet écran tel quel jusqu'à `applicationKeys.list`, qui
+ * appelle `applicationListQuerySchema.parse` — une page hors bornes y lève (« Page trop
+ * élevée. ») au lieu de retomber ici sur une valeur que le contrat accepte, écran blanc au
+ * premier rendu plutôt qu'une page ramenée dans les clous.
+ */
+const MAX_PAGE = 500;
 
 export interface ApplicationsUrlState {
   view: ApplicationsView;
@@ -30,6 +39,9 @@ export interface ApplicationsUrlState {
   /** Recherche texte, `''` quand aucune (jamais `undefined` : le champ contrôlé en a toujours une). */
   q: string;
   page: number;
+  /** Tri de la vue table (`?tri=`, spec §7) : `updated_desc` par défaut, comme
+   * `applicationListQuerySchema` (`@jobtrack/shared`). */
+  sort: ApplicationSort;
   /** Candidature dont le panneau de détail est ouvert, `null` sinon. */
   applicationId: string | null;
   /** `?ajouter=1` : le formulaire de création est ouvert. */
@@ -41,6 +53,7 @@ export const DEFAULT_APPLICATIONS_URL_STATE: ApplicationsUrlState = {
   tab: 'all',
   q: '',
   page: 1,
+  sort: 'updated_desc',
   applicationId: null,
   adding: false,
 };
@@ -53,6 +66,10 @@ function isApplicationTab(value: string | null): value is ApplicationTab {
   return value !== null && APPLICATION_TAB_VALUES.some((tab) => tab === value);
 }
 
+function isApplicationSort(value: string | null): value is ApplicationSort {
+  return value !== null && APPLICATION_SORT_VALUES.some((sort) => sort === value);
+}
+
 /**
  * Numéro de page lu depuis l'URL : toute valeur non entière, négative, nulle
  * ou absente retombe sur 1 — jamais une page que `applicationListQuerySchema`
@@ -62,7 +79,7 @@ function readPage(raw: string | null): number {
   if (raw === null) return 1;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) return 1;
-  return parsed;
+  return Math.min(parsed, MAX_PAGE);
 }
 
 /**
@@ -75,6 +92,7 @@ function readPage(raw: string | null): number {
 export function readApplicationsUrlState(params: URLSearchParams): ApplicationsUrlState {
   const rawView = params.get(APPLICATIONS_PARAM_KEYS.view);
   const rawTab = params.get(APPLICATIONS_PARAM_KEYS.tab);
+  const rawSort = params.get(APPLICATIONS_PARAM_KEYS.sort);
   const rawApplication = params.get(APPLICATIONS_PARAM_KEYS.application);
 
   return {
@@ -82,6 +100,7 @@ export function readApplicationsUrlState(params: URLSearchParams): ApplicationsU
     tab: isApplicationTab(rawTab) ? rawTab : 'all',
     q: (params.get(APPLICATIONS_PARAM_KEYS.q) ?? '').slice(0, MAX_QUERY_LENGTH),
     page: readPage(params.get(APPLICATIONS_PARAM_KEYS.page)),
+    sort: isApplicationSort(rawSort) ? rawSort : 'updated_desc',
     applicationId: rawApplication !== null && rawApplication !== '' ? rawApplication.slice(0, MAX_ID_LENGTH) : null,
     adding: params.get(APPLICATIONS_PARAM_KEYS.add) === '1',
   };
@@ -106,6 +125,7 @@ export function applyApplicationsUrlState(base: URLSearchParams, state: Applicat
   set(APPLICATIONS_PARAM_KEYS.tab, state.tab === 'all' ? null : state.tab);
   set(APPLICATIONS_PARAM_KEYS.q, state.q.slice(0, MAX_QUERY_LENGTH));
   set(APPLICATIONS_PARAM_KEYS.page, state.page > 1 ? String(state.page) : null);
+  set(APPLICATIONS_PARAM_KEYS.sort, state.sort === 'updated_desc' ? null : state.sort);
   set(APPLICATIONS_PARAM_KEYS.application, state.applicationId);
   set(APPLICATIONS_PARAM_KEYS.add, state.adding ? '1' : null);
 
