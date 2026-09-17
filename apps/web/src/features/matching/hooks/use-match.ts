@@ -230,14 +230,16 @@ export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
         const response = await runAnalyzeJobs(ids);
         if (cancelled) return;
         applyAnalyzeScores(queryClient, response.scores);
+        // Sans service IA, rien ne se terminera : aucun sondage, `pending` forcé à 0.
+        const pending = response.notConfigured ? 0 : response.pending;
         setState({
           isAnalyzing: false,
-          pending: response.pending,
+          pending,
           notConfigured: response.notConfigured,
           profileComplete: response.profileComplete,
           error: null,
         });
-        if (response.pending > 0 && elapsedMs < POLL_MAX_MS) {
+        if (pending > 0 && elapsedMs < POLL_MAX_MS) {
           elapsedMs += POLL_INTERVAL_MS;
           timer = setTimeout(() => void poll(), POLL_INTERVAL_MS);
         }

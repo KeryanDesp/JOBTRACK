@@ -448,6 +448,8 @@ describe('POST /jobs/analyses', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json<AnalyzeJobsResponseDto>();
     expect(body.notConfigured).toBe(true);
+    // Rien ne se terminera jamais sans service IA : le client ne doit pas sonder.
+    expect(body.pending).toBe(0);
     expect(body.analyzed).toBe(0);
     expect(body.failed).toBe(0);
     expect(body.scores[jobId]).toBeNull();

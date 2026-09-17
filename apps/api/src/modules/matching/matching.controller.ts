@@ -114,12 +114,12 @@ export class MatchingController {
         if (!(error instanceof AiNotConfiguredError)) throw error;
         pending += launched.length + (needed.length - launched.length);
       }
-    } else if (needed.length > 0) {
-      // Service IA non configuré : rien n'est tenté, jamais un 503 ici (amendement revue UX) —
-      // le client doit tout de même recevoir les scores déjà disponibles (offres partagées déjà
-      // analysées par un autre utilisateur) ci-dessous, `notConfigured: true` portant l'état.
-      pending = needed.length;
     }
+    // Service IA non configuré : rien n'est tenté, jamais un 503 ici (amendement revue UX) —
+    // le client reçoit tout de même les scores déjà disponibles (offres partagées déjà
+    // analysées par un autre utilisateur), `notConfigured: true` portant l'état. `pending`
+    // reste à 0 : rien ne se terminera jamais, le client ne doit donc pas sonder (vérification
+    // visuelle : la bannière « Analyse de n offres… » tournait pendant 60 s pour rien).
 
     const { scores, profileComplete } = await this.matchService.ensureScores(userId, body.jobIds);
 
