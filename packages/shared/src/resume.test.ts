@@ -166,6 +166,27 @@ describe('buildBaseResume', () => {
     expect(result.experiences[0]?.sourceDescription).toBe('- A fait X\n- A fait Y');
   });
 
+  it('tronque sourceDescription a 2000 caracteres (revue securite, tache 4)', () => {
+    const result = buildBaseResume(
+      baseProfile({
+        experiences: [
+          {
+            id: 'exp1',
+            sortOrder: 0,
+            company: 'Acme',
+            role: 'Dev',
+            location: null,
+            startDate: '2020-01-01',
+            endDate: '2021-01-01',
+            isCurrent: false,
+            description: 'x'.repeat(2500),
+          },
+        ],
+      }),
+    );
+    expect(result.experiences[0]?.sourceDescription).toHaveLength(2000);
+  });
+
   it('ordonne les experiences avec le poste actuel en premier', () => {
     const result = buildBaseResume(
       baseProfile({
@@ -620,6 +641,40 @@ describe('resumeChangesSchema', () => {
       notes: null,
     };
     expect(resumeChangesSchema.safeParse(changes).success).toBe(true);
+  });
+
+  it('titleRejected/summaryRejected sont additifs : absents -> false par defaut', () => {
+    const changes = {
+      title: { before: 'Dev', after: 'Dev' },
+      summary: { before: 'R', after: 'R' },
+      experiences: [],
+      skills: { before: [], after: [] },
+      educations: { kept: [], removed: [] },
+      certifications: { kept: [], removed: [] },
+      projects: { kept: [], removed: [] },
+      notes: null,
+    };
+    const result = resumeChangesSchema.parse(changes);
+    expect(result.titleRejected).toBe(false);
+    expect(result.summaryRejected).toBe(false);
+  });
+
+  it('titleRejected/summaryRejected sont repris tels que fournis', () => {
+    const changes = {
+      title: { before: 'Dev', after: 'Dev' },
+      summary: { before: 'R', after: 'R' },
+      titleRejected: true,
+      summaryRejected: true,
+      experiences: [],
+      skills: { before: [], after: [] },
+      educations: { kept: [], removed: [] },
+      certifications: { kept: [], removed: [] },
+      projects: { kept: [], removed: [] },
+      notes: null,
+    };
+    const result = resumeChangesSchema.parse(changes);
+    expect(result.titleRejected).toBe(true);
+    expect(result.summaryRejected).toBe(true);
   });
 
   it('refuse une cle inconnue (strict)', () => {

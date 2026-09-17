@@ -15,6 +15,7 @@ import type { JobAnalysis } from '@prisma/client';
 import { ANTHROPIC_CLIENT, ANTHROPIC_MODEL, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
+import { stripControlChars } from '../../common/text/control-chars';
 import { computeChanges } from './lib/changes';
 import { groundTailoring } from './lib/grounding';
 import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
@@ -22,13 +23,19 @@ import { buildTailoringDocument, RESUME_TAILORING_PROMPT_VERSION, RESUME_TAILORI
 import { ResumeSourceService } from './resume-source.service';
 
 const LOCK_PREFIX = 'resume:tailor:';
-// 2 minutes (spec §5) : couvre largement un appel `messages.parse` normal, sans laisser un
-// verrou orphelin bloquer trop longtemps une nouvelle tentative après un crash du processus.
-const LOCK_TTL_MS = 120_000;
+// Doit couvrir le pire cas d'un appel `messages.parse` côté client Anthropic
+// (`anthropic.provider.ts` : `maxRetries: 2`, `timeout: 90_000`) — 1 + 2 tentatives de 90 s au
+// pire, soit 270 s — avec une marge : un verrou plus court expirerait avant la fin d'un appel
+// légitime et laisserait un second appelant démarrer une adaptation concurrente (même raison que
+// `job-analysis.service.ts`/`LOCK_TTL_MS`).
+const LOCK_TTL_MS = 300_000;
 const MAX_OUTPUT_TOKENS = 8000;
 
 const JOB_NOT_FOUND_MESSAGE = 'Offre introuvable.';
 export const TAILORING_IN_PROGRESS_MESSAGE = 'Une adaptation est déjà en cours pour cette offre.';
+// Même borne que `resumeContentSchema.identity.title` (spec §4) : un titre suggéré plus long
+// (offre + entreprise très longues) est tronqué plutôt que de risquer un titre de CV invalide.
+const MAX_SUGGESTED_TITLE_LENGTH = 120;
 
 /** Compare-and-delete : ne libère le verrou que si nous en sommes toujours le propriétaire (`ARGV[1]`). */
 const UNLOCK_SCRIPT = `
@@ -99,7 +106,7 @@ export class ResumeTailoringService {
    * base par ce service. `ConflictException` (`TAILORING_IN_PROGRESS`) si une adaptation pour la
    * même offre est déjà en cours pour cet utilisateur.
    */
-  async tailor(userId: string, jobId: string, now: Date = new Date()): Promise<ResumeTailoringResult> {
+  async tailor(userId: string, jobId: string): Promise<ResumeTailoringResult> {
     const base = await this.resumeSource.loadBase(userId);
     if (!base || !base.complete) throw new ProfileIncompleteError();
 
@@ -118,15 +125,21 @@ export class ResumeTailoringService {
     try {
       const requirements = this.parseRequirements(job.analysis);
       const document = buildTailoringDocument({ base: base.aiContent, job, requirements });
-      const result = await this.callClaude(client, document);
+      const result = await this.callClaude(client, document, jobId);
 
       const ground = groundTailoring(base.content, result.tailoring);
-      const changes = computeChanges(base.content, ground.content, ground.rejected, result.tailoring.notes);
+      const changes: ResumeChanges = {
+        ...computeChanges(base.content, ground.content, ground.rejected, result.tailoring.notes),
+        // Additifs (revue sécurité, tâche 4) : `computeChanges` (`lib/changes.ts`) ne les calcule
+        // pas — seul `groundTailoring` sait si le titre/résumé proposé a été écarté par l'ancrage.
+        titleRejected: ground.titleRejected,
+        summaryRejected: ground.summaryRejected,
+      };
 
       this.logger.log(
         `Adaptation de CV terminée — offre=${jobId} modèle=${result.model} ` +
           `tokens_entrée=${result.inputTokens} tokens_sortie=${result.outputTokens} ` +
-          `puces_rejetees=${ground.rejected.length} horodatage=${now.toISOString()}`,
+          `puces_rejetees=${ground.rejected.length}`,
       );
 
       return {
@@ -166,13 +179,31 @@ export class ResumeTailoringService {
   }
 
   private suggestTitle(job: ResumeJobInput): string {
-    return job.company ? `CV ${job.title} — ${job.company}` : `CV ${job.title}`;
+    const title = job.company ? `CV ${job.title} — ${job.company}` : `CV ${job.title}`;
+    return title.slice(0, MAX_SUGGESTED_TITLE_LENGTH);
   }
 
-  private async callClaude(client: Anthropic, document: string): Promise<ClaudeTailoringResult> {
-    // Le cache Anthropic n'active qu'à partir d'un préfixe d'environ 1024 tokens (seuil
-    // provisoire, pas de garantie contractuelle) : `RESUME_TAILORING_SYSTEM_PROMPT` doit rester
-    // au moins aussi long pour que ce `cache_control` serve à quelque chose.
+  /** Assainit les champs texte de la sortie IA (`stripControlChars`) avant tout ancrage (revue
+   * sécurité, tâche 4) : ni `groundTailoring` ni `resumeTailoringSchema` ne retirent les
+   * caractères de contrôle/bidi — un contenu affiché tel quel (titre, résumé, puces, notes) ne
+   * doit jamais pouvoir en porter, qu'il soit finalement ancré ou remplacé par la base. */
+  private sanitizeTailoring(tailoring: ResumeTailoringInput): ResumeTailoringInput {
+    return {
+      ...tailoring,
+      title: stripControlChars(tailoring.title),
+      summary: stripControlChars(tailoring.summary),
+      notes: stripControlChars(tailoring.notes),
+      experiences: tailoring.experiences.map((experience) => ({
+        ...experience,
+        highlights: experience.highlights.map((highlight) => stripControlChars(highlight)),
+      })),
+    };
+  }
+
+  private async callClaude(client: Anthropic, document: string, jobId: string): Promise<ClaudeTailoringResult> {
+    // Le cache Anthropic ne semble s'activer qu'au-delà d'un préfixe de l'ordre de 1024 tokens
+    // (comportement observé, non garanti par la documentation) : `RESUME_TAILORING_SYSTEM_PROMPT`
+    // doit rester au moins aussi long pour que ce `cache_control` ait une chance de servir.
     const system: Array<Anthropic.TextBlockParam> = [
       { type: 'text', text: RESUME_TAILORING_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
     ];
@@ -189,6 +220,10 @@ export class ResumeTailoringService {
       })
       .catch((error: unknown) => this.handleAnthropicError(error));
 
+    // Jetons de cache lus (jamais le contenu) : confirme si le prompt système en cache a
+    // effectivement servi pour cet appel — utile au diagnostic, jamais nécessaire au comportement.
+    this.logger.debug(`Cache Anthropic — offre=${jobId} tokens_lus=${response.usage.cache_read_input_tokens ?? 0}`);
+
     // Une sortie tronquée par la limite de tokens, un refus du modèle, ou l'absence de sortie
     // structurée ne doit jamais être traitée comme une adaptation exploitable.
     if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens' || response.parsed_output === null) {
@@ -197,7 +232,7 @@ export class ResumeTailoringService {
 
     let tailoring: ResumeTailoringInput;
     try {
-      tailoring = resumeTailoringSchema.parse(response.parsed_output);
+      tailoring = this.sanitizeTailoring(resumeTailoringSchema.parse(response.parsed_output));
     } catch {
       // Jamais la valeur : la sortie du modèle peut porter n'importe quel fragment du profil ou
       // de l'offre — seule la classe d'erreur (implicite ici : schéma non respecté) est utile.

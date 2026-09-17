@@ -165,6 +165,7 @@ describe('ResumeTailoringService', () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined),
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined),
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined),
+    vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined),
   ];
 
   afterEach(() => {
@@ -202,9 +203,14 @@ describe('ResumeTailoringService', () => {
     const exp1Changes = result.changes.experiences.find((experience) => experience.id === profile.exp1Id);
     expect(exp1Changes?.kept).toBe(true);
     expect(exp1Changes?.rejected).toHaveLength(1);
-    expect(exp1Changes?.rejected[0]?.reason).toContain('30%');
+    // Forme de surface d'origine (revue ancrage : « premier mot vérifié, ... »), pas la clé
+    // canonique — « 30 % », jamais « 30% ».
+    expect(exp1Changes?.rejected[0]?.reason).toContain('30 %');
     // La puce rejetée est remplacée par la puce de base au même index, jamais laissée vide.
     expect(exp1Changes?.after).not.toContain("A augmenté la performance des services de 30 %.");
+    // Ni le titre ni le résumé n'ont été rejetés par l'ancrage : la fixture n'en invente pas.
+    expect(result.changes.titleRejected).toBe(false);
+    expect(result.changes.summaryRejected).toBe(false);
 
     assertNoLeakedContent();
   });
@@ -250,6 +256,23 @@ describe('ResumeTailoringService', () => {
 
     expect(result.content.summary).toContain('Ingénieure logicielle passionnée par le backend.');
     expect(result.content.summary).not.toContain('40 %');
+    expect(result.changes.summaryRejected).toBe(true);
+  });
+
+  it('un titre qui porte un chiffre est rejeté : le titre de base est conservé', async () => {
+    const profile = await createProfile();
+    const job = await createJob();
+    const fixture = loadTailoringFixture(profile) as Record<string, unknown>;
+    fixture.title = 'Ingénieur avec 10 ans d_expérience';
+    const parse = fakeParse({ parsed_output: fixture });
+    const service = new ResumeTailoringService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+
+    const result = await service.tailor(profile.userId, job.id);
+
+    // Le profil de base ne porte aucun titre (`createProfile` n'en fixe pas) : un titre rejeté
+    // laisse donc `null`, jamais la proposition chiffrée du modèle.
+    expect(result.content.identity.title).toBeNull();
+    expect(result.changes.titleRejected).toBe(true);
   });
 
   it("les coordonnées (email, téléphone) ne figurent jamais dans le prompt envoyé au modèle", async () => {

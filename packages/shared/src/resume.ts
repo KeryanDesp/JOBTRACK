@@ -388,7 +388,15 @@ function orNull<T>(value: T | null | undefined): T | null {
   return value ?? null;
 }
 
+// Borne de `resumeExperienceSchema.sourceDescription` (revue sécurité, tâche 4) : une description
+// de profil plus longue que cette limite (import externe, donnée historique jamais repassée par
+// `experienceSchema.description`, lui-même borné à 2000) ne doit jamais faire échouer
+// `resumeContentSchema.parse` en aval (ex. `groundTailoring`) — tronquée plutôt que rejetée, même
+// principe que `toResumeProject.description` ci-dessous (borne 400).
+const MAX_SOURCE_DESCRIPTION_LENGTH = 2000;
+
 function toResumeExperience(item: ResumeSourceExperience): ResumeContentExperience {
+  const sourceDescription = item.description == null ? null : item.description.slice(0, MAX_SOURCE_DESCRIPTION_LENGTH);
   return {
     id: item.id,
     company: item.company,
@@ -398,7 +406,7 @@ function toResumeExperience(item: ResumeSourceExperience): ResumeContentExperien
     endDate: orNull(item.endDate),
     isCurrent: item.isCurrent,
     highlights: splitDescriptionIntoHighlights(item.description),
-    sourceDescription: orNull(item.description),
+    sourceDescription,
   };
 }
 
@@ -717,6 +725,14 @@ export const resumeChangesSchema = z
   .object({
     title: beforeAfterTextSchema,
     summary: beforeAfterTextSchema,
+    // Additifs (revue sécurité, tâche 4) : `true` quand le titre/résumé proposé par l'IA a été
+    // rejeté par l'ancrage (`groundTailoring.titleRejected`/`summaryRejected`) et que `after`
+    // ci-dessus est donc resté celui de la base, jamais une reformulation — sans ce signal
+    // explicite, l'utilisateur ne peut pas distinguer « l'IA n'a rien changé » de « l'IA a
+    // proposé un changement, écarté ». Défaut `false` : un `ResumeChanges` sérialisé avant cet
+    // ajout (aucune version encore persistée dans cette tranche) reste valide.
+    titleRejected: z.boolean().default(false),
+    summaryRejected: z.boolean().default(false),
     experiences: z.array(changesExperienceSchema).max(30),
     skills: changesSkillsSchema,
     educations: changesKeptRemovedSchema(20),
@@ -726,7 +742,16 @@ export const resumeChangesSchema = z
   })
   .strict();
 
-export type ResumeChanges = z.output<typeof resumeChangesSchema>;
+// `titleRejected`/`summaryRejected` restent optionnels dans le type exporté (revue sécurité,
+// tâche 4, additif) malgré leur `.default(false)` dans le schéma : `z.output<>` les rendrait
+// requis dans le type TypeScript (un défaut zod ne supprime jamais l'optionnalité côté sortie
+// pour la construction d'un littéral), ce qui casserait toute construction de `ResumeChanges` à
+// la main écrite avant cet ajout (web) — `resumeChangesSchema.parse(...)` continue, lui, à
+// toujours les renseigner (`false` par défaut) quelle que soit l'entrée.
+export type ResumeChanges = Omit<z.output<typeof resumeChangesSchema>, 'titleRejected' | 'summaryRejected'> & {
+  titleRejected?: boolean;
+  summaryRejected?: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Entrées des routes (spec §6)

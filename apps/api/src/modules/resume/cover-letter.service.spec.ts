@@ -143,6 +143,7 @@ describe('CoverLetterService', () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined),
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined),
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined),
+    vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined),
   ];
 
   afterEach(() => {
@@ -177,6 +178,30 @@ describe('CoverLetterService', () => {
     expect(result.model).toBe('claude-opus-5');
     expect(result.promptVersion).toBe(1);
     expect(result.content.paragraphs.length).toBeGreaterThan(0);
+  });
+
+  it("conserve le destinataire propose quand il figure litteralement dans l_offre", async () => {
+    const profile = await createProfile();
+    const job = await createJob({ description: 'Contactez Madame Sophie Legrand pour toute question sur ce poste.' });
+    const letter = { ...loadLetterFixture(), recipient: 'Madame Sophie Legrand' };
+    const parse = fakeParse({ parsed_output: letter });
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+
+    const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
+
+    expect(result.content.recipient).toBe('Madame Sophie Legrand');
+  });
+
+  it("retire un destinataire invente, absent du texte de l_offre", async () => {
+    const profile = await createProfile();
+    const job = await createJob();
+    const letter = { ...loadLetterFixture(), recipient: 'Madame Sophie Legrand' };
+    const parse = fakeParse({ parsed_output: letter });
+    const service = new CoverLetterService(prisma, fakeRedis(), resumeSource, fakeClient(parse));
+
+    const result = await service.write(profile.userId, job.id, 'PROFESSIONAL');
+
+    expect(result.content.recipient).toBeNull();
   });
 
   it('plafonne la longueur totale selon le ton demandé (SHORT ≤ 900 caractères)', async () => {

@@ -68,9 +68,11 @@ const REMINDER =
 // structurée de l'offre (`JobRequirements`), déjà bornée par ailleurs (tranche 3, 20 000 caractères).
 const MAX_OFFER_DESCRIPTION_CHARS = 20_000;
 
-// Taille maximale du corps du document (profil + offre, avant l'enveloppe et le rappel) : garde-fou
-// de coût et de latence indépendant des bornes de chaque section (spec §5/§8).
-export const MAX_TAILORING_DOCUMENT_CHARS = 60_000;
+// Bornes par section (spec §5/§8, revue sécurité tâche 4) : chaque section est bornée
+// AVANT d'être enveloppée dans sa balise — jamais l'assemblage final (`<profil>…</offre>`
+// complet), pour ne jamais risquer de tronquer une balise de fermeture elle-même.
+export const MAX_PROFILE_SECTION_CHARS = 30_000;
+export const MAX_OFFER_SECTION_CHARS = 20_000;
 
 /** Retire toute variante de balise `<profil>`/`</profil>`/`<offre>`/`</offre>` (espaces internes
  * tolérés, ouvrante ou fermante) présente dans les données elles-mêmes : sans cela, un profil ou
@@ -116,17 +118,57 @@ export interface TailoringDocumentInput {
   requirements: JobRequirements | null;
 }
 
+/** Retire `sourceDescription` de chaque expérience : premier levier de réduction (spec §5, revue
+ * sécurité tâche 4) — l'information y figurant est déjà résumée par `highlights`, jamais la seule
+ * source de vérité pour l'adaptation (l'ancrage, côté serveur, compare de toute façon aux mêmes
+ * champs que la sortie initiale de `buildBaseResume`, pas au document envoyé). */
+function withoutSourceDescriptions(base: ResumeContent): ResumeContent {
+  return { ...base, experiences: base.experiences.map((experience) => ({ ...experience, sourceDescription: null })) };
+}
+
+// Deuxième levier de réduction (spec §5) : puces raccourcies et moins nombreuses plutôt que
+// retirées entièrement — le modèle garde un aperçu de chaque expérience gardée, même très bornée.
+const TRUNCATED_HIGHLIGHT_COUNT = 3;
+const TRUNCATED_HIGHLIGHT_LENGTH = 120;
+
+function withTruncatedHighlights(base: ResumeContent): ResumeContent {
+  return {
+    ...base,
+    experiences: base.experiences.map((experience) => ({
+      ...experience,
+      highlights: experience.highlights.slice(0, TRUNCATED_HIGHLIGHT_COUNT).map((highlight) => highlight.slice(0, TRUNCATED_HIGHLIGHT_LENGTH)),
+    })),
+  };
+}
+
+/**
+ * Borne la section `<profil>` à `MAX_PROFILE_SECTION_CHARS` (spec §5/§8, revue sécurité tâche 4),
+ * AVANT tout assemblage avec l'offre ou pose des balises : un profil très chargé (30 expériences,
+ * chacune avec une description source proche de sa borne de 2000 caractères) est réduit en deux
+ * étapes structurées — retrait de `sourceDescription` puis raccourcissement des puces — avant, en
+ * tout dernier recours, une troncature brute du JSON le plus réduit obtenu (jamais du document
+ * final assemblé, qui pourrait sinon couper une balise de fermeture).
+ */
+function boundProfileSection(base: ResumeContent): string {
+  const attempts = [base, withoutSourceDescriptions(base), withTruncatedHighlights(withoutSourceDescriptions(base))];
+  for (const attempt of attempts) {
+    const json = sanitizeTags(JSON.stringify(attempt, null, 2));
+    if (json.length <= MAX_PROFILE_SECTION_CHARS) return json;
+  }
+  const lastAttempt = attempts[attempts.length - 1];
+  return sanitizeTags(JSON.stringify(lastAttempt, null, 2)).slice(0, MAX_PROFILE_SECTION_CHARS);
+}
+
 /**
  * Construit le contenu utilisateur envoyé à Claude (spec §5) : profil délimité par
  * `<profil>…</profil>` (JSON du CV de base, mis en forme), offre délimitée par
- * `<offre>…</offre>` — les deux traités comme des données, jamais une instruction. Borné en
- * taille totale (`MAX_TAILORING_DOCUMENT_CHARS`) indépendamment des bornes propres à chaque
- * section.
+ * `<offre>…</offre>` — les deux traités comme des données, jamais une instruction. Chaque section
+ * est bornée séparément (`boundProfileSection`, `MAX_OFFER_SECTION_CHARS`) avant d'être enveloppée
+ * dans sa balise ; le document assemblé (balises comprises) n'est ensuite jamais tronqué.
  */
 export function buildTailoringDocument(input: TailoringDocumentInput): string {
-  const profil = sanitizeTags(JSON.stringify(input.base, null, 2));
-  const offre = sanitizeTags(buildOfferSection(input.job, input.requirements));
+  const profil = boundProfileSection(input.base);
+  const offre = sanitizeTags(buildOfferSection(input.job, input.requirements)).slice(0, MAX_OFFER_SECTION_CHARS);
 
-  const body = `<profil>\n${profil}\n</profil>\n\n<offre>\n${offre}\n</offre>`.slice(0, MAX_TAILORING_DOCUMENT_CHARS);
-  return `${body}\n\n${REMINDER}`;
+  return `<profil>\n${profil}\n</profil>\n\n<offre>\n${offre}\n</offre>\n\n${REMINDER}`;
 }

@@ -15,14 +15,20 @@ import type { JobAnalysis } from '@prisma/client';
 import { ANTHROPIC_CLIENT, ANTHROPIC_MODEL, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RedisService } from '../../common/redis.service';
-import { buildKnownTerms, groundLetter } from './lib/grounding';
+import { buildKnownNumbers, buildKnownTerms, groundLetter } from './lib/grounding';
 import { buildLetterDocument, COVER_LETTER_PROMPT_VERSION, COVER_LETTER_SYSTEM_PROMPT, type ResumeJobInput } from './cover-letter.prompt';
 import { AiNotConfiguredError, AiOutputInvalidError, AiUnavailableError, ProfileIncompleteError } from './resume.errors';
 import { ResumeSourceService } from './resume-source.service';
 
 const LOCK_PREFIX = 'resume:letter:';
-const LOCK_TTL_MS = 120_000;
-const MAX_OUTPUT_TOKENS = 3000;
+// Doit couvrir le pire cas d'un appel `messages.parse` côté client Anthropic
+// (`anthropic.provider.ts` : `maxRetries: 2`, `timeout: 90_000`) — 1 + 2 tentatives de 90 s au
+// pire, soit 270 s — avec une marge (même raison que `resume-tailoring.service.ts`/`LOCK_TTL_MS`).
+const LOCK_TTL_MS = 300_000;
+// La pensée adaptive (`thinking: { type: 'adaptive' }`) compte dans `max_tokens` : 3000 s'est
+// révélé trop serré en pratique (troncatures `stop_reason: 'max_tokens'` sur des lettres pourtant
+// courtes) — porté à la même valeur que l'adaptation de CV.
+const MAX_OUTPUT_TOKENS = 8000;
 
 const JOB_NOT_FOUND_MESSAGE = 'Offre introuvable.';
 export const LETTER_IN_PROGRESS_MESSAGE = 'Une lettre est déjà en cours de génération pour cette offre.';
@@ -108,16 +114,22 @@ export class CoverLetterService {
     try {
       const requirements = this.parseRequirements(job.analysis);
       const document = buildLetterDocument({ base: base.aiContent, job, requirements, tone });
-      const result = await this.callClaude(client, document);
+      const result = await this.callClaude(client, document, jobId);
 
       const sources = this.collectSources(base.aiContent, job, requirements);
       const knownTerms = buildKnownTerms(base.aiContent);
-      const grounded = groundLetter(result.letter, sources, knownTerms, tone);
+      const knownNumbers = buildKnownNumbers(base.aiContent);
+      const grounded = groundLetter(result.letter, sources, knownTerms, tone, knownNumbers);
 
       // L'identité du candidat n'est jamais laissée à l'appréciation du modèle : la signature est
       // toujours son prénom et son nom exacts, jamais une reformulation ou une variante possible.
       const fullName = `${base.aiContent.identity.firstName} ${base.aiContent.identity.lastName}`.trim();
-      const content: CoverLetterContent = coverLetterContentSchema.parse({ ...grounded.content, signature: fullName });
+      // Le destinataire n'est jamais garanti par l'ancrage lexical (nombres/entités) : un nom de
+      // personne bien formé peut échapper à `extractProperNouns` (revue sécurité, tâche 4) —
+      // vérifié séparément, ici, contre le texte brut de l'offre ; jamais conservé sinon, même
+      // assaini (`groundLetter` l'a déjà nettoyé des caractères de contrôle).
+      const recipient = this.recipientAppearsInOffer(grounded.content.recipient, job) ? grounded.content.recipient : null;
+      const content: CoverLetterContent = coverLetterContentSchema.parse({ ...grounded.content, recipient, signature: fullName });
 
       this.logger.log(
         `Lettre de motivation générée — offre=${jobId} ton=${tone} modèle=${result.model} ` +
@@ -156,6 +168,16 @@ export class CoverLetterService {
     return parsed.success ? parsed.data : null;
   }
 
+  /** `true` seulement si `recipient` (déjà assaini par `groundLetter`) figure littéralement dans
+   * le texte brut de l'offre (revue sécurité, tâche 4) : un nom de personne bien formé peut
+   * échapper à l'ancrage lexical généraliste (`isGrounded` ne détecte que nombres/entités
+   * techniques), donc jamais suffisant seul pour garantir qu'il vient bien de l'offre. */
+  private recipientAppearsInOffer(recipient: string | null, job: ResumeJobInput): boolean {
+    if (recipient === null) return false;
+    const offerText = `${job.title} ${job.company ?? ''} ${job.description}`;
+    return offerText.includes(recipient);
+  }
+
   /** Textes source pour l'ancrage de la lettre (spec §5 : « profil + offre ») : tous les champs
    * textuels du CV de base (jamais les coordonnées, déjà absentes de `aiContent`) et ce que
    * l'offre indique (titre, entreprise, description brute ou, si disponible, résumé/technologies/
@@ -191,7 +213,10 @@ export class CoverLetterService {
     return texts;
   }
 
-  private async callClaude(client: Anthropic, document: string): Promise<ClaudeLetterResult> {
+  private async callClaude(client: Anthropic, document: string, jobId: string): Promise<ClaudeLetterResult> {
+    // Le cache Anthropic ne semble s'activer qu'au-delà d'un préfixe de l'ordre de 1024 tokens
+    // (comportement observé, non garanti par la documentation) : `COVER_LETTER_SYSTEM_PROMPT`
+    // doit rester au moins aussi long pour que ce `cache_control` ait une chance de servir.
     const system: Array<Anthropic.TextBlockParam> = [
       { type: 'text', text: COVER_LETTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
     ];
@@ -207,6 +232,10 @@ export class CoverLetterService {
         messages,
       })
       .catch((error: unknown) => this.handleAnthropicError(error));
+
+    // Jetons de cache lus (jamais le contenu) : confirme si le prompt système en cache a
+    // effectivement servi pour cet appel — utile au diagnostic, jamais nécessaire au comportement.
+    this.logger.debug(`Cache Anthropic — offre=${jobId} tokens_lus=${response.usage.cache_read_input_tokens ?? 0}`);
 
     if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens' || response.parsed_output === null) {
       throw new AiOutputInvalidError();

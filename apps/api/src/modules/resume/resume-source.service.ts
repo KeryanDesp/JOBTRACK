@@ -31,24 +31,23 @@ function toIsoDateOrNull(date: Date | null): string | null {
 }
 
 /**
- * Résout et construit le CV de base d'un utilisateur (spec §4/§5) : lecture du
- * profil (+ ses six collections) et de l'email du compte (`User.email` —
- * absent du profil), conversion des dates `@db.Date` en chaînes `AAAA-MM-JJ`,
- * puis `buildBaseResume` (fonction pure, partagée web/API). Utilisé par
- * `ResumeTailoringService`/`CoverLetterService` (entrée IA) et, plus tard,
- * par les routes `/resume/base` (tâche 5).
+ * Résout et construit le CV de base d'un utilisateur (spec §4/§5) : lecture du profil (+ ses six
+ * collections et l'email du compte, `User.email` — absent du profil) en une seule requête,
+ * conversion des dates `@db.Date` en chaînes `AAAA-MM-JJ`, puis `buildBaseResume` (fonction pure,
+ * partagée web/API). Utilisé par `ResumeTailoringService`/`CoverLetterService` (entrée IA) et,
+ * plus tard, par les routes `/resume/base` (tâche 5).
  */
 @Injectable()
 export class ResumeSourceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Une seule requête (revue, tâche 4) : `Profile.user` (relation inverse) porte l'email du
+   * compte, pas besoin d'un aller-retour séparé sur `User` avant de savoir si le profil existe. */
   async loadBase(userId: string): Promise<ResumeBase | null> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
-    if (!user) return null;
-
     const profile = await this.prisma.profile.findUnique({
       where: { userId },
       include: {
+        user: { select: { email: true } },
         experiences: { orderBy: { sortOrder: 'asc' } },
         educations: { orderBy: { sortOrder: 'asc' } },
         skills: { orderBy: { sortOrder: 'asc' } },
@@ -64,7 +63,7 @@ export class ResumeSourceService {
       lastName: profile.lastName,
       title: profile.title,
       summary: profile.summary,
-      email: user.email,
+      email: profile.user.email,
       phone: profile.phone,
       city: profile.city,
       country: profile.country,
@@ -126,7 +125,7 @@ export class ResumeSourceService {
       content: buildBaseResume(source, { includeContact: true }),
       aiContent: buildBaseResume(source, { includeContact: false }),
       complete: source.experiences.length > 0 || source.skills.length > 0,
-      email: user.email,
+      email: profile.user.email,
     };
   }
 }
