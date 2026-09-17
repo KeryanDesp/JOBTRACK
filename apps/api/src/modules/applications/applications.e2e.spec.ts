@@ -35,8 +35,8 @@ const WRITE_BUCKETS = ['application-write', 'application-move'];
 
 /**
  * Jour courant **à Paris** au format `AAAA-MM-JJ` : la valeur que l'API pose sur `appliedAt`.
- * Jamais `todayInParis()` — entre minuit et 2 h à Paris, l'UTC est
- * encore la veille, et ces assertions échoueraient une nuit sur douze.
+ * Jamais `new Date().toISOString().slice(0, 10)` (jour UTC) — entre minuit et 2 h à Paris,
+ * l'UTC est encore la veille, et ces assertions échoueraient une nuit sur douze.
  */
 function todayInParis(): string {
   return new Intl.DateTimeFormat('fr-CA', {

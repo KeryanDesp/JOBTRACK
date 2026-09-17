@@ -10,6 +10,7 @@ import type {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/services/api/client';
 import { applicationKeys } from '../lib/query-keys';
@@ -114,6 +115,7 @@ function dragEnd(activeId: string, overId: string | null): DragEndEvent {
 
 function renderBoard(board: ApplicationBoardDto | null) {
   const onOpen = vi.fn();
+  const onAdd = vi.fn();
   const client = new QueryClient({
     defaultOptions: {
       // `staleTime: Infinity` : le board pré-semé ne doit pas relancer une
@@ -125,11 +127,13 @@ function renderBoard(board: ApplicationBoardDto | null) {
   if (board !== null) client.setQueryData(applicationKeys.board, board);
 
   const utils = render(
-    <QueryClientProvider client={client}>
-      <ApplicationsBoard onOpen={onOpen} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <ApplicationsBoard onOpen={onOpen} onAdd={onAdd} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
-  return { ...utils, onOpen, client };
+  return { ...utils, onOpen, onAdd, client };
 }
 
 describe('resolveDrop', () => {
@@ -215,11 +219,14 @@ describe('ApplicationsBoard', () => {
     expect(screen.getByRole('button', { name: 'Réessayer' })).toBeInTheDocument();
   });
 
-  it('board vide : les colonnes restent affichees avec l_indice dans la premiere', () => {
-    renderBoard(makeBoard());
+  it('board vide : les colonnes restent affichees et l_etat vide propose les deux actions', async () => {
+    const { onAdd } = renderBoard(makeBoard());
 
     expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(5);
-    expect(screen.getAllByText('Aucune candidature')).toHaveLength(1);
+    expect(screen.getByText('Aucune candidature.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Voir les offres' })).toHaveAttribute('href', '/jobs');
+    await userEvent.click(screen.getByRole('button', { name: 'Ajouter une candidature' }));
+    expect(onAdd).toHaveBeenCalledTimes(1);
   });
 
   it('un depot sur une autre colonne appelle PATCH move avec le statut et la position', async () => {

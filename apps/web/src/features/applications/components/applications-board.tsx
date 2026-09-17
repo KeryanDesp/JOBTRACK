@@ -18,11 +18,16 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import type { ApplicationBoardDto, ApplicationDto, ApplicationStatus } from '@jobtrack/shared';
 import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS } from '@jobtrack/shared';
+import { Inbox } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApplicationsBoard, useMoveApplication } from '../hooks/use-applications';
 import { usePrefersReducedMotion } from '../hooks/use-prefers-reduced-motion';
 import { isApplicationStatus } from '../lib/status';
+import { AddApplicationButton } from './add-application-button';
 import { ApplicationCard } from './application-card';
 import { BoardColumn } from './board-column';
 
@@ -119,9 +124,11 @@ const screenReaderInstructions: ScreenReaderInstructions = {
 
 interface ApplicationsBoardProps {
   onOpen: (id: string) => void;
+  /** Ouvre le formulaire d'ajout (état vide : mêmes deux actions que la vue table, spec §7). */
+  onAdd: () => void;
 }
 
-export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
+export function ApplicationsBoard({ onOpen, onAdd }: ApplicationsBoardProps) {
   const { data, isPending, isError, refetch } = useApplicationsBoard();
   const move = useMoveApplication();
   const reducedMotion = usePrefersReducedMotion();
@@ -202,15 +209,20 @@ export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
           elles peuvent enfin grandir (`xl:flex-1`, voir `BoardColumn`).
           `pr-4` évite que la dernière colonne ne soit rognée par le bord du
           conteneur défilant. */}
+      {isEmpty && (
+        <div className="space-y-4">
+          <EmptyState icon={Inbox} title="Aucune candidature." description="Suivez une offre ou ajoutez une candidature." />
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button asChild variant="outline">
+              <Link to="/jobs">Voir les offres</Link>
+            </Button>
+            <AddApplicationButton onClick={onAdd} />
+          </div>
+        </div>
+      )}
       <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 pr-4 xl:snap-none xl:pr-0">
-        {APPLICATION_STATUSES.map((status, index) => (
-          <BoardColumn
-            key={status}
-            status={status}
-            items={board.columns[status]}
-            onOpen={onOpen}
-            emptyHint={isEmpty && index === 0 ? 'Aucune candidature' : undefined}
-          />
+        {APPLICATION_STATUSES.map((status) => (
+          <BoardColumn key={status} status={status} items={board.columns[status]} onOpen={onOpen} />
         ))}
       </div>
 

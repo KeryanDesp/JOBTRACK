@@ -71,7 +71,7 @@ export function ApplicationsPage() {
             hrefForPage={(page) => `?${writeApplicationsUrlState({ ...state, page }).toString()}`}
           />
         ) : (
-          <ApplicationsBoard onOpen={setApplicationId} />
+          <ApplicationsBoard onOpen={setApplicationId} onAdd={() => setState({ adding: true })} />
         )}
 
         {/* Panneau de détail piloté par `?candidature=<id>`, ouvert aussi bien
