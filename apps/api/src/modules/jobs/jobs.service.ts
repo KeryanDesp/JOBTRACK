@@ -6,6 +6,7 @@ import type {
   JobSearchQuery,
   JobSort,
   JobSummaryDto,
+  JobTab,
   JobsCapabilitiesDto,
 } from '@jobtrack/shared';
 import { PrismaService } from '../../common/prisma.service';
@@ -322,19 +323,60 @@ export class JobsService {
 
     if (query.sources.length > 0) and.push({ sources: { some: { source: { in: query.sources } } } });
 
-    // Onglet « Nouvelles » : publiées depuis 24 h (spec §2), indépendant de `publishedWithinDays`.
-    if (query.tab === 'new') and.push({ publishedAt: { gte: hoursAgo(24) } });
+    this.applyTabFilter(and, query.tab);
 
     return { AND: and };
   }
 
-  private buildOrderBy(sort: JobSort): Prisma.JobOrderByWithRelationInput[] {
-    if (sort === 'salary') {
-      // Dernier critère `id` : sans lui, deux offres de même salaire et même date de
-      // publication n'ont aucun ordre stable entre deux pages successives.
-      return [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { id: 'asc' }];
+  /**
+   * `switch` exhaustif (jamais de `default` silencieux) : une valeur de `JobTab`
+   * oubliée ici est une erreur de compilation (`never`), pas un onglet qui se
+   * comporterait par erreur comme « Toutes ».
+   */
+  private applyTabFilter(and: Prisma.JobWhereInput[], tab: JobTab): void {
+    switch (tab) {
+      case 'all':
+        return;
+      case 'new':
+        // Onglet « Nouvelles » : publiées depuis 24 h (spec §2), indépendant de `publishedWithinDays`.
+        and.push({ publishedAt: { gte: hoursAgo(24) } });
+        return;
+      case 'for_you':
+      case 'priority':
+        // Tranche 4, tâche 6 : remplacé par le tri/filtre de score. En attendant que le
+        // module `matching` fournisse le score de l'utilisateur, ces onglets se comportent
+        // explicitement comme « Toutes » plutôt que d'être ignorés en silence.
+        return;
+      default: {
+        const exhaustive: never = tab;
+        throw new Error(`Onglet inconnu : ${String(exhaustive)}`);
+      }
     }
-    return [{ publishedAt: 'desc' }, { id: 'asc' }];
+  }
+
+  /**
+   * `switch` exhaustif (jamais de `default` silencieux) : une valeur de `JobSort`
+   * oubliée ici est une erreur de compilation (`never`), pas un tri qui se
+   * comporterait par erreur comme « Plus récentes ».
+   */
+  private buildOrderBy(sort: JobSort): Prisma.JobOrderByWithRelationInput[] {
+    switch (sort) {
+      case 'salary':
+        // Dernier critère `id` : sans lui, deux offres de même salaire et même date de
+        // publication n'ont aucun ordre stable entre deux pages successives.
+        return [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { id: 'asc' }];
+      case 'recent':
+      case 'match':
+      case 'relevance':
+        // Tranche 4, tâche 6 : remplacé par le tri/filtre de score. En attendant que le
+        // module `matching` fournisse un score et une pertinence, `match` et `relevance`
+        // se comportent explicitement comme « Plus récentes » plutôt que d'être ignorés en silence.
+        return [{ publishedAt: 'desc' }, { id: 'asc' }];
+      default: {
+        const exhaustive: never = sort;
+        throw new Error(`Tri inconnu : ${String(exhaustive)}`);
+      }
+    }
   }
 
   /**

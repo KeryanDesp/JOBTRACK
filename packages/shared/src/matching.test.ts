@@ -7,6 +7,8 @@ import {
   MATCH_BANDS,
   MATCH_PRIORITIES,
   PRIORITY_LABELS,
+  PRIORITY_THRESHOLDS,
+  SCORE_BAND_THRESHOLDS,
   analyzeJobsSchema,
   jobRequirementsSchema,
   jobRequirementsWireSchema,
@@ -30,14 +32,17 @@ function baseWireRequirements() {
 }
 
 describe('jobRequirementsSchema — technologies', () => {
-  it('ecarte une ligne dont la categorie est inconnue', () => {
+  it('bascule une categorie inconnue sur other sans ecarter la ligne', () => {
     const result = jobRequirementsSchema.parse({
       technologies: [
         { name: 'React', required: true, category: 'framework' },
         { name: 'Truc', required: false, category: 'inconnue' },
       ],
     });
-    expect(result.technologies).toEqual([{ name: 'React', required: true, category: 'framework' }]);
+    expect(result.technologies).toEqual([
+      { name: 'React', required: true, category: 'framework' },
+      { name: 'Truc', required: false, category: 'other' },
+    ]);
   });
 
   it('tronque a 60 technologies', () => {
@@ -76,6 +81,12 @@ describe('jobRequirementsSchema — listes de chaines', () => {
     expect(result.niceToHaves).toEqual([]);
     expect(result.educationFields).toEqual([]);
   });
+
+  it('traite une valeur qui n est pas un tableau comme une liste vide, sans echouer', () => {
+    const result = jobRequirementsSchema.parse({ softSkills: null, technologies: 'x' });
+    expect(result.softSkills).toEqual([]);
+    expect(result.technologies).toEqual([]);
+  });
 });
 
 describe('jobRequirementsSchema — experienceYearsMin', () => {
@@ -93,6 +104,11 @@ describe('jobRequirementsSchema — experienceYearsMin', () => {
 
   it('borne a 0 une valeur negative', () => {
     expect(jobRequirementsSchema.parse({ experienceYearsMin: -5 }).experienceYearsMin).toBe(0);
+  });
+
+  it('renvoie null pour une chaine vide ou blanche', () => {
+    expect(jobRequirementsSchema.parse({ experienceYearsMin: '' }).experienceYearsMin).toBeNull();
+    expect(jobRequirementsSchema.parse({ experienceYearsMin: '   ' }).experienceYearsMin).toBeNull();
   });
 });
 
@@ -191,5 +207,13 @@ describe('libelles et poids', () => {
     expect(Object.keys(FACTOR_WEIGHTS).sort()).toEqual([...FACTOR_KEYS].sort());
     const total = Object.values(FACTOR_WEIGHTS).reduce((sum, weight) => sum + weight, 0);
     expect(total).toBe(100);
+  });
+
+  it('SCORE_BAND_THRESHOLDS reprend les seuils de la spec (85/70/50)', () => {
+    expect(SCORE_BAND_THRESHOLDS).toEqual({ EXCELLENT: 85, GOOD: 70, PARTIAL: 50 });
+  });
+
+  it('PRIORITY_THRESHOLDS reprend les seuils de la spec (85/75/60/45)', () => {
+    expect(PRIORITY_THRESHOLDS).toEqual({ VERY_HIGH: 85, HIGH: 75, GOOD: 60, CONSIDER: 45 });
   });
 });

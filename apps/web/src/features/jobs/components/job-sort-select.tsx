@@ -9,8 +9,8 @@ interface JobSortSelectProps {
 
 /** Options futures désactivées (score, tranche 4), avec leur explication portée par l'option elle-même. */
 const DISABLED_OPTIONS = [
-  { value: 'relevance', label: 'Pertinence' },
   { value: 'match', label: 'Meilleur match' },
+  { value: 'relevance', label: 'Pertinence' },
 ] as const;
 
 export function JobSortSelect({ value, onChange }: JobSortSelectProps) {

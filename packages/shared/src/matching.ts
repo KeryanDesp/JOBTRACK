@@ -71,63 +71,84 @@ export type LanguageLevelReq = z.infer<typeof languageLevelReqSchema>;
  * relecture d'une colonne `Json`) : chaque élément est validé isolément par
  * `schema` et un élément invalide est écarté plutôt que de faire échouer toute
  * la liste (même principe que `sanitizeDraftList`, cv-import.ts). Tronquée à
- * `maxItems` éléments après filtrage.
+ * `maxItems` éléments après filtrage. La valeur reçue peut ne pas être un
+ * tableau du tout (`null`, chaîne, objet — sortie d'un modèle ou relecture
+ * d'une colonne `Json` mal formée) : elle est alors traitée comme une liste
+ * vide plutôt que de faire échouer tout le schéma (`z.array` lèverait sinon).
  */
 function filterRows<Output>(schema: z.ZodType<Output, z.ZodTypeDef, unknown>, maxItems: number) {
   return z
-    .array(z.unknown())
+    .unknown()
     .optional()
-    .transform((items) =>
-      (items ?? [])
+    .transform((value) => {
+      const items = Array.isArray(value) ? value : [];
+      return items
         .flatMap((item) => {
           const result = schema.safeParse(item);
           return result.success ? [result.data] : [];
         })
-        .slice(0, maxItems),
-    );
+        .slice(0, maxItems);
+    });
 }
 
 /**
  * Filtre une liste de chaînes libres : valeurs non-chaînes écartées, espaces
  * superflus retirés, entrées vides écartées, chaque chaîne tronquée à
- * `maxLength` caractères, liste tronquée à `maxItems` éléments.
+ * `maxLength` caractères, liste tronquée à `maxItems` éléments. Comme
+ * `filterRows`, une valeur qui n'est pas un tableau devient une liste vide.
  */
 function filterStrings(maxItems: number, maxLength: number) {
   return z
-    .array(z.unknown())
+    .unknown()
     .optional()
-    .transform((items) =>
-      (items ?? [])
+    .transform((value) => {
+      const items = Array.isArray(value) ? value : [];
+      return items
         .filter((item): item is string => typeof item === 'string')
         .map((item) => item.trim())
         .filter((item) => item.length > 0)
         .map((item) => item.slice(0, maxLength))
-        .slice(0, maxItems),
-    );
+        .slice(0, maxItems);
+    });
 }
 
 /** Énumération nullable tolérante : valeur absente/inconnue → `null`, jamais d'échec. */
 function tolerantEnumNullable<T extends readonly [string, ...string[]]>(values: T) {
-  const allowed = new Set<string>(values);
   return z
     .unknown()
     .optional()
     .transform((value): T[number] | null => {
-      if (typeof value !== 'string' || !allowed.has(value)) return null;
-      return value;
+      if (typeof value !== 'string') return null;
+      return values.find((candidate) => candidate === value) ?? null;
     });
 }
 
 /**
+ * Énumération tolérante avec repli : valeur absente/inconnue → `fallback`
+ * (plutôt que `null`), pour un champ jamais nullable dans le contrat (ex.
+ * `technology.category`, toujours renseignée dans `JobRequirementTechnology`).
+ */
+function tolerantEnumWithDefault<T extends readonly [string, ...string[]]>(values: T, fallback: T[number]) {
+  return z.unknown().transform((value): T[number] => {
+    if (typeof value === 'string') {
+      const match = values.find((candidate) => candidate === value);
+      if (match !== undefined) return match;
+    }
+    return fallback;
+  });
+}
+
+/**
  * `experienceYearsMin` tolérant : une valeur non numérique (chaîne non
- * numérique, texte libre du modèle) devient `null` plutôt que de faire
- * échouer l'extraction ; une valeur numérique est bornée à [0, 40].
+ * numérique ou vide, texte libre du modèle) devient `null` plutôt que de
+ * faire échouer l'extraction ; une valeur numérique est bornée à [0, 40].
  */
 const experienceYearsMinSchema = z
   .unknown()
   .optional()
   .transform((value): number | null => {
-    const num = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (typeof value === 'string' && value.trim() === '') return null;
+    const num = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : NaN;
     if (!Number.isFinite(num)) return null;
     return Math.min(40, Math.max(0, num));
   });
@@ -142,13 +163,9 @@ const technologyRowSchema = z.object({
     .unknown()
     .optional()
     .transform((value) => value === true),
-  category: z.unknown().transform((value, ctx) => {
-    if (typeof value === 'string' && (TECHNOLOGY_CATEGORIES as readonly string[]).includes(value)) {
-      return value as TechnologyCategory;
-    }
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Catégorie de technologie invalide.' });
-    return z.NEVER;
-  }),
+  // Une catégorie absente/inconnue n'écarte pas la technologie : elle passe
+  // sous `'other'`, la ligne restant exploitable par le moteur de score.
+  category: tolerantEnumWithDefault(TECHNOLOGY_CATEGORIES, 'other'),
 });
 
 const languageRowSchema = z.object({
@@ -157,13 +174,7 @@ const languageRowSchema = z.object({
     .trim()
     .min(1)
     .transform((value) => value.slice(0, 80)),
-  level: z
-    .unknown()
-    .optional()
-    .transform((value): LanguageLevelReq | null => {
-      if (typeof value !== 'string' || !(LANGUAGE_LEVELS_REQ as readonly string[]).includes(value)) return null;
-      return value as LanguageLevelReq;
-    }),
+  level: tolerantEnumNullable(LANGUAGE_LEVELS_REQ),
   required: z
     .unknown()
     .optional()
@@ -300,12 +311,16 @@ export interface MatchScoreSummaryDto {
   };
 }
 
+/** Statuts d'analyse d'une offre, tels que renvoyés par `GET /jobs/:id/match`. */
+export const MATCH_ANALYSIS_STATUSES = ['none', 'pending', 'done', 'failed', 'ai_not_configured'] as const;
+export type MatchAnalysisStatus = (typeof MATCH_ANALYSIS_STATUSES)[number];
+
 /** Score détaillé, `GET /jobs/:id/match` : facteurs, statut d'analyse, causes d'un score `null`. */
 export interface MatchScoreDto extends MatchScoreSummaryDto {
   factors: MatchFactorDto[];
   computedAt: string | null;
   analysis: {
-    status: 'none' | 'pending' | 'done' | 'failed' | 'ai_not_configured';
+    status: MatchAnalysisStatus;
     error: string | null;
   };
   profileComplete: boolean;
