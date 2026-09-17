@@ -20,10 +20,11 @@ const DEFAULT_LIST_QUERY = applicationListQuerySchema.parse({});
 
 /**
  * Construit la chaîne de requête de `GET /applications` : uniquement les
- * valeurs qui diffèrent du défaut (spec §4/§6), `q` absent quand il est vide
- * ou indéfini. Les clés du contrat partagé (`tab`, `q`, `page`, `limit`, `sort`)
- * servent directement de clés d'URL — aucune table de correspondance courte
- * n'existe ici, contrairement à `jobs.ts`.
+ * valeurs qui diffèrent du défaut (spec §4/§6), `q` rogné puis absent quand il
+ * est vide (avant ou après le rognage) ou indéfini. Les clés du contrat
+ * partagé (`tab`, `q`, `page`, `limit`, `sort`) servent directement de clés
+ * d'URL — aucune table de correspondance courte n'existe ici, contrairement à
+ * `jobs.ts`.
  */
 function buildApplicationListSearchParams(query: ApplicationListQueryInput): URLSearchParams {
   const params = new URLSearchParams();
@@ -31,8 +32,9 @@ function buildApplicationListSearchParams(query: ApplicationListQueryInput): URL
   if (query.tab !== undefined && query.tab !== DEFAULT_LIST_QUERY.tab) {
     params.set('tab', query.tab);
   }
-  if (query.q !== undefined && query.q !== '') {
-    params.set('q', query.q);
+  const trimmedQ = query.q?.trim();
+  if (trimmedQ !== undefined && trimmedQ !== '') {
+    params.set('q', trimmedQ);
   }
   if (query.page !== undefined && query.page !== DEFAULT_LIST_QUERY.page) {
     params.set('page', String(query.page));
@@ -56,7 +58,7 @@ export const fetchApplicationStats = () => apiRequest<ApplicationStatsDto>('/app
 
 export const fetchApplicationBoard = () => apiRequest<ApplicationBoardDto>('/applications/board');
 
-export const fetchApplication = (id: string) => apiRequest<ApplicationDetailDto>(`/applications/${id}`);
+export const fetchApplication = (id: string) => apiRequest<ApplicationDetailDto>(`/applications/${encodeURIComponent(id)}`);
 
 export function createApplication(input: CreateApplicationInput): Promise<ApplicationDetailDto> {
   return apiRequest<ApplicationDetailDto>('/applications', {
@@ -66,18 +68,19 @@ export function createApplication(input: CreateApplicationInput): Promise<Applic
 }
 
 export function updateApplication(id: string, input: UpdateApplicationInput): Promise<ApplicationDetailDto> {
-  return apiRequest<ApplicationDetailDto>(`/applications/${id}`, {
+  return apiRequest<ApplicationDetailDto>(`/applications/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   });
 }
 
 export function moveApplication(id: string, input: MoveApplicationInput): Promise<ApplicationDetailDto> {
-  return apiRequest<ApplicationDetailDto>(`/applications/${id}/move`, {
+  return apiRequest<ApplicationDetailDto>(`/applications/${encodeURIComponent(id)}/move`, {
     method: 'PATCH',
     body: JSON.stringify(input),
   });
 }
 
 // 204 sans corps : `apiRequest` renvoie `undefined` pour ce statut.
-export const deleteApplication = (id: string) => apiRequest<void>(`/applications/${id}`, { method: 'DELETE' });
+export const deleteApplication = (id: string) =>
+  apiRequest<void>(`/applications/${encodeURIComponent(id)}`, { method: 'DELETE' });

@@ -46,7 +46,7 @@ export function useApplication(id: string | undefined) {
   return useQuery({
     queryKey: applicationKeys.detail(id ?? ''),
     queryFn: () => fetchApplication(id ?? ''),
-    enabled: id !== undefined,
+    enabled: id !== undefined && id !== '',
   });
 }
 
@@ -81,13 +81,31 @@ export function useCreateApplication() {
 }
 
 /**
+ * Ne garde que les entrées définies d'un objet (spec §4) : `updateApplicationSchema`
+ * (`@jobtrack/shared`) pose toujours toutes les clés de son shape sur sa sortie, y
+ * compris `undefined` pour un champ optionnel absent de l'entrée (même constat que
+ * documenté par `omitUndefinedValues`, `packages/shared/src/profile.ts`) — un simple
+ * `Object.assign`/spread écraserait donc chaque champ non modifié du cache avec
+ * `undefined` dès que `UpdateApplicationInput` vient de ce schéma plutôt que d'un
+ * littéral partiel écrit à la main.
+ */
+function definedEntries<T extends object>(input: T): Partial<T> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) as Partial<T>;
+}
+
+/**
  * Fusionne les champs fournis par `UpdateApplicationInput` dans une
  * `ApplicationDto` déjà en cache (spec §4) : les deux partagent les mêmes
  * noms de champs (`status`, `notes`, `resumeId`...), donc un simple mélange
- * suffit — pas de mise à jour partielle champ par champ à maintenir ici.
+ * (des seules entrées définies, cf. `definedEntries`) suffit — pas de mise à
+ * jour partielle champ par champ à maintenir ici. Les références imbriquées
+ * (`resume`, `coverLetter`) et le `appliedAt` posé automatiquement côté
+ * serveur (ex. passage à `APPLIED`) ne sont pas recalculés ici : ils restent
+ * momentanément désynchronisés jusqu'à l'invalidation dans `onSettled`, qui
+ * les rafraîchit depuis le serveur.
  */
 function withOptimisticUpdate<T extends ApplicationDto>(item: T, input: UpdateApplicationInput): T {
-  return Object.assign({}, item, input);
+  return Object.assign({}, item, definedEntries(input));
 }
 
 export interface UpdateApplicationVariables {
@@ -136,11 +154,12 @@ export function useUpdateApplication() {
       }
       toast.error(errorMessage(error, 'Modification impossible.'));
     },
-    onSettled: (_data, _error, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.detail(id) });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.stats });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.board });
+    // Un seul appel sur le préfixe commun `applicationKeys.all` couvre détail/listes/stats/board
+    // (cf. commentaire de `applicationKeys` dans `lib/query-keys.ts`) : il remplace les quatre
+    // invalidations séparées précédentes, et rafraîchit au passage les références imbriquées
+    // (`resume`, `coverLetter`) et le `appliedAt` automatique que la fusion optimiste ne recalcule pas.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: applicationKeys.all });
     },
   });
 }
@@ -157,6 +176,10 @@ export interface MoveApplicationVariables {
  * en base dans une transaction, cette fonction pure reproduit uniquement le
  * résultat visible pour l'affichage optimiste. Renvoie `board` inchangé si la
  * carte n'est plus dans aucune colonne (déjà déplacée par un autre onglet).
+ * Comme `withOptimisticUpdate`, ne recalcule ni les références imbriquées
+ * (`resume`, `coverLetter`) ni le `appliedAt` posé automatiquement côté
+ * serveur (ex. déplacement vers `APPLIED`) : ces champs restent momentanément
+ * ceux de la carte d'avant déplacement, jusqu'à l'invalidation dans `onSettled`.
  */
 export function moveCardInBoard(board: ApplicationBoardDto, id: string, move: MoveApplicationInput): ApplicationBoardDto {
   let movedCard: ApplicationDto | undefined;
@@ -215,11 +238,12 @@ export function useMoveApplication() {
       if (context?.previousBoard) queryClient.setQueryData(applicationKeys.board, context.previousBoard);
       toast.error(errorMessage(error, 'Déplacement impossible.'));
     },
-    onSettled: (_data, _error, { id }) => {
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.board });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.stats });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.detail(id) });
+    // Un seul appel sur `applicationKeys.all` couvre board/listes/stats/détail (cf. commentaire
+    // de `applicationKeys` dans `lib/query-keys.ts`) : il remplace les quatre invalidations
+    // séparées précédentes, et rafraîchit au passage les références imbriquées (`resume`,
+    // `coverLetter`) et le `appliedAt` automatique que `moveCardInBoard` ne recalcule pas.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: applicationKeys.all });
     },
   });
 }
@@ -231,27 +255,28 @@ export interface DeleteApplicationVariables {
 }
 
 /**
- * `DELETE /applications/:id` (spec §6) : purge le détail du cache
- * (`removeQueries`, pas seulement une invalidation — même principe que
- * `useDeleteResume`, sinon `staleTime` laisserait la fiche supprimée
- * survivre jusqu'au prochain focus) puis invalide tout ce qui peut encore
- * l'afficher.
+ * `DELETE /applications/:id` (spec §6) : le travail de cache (purge du détail
+ * via `removeQueries` — pas seulement une invalidation, sinon `staleTime`
+ * laisserait la fiche supprimée survivre jusqu'au prochain focus — et
+ * invalidation du reste) est regroupé dans `onSettled`, même principe que
+ * `useDeleteResume` (`features/resume/hooks/use-resume.ts`) ; les toasts
+ * restent dans `onSuccess`/`onError`, spécifiques à chaque issue.
  */
 export function useDeleteApplication() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ id }: DeleteApplicationVariables) => deleteApplication(id),
-    onSuccess: (_data, { id, jobId }) => {
-      queryClient.removeQueries({ queryKey: applicationKeys.detail(id) });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.lists() });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.stats });
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.board });
-      if (jobId) void queryClient.invalidateQueries({ queryKey: jobKeys.detail(jobId) });
+    onSuccess: () => {
       toast.success('Candidature supprimée.');
     },
     onError: (error) => {
       toast.error(errorMessage(error, 'La suppression a échoué.'));
+    },
+    onSettled: (_data, _error, { id, jobId }) => {
+      queryClient.removeQueries({ queryKey: applicationKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: applicationKeys.all });
+      if (jobId) void queryClient.invalidateQueries({ queryKey: jobKeys.detail(jobId) });
     },
   });
 }

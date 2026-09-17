@@ -71,6 +71,24 @@ describe('fetchApplications', () => {
     const [url] = requestedCall(fetchMock);
     expect(new URL(url).searchParams.has('q')).toBe(false);
   });
+
+  it('rogne q avant de l envoyer', async () => {
+    const fetchMock = stubFetch(EMPTY_LIST_RESPONSE);
+
+    await fetchApplications({ q: '  react  ' });
+
+    const [url] = requestedCall(fetchMock);
+    expect(new URL(url).searchParams.get('q')).toBe('react');
+  });
+
+  it('omet q quand il ne contient que des espaces', async () => {
+    const fetchMock = stubFetch(EMPTY_LIST_RESPONSE);
+
+    await fetchApplications({ q: '   ' });
+
+    const [url] = requestedCall(fetchMock);
+    expect(new URL(url).searchParams.has('q')).toBe(false);
+  });
 });
 
 describe('fetchApplicationStats', () => {
@@ -100,6 +118,13 @@ describe('fetchApplication', () => {
     const [url, init] = requestedCall(fetchMock);
     expect(url.endsWith('/applications/app-1')).toBe(true);
     expect(init.method ?? 'GET').toBe('GET');
+  });
+
+  it('encode l identifiant dans l url', async () => {
+    const fetchMock = stubFetch({ id: 'app/1' });
+    await fetchApplication('app/1 é');
+    const [url] = requestedCall(fetchMock);
+    expect(url.endsWith(`/applications/${encodeURIComponent('app/1 é')}`)).toBe(true);
   });
 });
 

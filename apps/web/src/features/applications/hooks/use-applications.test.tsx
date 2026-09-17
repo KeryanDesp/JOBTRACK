@@ -1,5 +1,5 @@
 import type { ApplicationBoardDto, ApplicationDetailDto, ApplicationDto, ApplicationListResponseDto } from '@jobtrack/shared';
-import { createFromJobSchema } from '@jobtrack/shared';
+import { createFromJobSchema, updateApplicationSchema } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -8,6 +8,7 @@ import { jobKeys } from '@/features/jobs/lib/query-keys';
 import { ApiError } from '@/services/api/client';
 import { applicationKeys } from '../lib/query-keys';
 import {
+  moveCardInBoard,
   useApplication,
   useApplications,
   useApplicationsBoard,
@@ -159,6 +160,12 @@ describe('useApplication', () => {
     expect(fetchApplication).not.toHaveBeenCalled();
   });
 
+  it('ne declenche aucun appel quand l identifiant est une chaine vide', () => {
+    const client = makeClient();
+    renderHook(() => useApplication(''), { wrapper: wrapperFor(client) });
+    expect(fetchApplication).not.toHaveBeenCalled();
+  });
+
   it('renvoie le detail quand un identifiant est fourni', async () => {
     const detail = makeApplicationDetail();
     fetchApplication.mockResolvedValue(detail);
@@ -255,6 +262,101 @@ describe('useUpdateApplication', () => {
     expect(list?.items[0]?.status).toBe('TO_APPLY');
     expect(toastError).toHaveBeenCalledWith('Statut invalide.');
   });
+
+  it('ne fusionne pas les cles explicitement indefinies du schema partage', async () => {
+    updateApplication.mockImplementation(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    const client = makeClient();
+    client.setQueryData(applicationKeys.detail('app-1'), makeApplicationDetail({ status: 'TO_APPLY', notes: 'Note existante' }));
+    // `updateApplicationSchema.parse` (comme cote serveur) pose toutes les cles du shape sur sa
+    // sortie, `undefined` pour celles absentes de l entree — reproduit ici le cas reel qu un
+    // litteral partiel `{ status: 'INTERVIEW' }` ecrit a la main ne couvre pas.
+    const input = updateApplicationSchema.parse({ status: 'INTERVIEW' });
+
+    const { result } = renderHook(() => useUpdateApplication(), { wrapper: wrapperFor(client) });
+    act(() => result.current.mutate({ id: 'app-1', input }));
+
+    await waitFor(() => {
+      expect(client.getQueryData<ApplicationDetailDto>(applicationKeys.detail('app-1'))?.status).toBe('INTERVIEW');
+    });
+    expect(client.getQueryData<ApplicationDetailDto>(applicationKeys.detail('app-1'))?.notes).toBe('Note existante');
+  });
+});
+
+describe('moveCardInBoard', () => {
+  it('reordonne vers le bas dans la meme colonne', () => {
+    const a = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const b = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const c = makeApplication({ id: 'app-3', status: 'TO_APPLY', position: 2 });
+    const board = makeBoard({ TO_APPLY: [a, b, c] });
+
+    const result = moveCardInBoard(board, 'app-1', { status: 'TO_APPLY', position: 2 });
+
+    expect(result.columns.TO_APPLY.map((item) => item.id)).toEqual(['app-2', 'app-3', 'app-1']);
+    expect(result.columns.TO_APPLY.map((item) => item.position)).toEqual([0, 1, 2]);
+  });
+
+  it('reordonne vers le haut dans la meme colonne', () => {
+    const a = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const b = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const c = makeApplication({ id: 'app-3', status: 'TO_APPLY', position: 2 });
+    const board = makeBoard({ TO_APPLY: [a, b, c] });
+
+    const result = moveCardInBoard(board, 'app-3', { status: 'TO_APPLY', position: 0 });
+
+    expect(result.columns.TO_APPLY.map((item) => item.id)).toEqual(['app-3', 'app-1', 'app-2']);
+    expect(result.columns.TO_APPLY.map((item) => item.position)).toEqual([0, 1, 2]);
+  });
+
+  it('borne la position demandee au-dela de la longueur de la colonne', () => {
+    const a = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const b = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const board = makeBoard({ TO_APPLY: [a, b] });
+
+    const result = moveCardInBoard(board, 'app-1', { status: 'TO_APPLY', position: 999 });
+
+    expect(result.columns.TO_APPLY.map((item) => item.id)).toEqual(['app-2', 'app-1']);
+  });
+
+  it('renvoie la meme reference quand la carte est introuvable', () => {
+    const board = makeBoard({ TO_APPLY: [makeApplication({ id: 'app-1' })] });
+
+    const result = moveCardInBoard(board, 'inconnu', { status: 'APPLIED', position: 0 });
+
+    expect(result).toBe(board);
+  });
+
+  it('reindexe les deux colonnes lors d un deplacement inter-colonnes', () => {
+    const moving = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const staying = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const target = makeApplication({ id: 'app-3', status: 'APPLIED', position: 0 });
+    const board = makeBoard({ TO_APPLY: [moving, staying], APPLIED: [target] });
+
+    const result = moveCardInBoard(board, 'app-1', { status: 'APPLIED', position: 0 });
+
+    expect(result.columns.TO_APPLY.map((item) => ({ id: item.id, position: item.position }))).toEqual([
+      { id: 'app-2', position: 0 },
+    ]);
+    expect(result.columns.APPLIED.map((item) => ({ id: item.id, position: item.position, status: item.status }))).toEqual([
+      { id: 'app-1', position: 0, status: 'APPLIED' },
+      { id: 'app-3', position: 1, status: 'APPLIED' },
+    ]);
+  });
+
+  it('ne mute pas le board source', () => {
+    const moving = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const staying = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const target = makeApplication({ id: 'app-3', status: 'APPLIED', position: 0 });
+    const board = makeBoard({ TO_APPLY: [moving, staying], APPLIED: [target] });
+    const originalToApply = board.columns.TO_APPLY;
+    const originalApplied = board.columns.APPLIED;
+
+    moveCardInBoard(board, 'app-1', { status: 'APPLIED', position: 0 });
+
+    expect(board.columns.TO_APPLY).toBe(originalToApply);
+    expect(board.columns.APPLIED).toBe(originalApplied);
+    expect(board.columns.TO_APPLY.map((item) => item.id)).toEqual(['app-1', 'app-2']);
+    expect(board.columns.APPLIED.map((item) => item.id)).toEqual(['app-3']);
+  });
 });
 
 describe('useMoveApplication', () => {
@@ -295,6 +397,22 @@ describe('useMoveApplication', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(client.getQueryData<ApplicationBoardDto>(applicationKeys.board)).toEqual(original);
     expect(toastError).toHaveBeenCalledWith('Deplacement refuse.');
+  });
+
+  it('restaure exactement les deux colonnes quand le deplacement inter-colonnes echoue', async () => {
+    moveApplication.mockRejectedValue(new ApiError('Deplacement refuse.', 404));
+    const client = makeClient();
+    const moving = makeApplication({ id: 'app-1', status: 'TO_APPLY', position: 0 });
+    const staying = makeApplication({ id: 'app-2', status: 'TO_APPLY', position: 1 });
+    const target = makeApplication({ id: 'app-3', status: 'APPLIED', position: 0 });
+    const original = makeBoard({ TO_APPLY: [moving, staying], APPLIED: [target] });
+    client.setQueryData(applicationKeys.board, original);
+
+    const { result } = renderHook(() => useMoveApplication(), { wrapper: wrapperFor(client) });
+    act(() => result.current.mutate({ id: 'app-1', input: { status: 'APPLIED', position: 0 } }));
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(client.getQueryData<ApplicationBoardDto>(applicationKeys.board)).toEqual(original);
   });
 });
 
