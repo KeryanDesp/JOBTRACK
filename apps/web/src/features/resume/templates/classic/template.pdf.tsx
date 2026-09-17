@@ -1,8 +1,9 @@
 import type { ResumeContent } from '@jobtrack/shared';
 import { RESUME_SECTION_LABELS } from '@jobtrack/shared';
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Document, Link, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import { formatMonthYear } from '@/lib/dates';
 import { formatDateRange, formatLanguageLevel, formatSkillLevel } from '../../lib/format';
+import { registerPdfHyphenation } from '../../lib/pdf-hyphenation';
 import { resumeSections } from '../../lib/sections';
 
 /**
@@ -11,6 +12,8 @@ import { resumeSections } from '../../lib/sections';
  * charge via `import()` dans `loadPdf`), pour que la bibliothèque (~500 ko)
  * ne pèse jamais sur le bundle initial (spec §7).
  */
+registerPdfHyphenation();
+
 const styles = StyleSheet.create({
   page: { paddingTop: 40, paddingBottom: 48, paddingHorizontal: 40, fontFamily: 'Times-Roman', fontSize: 10, color: '#171717' },
   header: { borderBottomWidth: 1, borderBottomColor: '#d4d4d4', paddingBottom: 12, marginBottom: 16 },
@@ -40,6 +43,7 @@ const styles = StyleSheet.create({
   bulletMark: { fontSize: 10, marginRight: 4, color: '#262626' },
   bulletText: { fontSize: 10, color: '#262626', flex: 1 },
   inlineList: { fontSize: 10, color: '#262626' },
+  link: { color: '#1d4ed8', textDecoration: 'none' },
   footer: { position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: '#a3a3a3' },
 });
 
@@ -59,6 +63,18 @@ export function Pdf({ content }: { content: ResumeContent }) {
           </Text>
           {identity.title && <Text style={styles.jobTitle}>{identity.title}</Text>}
           {contactLine !== '' && <Text style={styles.contact}>{contactLine}</Text>}
+          {identity.links && identity.links.length > 0 && (
+            <Text style={styles.contact}>
+              {identity.links.map((link, index) => (
+                <Text key={link.url}>
+                  {index > 0 ? '   ·   ' : ''}
+                  <Link src={link.url} style={styles.link}>
+                    {link.label}
+                  </Link>
+                </Text>
+              ))}
+            </Text>
+          )}
         </View>
 
         {sections.includes('summary') && (
@@ -146,6 +162,11 @@ export function Pdf({ content }: { content: ResumeContent }) {
             {content.projects.map((project) => (
               <View key={project.id} style={styles.entry} wrap={false}>
                 <Text style={styles.entryTitle}>{project.name}</Text>
+                {project.url && (
+                  <Link src={project.url} style={[styles.link, styles.entryDate]}>
+                    {project.url}
+                  </Link>
+                )}
                 {project.description && <Text style={styles.paragraph}>{project.description}</Text>}
                 {project.technologies.length > 0 && <Text style={styles.entryDate}>{project.technologies.join(' · ')}</Text>}
               </View>

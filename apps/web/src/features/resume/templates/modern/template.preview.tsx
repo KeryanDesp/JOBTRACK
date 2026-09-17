@@ -35,10 +35,17 @@ export function Preview({ content }: { content: ResumeContent }) {
           </h1>
           {identity.title && <p className="mt-1 text-lg text-neutral-300">{identity.title}</p>}
         </div>
-        {contactLines.length > 0 && (
+        {(contactLines.length > 0 || (identity.links && identity.links.length > 0)) && (
           <ul className="shrink-0 text-right text-xs text-neutral-300">
             {contactLines.map((line) => (
               <li key={line}>{line}</li>
+            ))}
+            {identity.links?.map((link) => (
+              <li key={link.url}>
+                <a href={link.url} className="underline">
+                  {link.label}
+                </a>
+              </li>
             ))}
           </ul>
         )}
@@ -164,6 +171,11 @@ export function Preview({ content }: { content: ResumeContent }) {
             {content.projects.map((project) => (
               <li key={project.id}>
                 <p className="text-sm font-semibold text-neutral-900">{project.name}</p>
+                {project.url && (
+                  <a href={project.url} className="text-xs text-blue-700 underline">
+                    {project.url}
+                  </a>
+                )}
                 {project.description && <p className="text-sm text-neutral-800">{project.description}</p>}
                 {project.technologies.length > 0 && <p className="text-xs text-neutral-500">{project.technologies.join(' · ')}</p>}
               </li>

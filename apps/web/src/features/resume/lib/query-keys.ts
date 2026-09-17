@@ -9,5 +9,9 @@ export const resumeKeys = {
   list: ['resume', 'list'] as const,
   detail: (id: string) => ['resume', 'detail', id] as const,
   letters: ['resume', 'letters'] as const,
-  letter: (id: string) => ['resume', 'letters', id] as const,
+  // Sous 'letter' (singulier), pas sous la clé de liste 'letters' : une
+  // invalidation de `letters` (la liste) ne doit jamais entraîner celle de
+  // chaque détail en cache, et vice-versa — les deux doivent rester des
+  // branches distinctes de l'arbre de clés.
+  letter: (id: string) => ['resume', 'letter', id] as const,
 };

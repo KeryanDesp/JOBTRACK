@@ -32,6 +32,23 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
 }
 
+/**
+ * Codes que `TailoringStatus`/la page lettre affichent déjà elles-mêmes,
+ * lues directement depuis `mutation.error` (spec §2/§5/§6) : profil trop
+ * vide (409 `PROFILE_INCOMPLETE`), IA non configurée (503
+ * `AI_NOT_CONFIGURED` — jamais bloquant, le CV/la lettre restent
+ * utilisables sans adaptation) et budget épuisé (429 `RATE_LIMITED`, un
+ * nouvel essai immédiat n'aurait aucun sens). Un toast en plus, pour ces
+ * trois codes précis, ferait doublon avec ce que la page montre déjà ;
+ * toute autre erreur (réseau, 500, `AI_UNAVAILABLE`, `AI_OUTPUT_INVALID`…)
+ * reste transitoire et n'a pas d'affichage dédié, donc garde son toast.
+ */
+const SILENT_TAILORING_CODES = new Set(['AI_NOT_CONFIGURED', 'PROFILE_INCOMPLETE', 'RATE_LIMITED']);
+
+function isSilentTailoringError(error: unknown): boolean {
+  return error instanceof ApiError && error.code !== undefined && SILENT_TAILORING_CODES.has(error.code);
+}
+
 export function useBaseResume() {
   return useQuery({ queryKey: resumeKeys.base, queryFn: fetchBaseResume });
 }
@@ -70,7 +87,7 @@ export function useResumes() {
 }
 
 export function useResume(id: string) {
-  return useQuery({ queryKey: resumeKeys.detail(id), queryFn: () => fetchResume(id) });
+  return useQuery({ queryKey: resumeKeys.detail(id), queryFn: () => fetchResume(id), enabled: id !== '' });
 }
 
 /** `POST /resume/tailor` (spec §6) : place la version créée en cache et invalide la liste. */
@@ -84,6 +101,11 @@ export function useTailorResume() {
       void queryClient.invalidateQueries({ queryKey: resumeKeys.list });
     },
     onError: (error) => {
+      // `PROFILE_INCOMPLETE`/`AI_NOT_CONFIGURED`/`RATE_LIMITED` : `TailoringStatus`
+      // (features/resume/components/tailoring-status.tsx) lit `mutation.error`
+      // directement et affiche déjà son propre état pour ces trois codes — un
+      // toast ferait doublon (voir `isSilentTailoringError`).
+      if (isSilentTailoringError(error)) return;
       toast.error(errorMessage(error, "L'adaptation du CV a échoué."));
     },
   });
@@ -136,7 +158,7 @@ export function useLetters() {
 }
 
 export function useLetter(id: string) {
-  return useQuery({ queryKey: resumeKeys.letter(id), queryFn: () => fetchLetter(id) });
+  return useQuery({ queryKey: resumeKeys.letter(id), queryFn: () => fetchLetter(id), enabled: id !== '' });
 }
 
 /** `POST /resume/letters` (spec §6). */
@@ -150,6 +172,9 @@ export function useCreateLetter() {
       void queryClient.invalidateQueries({ queryKey: resumeKeys.letters });
     },
     onError: (error) => {
+      // Même principe que `useTailorResume` : ces trois codes ont leur propre
+      // affichage côté page (lue depuis `mutation.error`), pas de toast en plus.
+      if (isSilentTailoringError(error)) return;
       toast.error(errorMessage(error, 'La génération de la lettre a échoué.'));
     },
   });

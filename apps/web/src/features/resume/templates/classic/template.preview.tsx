@@ -31,6 +31,18 @@ export function Preview({ content }: { content: ResumeContent }) {
         </h1>
         {identity.title && <p className="mt-1 text-base text-neutral-700">{identity.title}</p>}
         {contactLine !== '' && <p className="mt-2 text-xs text-neutral-600">{contactLine}</p>}
+        {identity.links && identity.links.length > 0 && (
+          <p className="mt-1 text-xs text-neutral-600">
+            {identity.links.map((link, index) => (
+              <Fragment key={link.url}>
+                {index > 0 && '  ·  '}
+                <a href={link.url} className="underline">
+                  {link.label}
+                </a>
+              </Fragment>
+            ))}
+          </p>
+        )}
       </header>
 
       {sections.includes('summary') && (
@@ -154,6 +166,11 @@ export function Preview({ content }: { content: ResumeContent }) {
             {content.projects.map((project) => (
               <li key={project.id}>
                 <p className="text-sm font-semibold text-neutral-900">{project.name}</p>
+                {project.url && (
+                  <a href={project.url} className="text-xs text-blue-700 underline">
+                    {project.url}
+                  </a>
+                )}
                 {project.description && <p className="text-sm text-neutral-800">{project.description}</p>}
                 {project.technologies.length > 0 && (
                   <p className="text-xs text-neutral-500">{project.technologies.join(' · ')}</p>

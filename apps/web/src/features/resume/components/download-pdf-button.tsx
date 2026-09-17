@@ -20,10 +20,12 @@ export interface DownloadPdfButtonProps {
  * la seule façon dont la bibliothèque (~500 ko) entre dans un chunk, et elle
  * n'entre dans **aucun** chunk tant que l'utilisateur n'a pas cliqué.
  *
- * `URL.revokeObjectURL` est appelé juste après le clic simulé sur le lien
- * (microtâche suivante) : le navigateur a déjà lu l'URL pour démarrer le
- * téléchargement à ce moment, la révoquer plus tôt romprait le téléchargement
- * sur certains navigateurs.
+ * `URL.revokeObjectURL` est différé dans une macrotâche (`setTimeout(…, 0)`)
+ * plutôt qu'appelé immédiatement après le clic simulé : certains navigateurs
+ * démarrent le téléchargement de façon asynchrone (tâche interne), et
+ * révoquer l'URL avant qu'ils l'aient réellement lue romprait le
+ * téléchargement — reporter au tour de boucle suivant laisse le clic
+ * synchrone se traiter en premier.
  */
 export function DownloadPdfButton({ content, template, fileName, label = 'Télécharger le PDF', disabled }: DownloadPdfButtonProps) {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -41,8 +43,9 @@ export function DownloadPdfButton({ content, template, fileName, label = 'Télé
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
-    } catch {
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      console.error(error);
       toast.error('La génération du PDF a échoué.');
     } finally {
       setIsGenerating(false);

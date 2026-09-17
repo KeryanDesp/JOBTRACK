@@ -1,8 +1,9 @@
 import type { ResumeContent } from '@jobtrack/shared';
 import { RESUME_SECTION_LABELS } from '@jobtrack/shared';
-import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Document, Link, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import { formatMonthYear } from '@/lib/dates';
 import { formatDateRange, formatLanguageLevel, formatSkillLevel } from '../../lib/format';
+import { registerPdfHyphenation } from '../../lib/pdf-hyphenation';
 import { resumeSections } from '../../lib/sections';
 
 /**
@@ -10,14 +11,24 @@ import { resumeSections } from '../../lib/sections';
  * paresseusement (voir `template.pdf.tsx` du modèle Classique pour le détail
  * du raisonnement, identique ici).
  */
+registerPdfHyphenation();
+
 const styles = StyleSheet.create({
-  page: { fontFamily: 'Helvetica', fontSize: 10, color: '#171717' },
+  // `paddingTop`/`paddingBottom` s'appliquent à **toutes** les pages (react-pdf
+  // n'a pas de style distinct pour les pages de continuation) : `paddingBottom`
+  // réserve la place du pied de page fixe (`footer`, en position absolue) sur
+  // chaque page, et `paddingTop` donne aux pages de continuation (2 et plus,
+  // qui n'ont pas le bandeau d'en-tête — celui-ci n'est jamais `fixed`) une
+  // marge haute normale. Le bandeau de la page 1 compense ce `paddingTop` par
+  // sa propre `marginTop` négative (voir `header`) pour rester en plein bord.
+  page: { paddingTop: 40, paddingBottom: 48, fontFamily: 'Helvetica', fontSize: 10, color: '#171717' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     backgroundColor: '#171717',
     color: '#ffffff',
+    marginTop: -40,
     paddingHorizontal: 40,
     paddingVertical: 28,
   },
@@ -42,6 +53,8 @@ const styles = StyleSheet.create({
   bulletText: { fontSize: 10, color: '#262626', flex: 1 },
   sidebarItem: { fontSize: 10, color: '#262626', marginBottom: 4 },
   sidebarMeta: { fontSize: 8, color: '#737373' },
+  headerLink: { color: '#d4d4d4', textDecoration: 'none', fontSize: 9 },
+  link: { color: '#1d4ed8', textDecoration: 'none' },
   footer: { position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: '#a3a3a3' },
 });
 
@@ -65,12 +78,17 @@ export function Pdf({ content }: { content: ResumeContent }) {
             </Text>
             {identity.title && <Text style={styles.jobTitle}>{identity.title}</Text>}
           </View>
-          {contactLines.length > 0 && (
+          {(contactLines.length > 0 || (identity.links && identity.links.length > 0)) && (
             <View>
               {contactLines.map((line) => (
                 <Text key={line} style={styles.contact}>
                   {line}
                 </Text>
+              ))}
+              {identity.links?.map((link) => (
+                <Link key={link.url} src={link.url} style={styles.headerLink}>
+                  {link.label}
+                </Link>
               ))}
             </View>
           )}
@@ -174,6 +192,11 @@ export function Pdf({ content }: { content: ResumeContent }) {
             {content.projects.map((project) => (
               <View key={project.id} style={styles.entry} wrap={false}>
                 <Text style={styles.entryTitle}>{project.name}</Text>
+                {project.url && (
+                  <Link src={project.url} style={[styles.link, styles.entryDate]}>
+                    {project.url}
+                  </Link>
+                )}
                 {project.description && <Text style={styles.paragraph}>{project.description}</Text>}
                 {project.technologies.length > 0 && <Text style={styles.entryDate}>{project.technologies.join(' · ')}</Text>}
               </View>

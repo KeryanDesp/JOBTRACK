@@ -5,7 +5,7 @@ import type { ResumeContent, ResumeSection } from '@jobtrack/shared';
  * identité → résumé → expériences → formations → compétences → langues →
  * certifications → projets. Fonction pure, **seule source de vérité** pour
  * les deux rendus (`template.preview.tsx` et `template.pdf.tsx`) : le test de
- * parité (`templates.parity.test.tsx`) s'appuie sur le fait que les deux
+ * parité (`templates/templates-parity.test.tsx`) s'appuie sur le fait que les deux
  * consomment ce même tableau plutôt que de dupliquer la logique d'omission.
  *
  * L'identité n'est jamais omise (toujours au moins prénom/nom) ; toutes les
