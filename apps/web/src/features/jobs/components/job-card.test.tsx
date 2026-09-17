@@ -41,6 +41,7 @@ function makeSummary(overrides: Partial<JobSummaryDto> = {}): JobSummaryDto {
     skills: [],
     sources: ['FRANCE_TRAVAIL'],
     saved: false,
+    match: null,
     ...overrides,
   };
 }
@@ -78,5 +79,34 @@ describe('JobCard', () => {
     renderCard(makeSummary({ expiredAt: '2026-09-10T00:00:00.000Z' }));
 
     expect(screen.getByText('Plus publiée')).toBeInTheDocument();
+  });
+
+  it('affiche le badge, la puce de priorite et Pourquoi quand le score est connu', async () => {
+    const user = userEvent.setup();
+    renderCard(
+      makeSummary({
+        match: {
+          score: 92,
+          band: 'EXCELLENT',
+          priority: 'HIGH',
+          explanation: { top: ['React correspond'], weak: ['AWS non présent dans votre profil'] },
+        },
+      }),
+    );
+
+    expect(screen.getByRole('img', { name: 'Correspondance 92 sur 100' })).toBeInTheDocument();
+    expect(screen.getByText('Forte priorité')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Pourquoi ?' }));
+
+    expect(screen.getByText('React correspond')).toBeInTheDocument();
+    expect(screen.getByText('AWS non présent dans votre profil')).toBeInTheDocument();
+  });
+
+  it('n_affiche rien du score quand l_offre n_est pas encore evaluee', () => {
+    renderCard(makeSummary({ match: null }));
+
+    expect(screen.queryByRole('img', { name: /Correspondance/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pourquoi ?' })).not.toBeInTheDocument();
   });
 });

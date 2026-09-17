@@ -1,5 +1,5 @@
 import type { JobDetailDto } from '@jobtrack/shared';
-import { FileQuestion } from 'lucide-react';
+import { AlertCircle, FileQuestion } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { ErrorState } from '@/components/shared/error-state';
 import { Alert, AlertTitle } from '@/components/ui/alert';
@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { MatchPanel } from '@/features/matching/components/match-panel';
+import { useAnalyzeJobs, useJobMatch, useRetryJobAnalysis } from '@/features/matching/hooks/use-match';
 import { ApiError } from '@/services/api/client';
 import { JobDescription } from '../components/job-description';
 import { JobDetailHeader } from '../components/job-detail-header';
@@ -93,6 +95,20 @@ function buildConditionRows(job: JobDetailDto): ConditionRow[] {
 }
 
 /**
+ * Message d'une erreur de mutation (« Analyser cette offre »/« Réessayer
+ * l'analyse », spec §2/§6) : le code `RATE_LIMITED` (429) et les autres
+ * `ApiError` gardent leur message serveur déjà en français ; toute autre
+ * erreur (panne réseau…) retombe sur un message générique. Distinct de
+ * `MatchPanel.error` (erreur de la requête `GET /jobs/:id/match` elle-même,
+ * affichée par `MatchPanel` en `ErrorState`) : cette alerte couvre l'action
+ * déclenchée depuis cette page, jamais affichée par `MatchPanel` lui-même.
+ */
+function mutationErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  return 'Une erreur est survenue. Veuillez réessayer.';
+}
+
+/**
  * Détail d'une offre (`/jobs/:id`, spec §2/§7, tâche 9) : squelette pendant le
  * chargement, 404 → message dédié avec un lien de retour, autre erreur →
  * `ErrorState` avec réessai, succès → en-tête + sections (description,
@@ -100,7 +116,25 @@ function buildConditionRows(job: JobDetailDto): ConditionRow[] {
  */
 export function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const jobQuery = useJob(id ?? '');
+  const jobId = id ?? '';
+  const jobQuery = useJob(jobId);
+  // Le score détaillé (`GET /jobs/:id/match`) est une ressource distincte du
+  // détail de l'offre (spec §2/§7) : `JobDetailDto.match` (résumé) ne porte ni
+  // les facteurs, ni le statut d'analyse, ni les causes d'un score `null` que
+  // `MatchPanel` affiche — d'où ce hook dédié plutôt que `job.match`. Les
+  // trois hooks sont appelés avant tout retour anticipé (règle des hooks),
+  // comme `useJob` ci-dessus.
+  const matchQuery = useJobMatch(jobId, { enabled: jobId !== '' });
+  const analyzeJobs = useAnalyzeJobs();
+  const retryAnalysis = useRetryJobAnalysis(jobId);
+
+  // `useAnalyzeJobs` invalide déjà `matchKeys.detail(id)` à la réussite (fixup
+  // f6959f9, `applyAnalyzeScores`) : `matchQuery` se relit donc tout seul,
+  // jamais besoin d'un `.then()`/`.refetch()` explicite ici — un second appel
+  // ferait doublon avec cette invalidation.
+  function handleAnalyze() {
+    analyzeJobs.analyze([jobId]);
+  }
 
   if (jobQuery.isPending) return <DetailSkeleton />;
 
@@ -143,6 +177,30 @@ export function JobDetailPage() {
         )}
 
         <JobDetailHeader job={job} />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Pourquoi cette offre vous correspond</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Erreur de mutation (« Analyser »/« Réessayer »), distincte de l'erreur de
+                lecture du score que `MatchPanel` affiche déjà lui-même (`matchQuery.error`). */}
+            {(analyzeJobs.error ?? retryAnalysis.error) && (
+              <Alert variant="destructive">
+                <AlertCircle aria-hidden="true" />
+                <AlertTitle>{mutationErrorMessage(analyzeJobs.error ?? retryAnalysis.error)}</AlertTitle>
+              </Alert>
+            )}
+            <MatchPanel
+              match={matchQuery.data}
+              isPending={matchQuery.isPending}
+              error={matchQuery.error}
+              onAnalyze={handleAnalyze}
+              onRetry={() => retryAnalysis.mutate()}
+              isAnalyzing={analyzeJobs.isAnalyzing}
+            />
+          </CardContent>
+        </Card>
 
         <JobDescription description={job.description} />
 

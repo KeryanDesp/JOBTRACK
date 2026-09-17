@@ -19,7 +19,6 @@ const SEARCH_PUBLISHED_WITHIN_DAYS = 31;
 const SEARCH_MAX_PAGES = 2;
 const MAX_COMMUNES_PER_SYNC = 3;
 
-const NOT_CONFIGURED_MESSAGE = "Le connecteur France Travail n'est pas configuré.";
 const DEGRADED_MESSAGE = 'France Travail ne répond pas : résultats en cache.';
 const SYNC_IN_PROGRESS_MESSAGE = 'Actualisation déjà en cours.';
 
@@ -97,10 +96,17 @@ export class JobSyncService {
     return computeQueryHash(this.toQueryHashInput(query));
   }
 
+  /**
+   * Synchronise (ou sert depuis le cache) puis renvoie l'état de synchronisation, sans le champ
+   * `analysis` de `JobSyncInfoDto` (tâche 6 — amendement revue, désormais requis) : ce service ne
+   * connaît ni les offres de la page ni leur score, `JobsService.search` complète ce champ après
+   * coup (`{ ...sync, analysis: {...} }`) — jamais l'inverse, qui obligerait `JobSyncService` à
+   * dépendre du module `matching`.
+   */
   async ensureFresh(
     query: JobSearchQuery,
     options: { force?: boolean; allowSync?: () => Promise<boolean> } = {},
-  ): Promise<JobSyncInfoDto> {
+  ): Promise<Omit<JobSyncInfoDto, 'analysis'>> {
     const connector = this.connectors.find((candidate) => candidate.kind === 'FRANCE_TRAVAIL');
     const hash = this.computeQueryHash(query);
 
@@ -109,7 +115,7 @@ export class JobSyncService {
       return {
         status: 'not_configured',
         syncedAt: existing?.lastSyncedAt.toISOString() ?? null,
-        message: NOT_CONFIGURED_MESSAGE,
+        message: null, // le bandeau client porte deja ce message (amendement revue UX) : jamais deux fois.
       };
     }
 
@@ -163,7 +169,7 @@ export class JobSyncService {
         return {
           status: 'not_configured',
           syncedAt: existing?.lastSyncedAt.toISOString() ?? null,
-          message: NOT_CONFIGURED_MESSAGE,
+          message: null, // le bandeau client porte deja ce message (amendement revue UX) : jamais deux fois.
         };
       }
       throw error;
@@ -179,7 +185,7 @@ export class JobSyncService {
     cacheKey: string,
     lockKey: string,
     token: string | null,
-  ): Promise<JobSyncInfoDto> {
+  ): Promise<Omit<JobSyncInfoDto, 'analysis'>> {
     const now = new Date();
     // Garde locale : le contrat partagé borne déjà `communes` à 3, mais un appelant
     // interne (hors validation Zod) ne doit jamais pouvoir déclencher plus d'appels.

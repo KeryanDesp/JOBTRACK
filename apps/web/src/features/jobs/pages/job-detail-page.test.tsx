@@ -1,9 +1,9 @@
-import type { JobDetailDto } from '@jobtrack/shared';
+import type { JobDetailDto, MatchScoreDto } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/services/api/client';
 import { JobDetailPage } from './job-detail-page';
 
@@ -21,10 +21,44 @@ vi.mock('@/services/api/jobs', () => ({
   searchJobs: vi.fn(),
 }));
 
+const fetchJobMatch = vi.hoisted(() => vi.fn());
+const analyzeJobs = vi.hoisted(() => vi.fn());
+const retryJobAnalysis = vi.hoisted(() => vi.fn());
+
+vi.mock('@/services/api/matching', () => ({
+  fetchJobMatch,
+  analyzeJobs,
+  retryJobAnalysis,
+}));
+
+function makeMatchScore(overrides: Partial<MatchScoreDto> = {}): MatchScoreDto {
+  return {
+    score: null,
+    band: null,
+    priority: null,
+    explanation: { top: [], weak: [] },
+    factors: [],
+    computedAt: null,
+    analysis: { status: 'none', error: null },
+    profileComplete: true,
+    insufficientData: false,
+    ...overrides,
+  };
+}
+
+// Repli par défaut (spec §2/§7) : offre pas encore analysée, aucune mutation en
+// cours — les tests qui ne portent pas sur le score n'ont pas à s'en soucier.
+beforeEach(() => {
+  fetchJobMatch.mockResolvedValue(makeMatchScore());
+});
+
 afterEach(() => {
   fetchJob.mockReset();
   saveJob.mockReset();
   unsaveJob.mockReset();
+  fetchJobMatch.mockReset();
+  analyzeJobs.mockReset();
+  retryJobAnalysis.mockReset();
 });
 
 function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
@@ -83,6 +117,7 @@ function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
     ],
     requirements: [{ kind: 'LANGUAGE', label: 'Anglais courant', required: true }],
     saved: false,
+    match: null,
     ...overrides,
   };
 }
@@ -186,5 +221,58 @@ describe('JobDetailPage', () => {
       expect(screen.getAllByRole('button', { name: 'Retirer des favoris' })[0]).toHaveAttribute('aria-pressed', 'true');
     });
     expect(saveJob).toHaveBeenCalledWith('job-1');
+  });
+
+  it('affiche le MatchPanel sous l_en_tete quand l_offre n_est pas encore analysee', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    renderPage();
+
+    expect(await screen.findByText('Pourquoi cette offre vous correspond')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Analyser cette offre' })).toBeInTheDocument();
+  });
+
+  it('declenche l_analyse en cliquant sur Analyser cette offre, qui relit le score (invalidation)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    // `useAnalyzeJobs` invalide `matchKeys.detail(id)` à la réussite (fixup f6959f9) : la
+    // requête active se relit donc automatiquement, sans `.refetch()` explicite côté page —
+    // d'où le second `fetchJobMatch` déclenché par l'invalidation plutôt que par le composant.
+    fetchJobMatch
+      .mockResolvedValueOnce(makeMatchScore())
+      .mockResolvedValueOnce(
+        makeMatchScore({
+          score: 80,
+          band: 'GOOD',
+          priority: 'GOOD',
+          analysis: { status: 'done', error: null },
+          factors: [],
+        }),
+      );
+    analyzeJobs.mockResolvedValue({
+      analyzed: 1,
+      pending: 0,
+      failed: 0,
+      notConfigured: false,
+      profileComplete: true,
+      scores: { 'job-1': { score: 80, band: 'GOOD', priority: 'GOOD', explanation: { top: [], weak: [] } } },
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Analyser cette offre' }));
+
+    expect(analyzeJobs).toHaveBeenCalledWith(['job-1']);
+    await waitFor(() => expect(fetchJobMatch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Bonne correspondance · 80')).toBeInTheDocument();
+  });
+
+  it('affiche une alerte avec le message serveur quand Analyser cette offre echoue (429)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    analyzeJobs.mockRejectedValue(new ApiError('Trop de requêtes.', 429, 'RATE_LIMITED'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Analyser cette offre' }));
+
+    expect(await screen.findByText('Trop de requêtes.')).toBeInTheDocument();
   });
 });

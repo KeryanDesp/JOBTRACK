@@ -114,6 +114,14 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     throw buildApiError(response.status, await readResponseText(response));
   }
 
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  // 205 (Reset Content) n'a jamais de corps, comme 204 ; certaines routes
+  // (ex. `POST /jobs/:id/analyses/retry`, 202) répondent aussi sans corps
+  // selon l'implémentation serveur — plutôt que de supposer un statut précis,
+  // on lit le texte et on ne tente `JSON.parse` que s'il est non vide : un
+  // corps vide sur n'importe quel statut de succès devient `undefined` au
+  // lieu de faire échouer `JSON.parse('')`.
+  if (response.status === 204 || response.status === 205) return undefined as T;
+  const text = await readResponseText(response);
+  if (text === '') return undefined as T;
+  return JSON.parse(text) as T;
 }

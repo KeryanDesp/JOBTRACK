@@ -1,0 +1,14 @@
+{
+  "technologies": [],
+  "softSkills": [],
+  "experienceYearsMin": 3,
+  "seniority": null,
+  "educationLevel": "bac3",
+  "educationFields": ["Commerce, marketing"],
+  "languages": [{ "name": "Anglais", "level": null, "required": true }],
+  "remoteMode": "hybrid",
+  "contractHints": ["CDI"],
+  "mustHaves": ["Marketing digital"],
+  "niceToHaves": ["SEO"],
+  "summary": "Poste de chef(fe) de projet marketing digital chez BrightLoop Technologies à Paris, avec télétravail partiel (2 jours au bureau, 3 jours à distance)."
+}

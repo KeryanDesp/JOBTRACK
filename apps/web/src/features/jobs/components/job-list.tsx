@@ -1,5 +1,5 @@
 import type { JobListResponseDto, JobSearchQuery } from '@jobtrack/shared';
-import { AlertTriangle, SearchX } from 'lucide-react';
+import { AlertTriangle, SearchX, Sparkles } from 'lucide-react';
 import type { MouseEvent } from 'react';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
@@ -121,13 +121,18 @@ export function JobList({
   ) : null;
 
   if (!data || data.items.length === 0) {
+    // Onglets dépendants du score (spec §2/§4, tranche 4) : zéro offre n'y signifie pas la
+    // même chose que dans « Toutes »/« Nouvelles » — rien n'a encore été évalué comme
+    // correspondant, pas « aucun résultat pour ces filtres ». Un message dédié plutôt que le
+    // générique, qui suggérerait à tort d'élargir le rayon ou de retirer un filtre.
+    const isMatchTab = query.tab === 'for_you' || query.tab === 'priority';
     return (
       <div>
         {errorAlert}
         <EmptyState
-          icon={SearchX}
-          title="Aucune offre ne correspond."
-          description="Élargissez le rayon ou retirez un filtre."
+          icon={isMatchTab ? Sparkles : SearchX}
+          title={isMatchTab ? 'Aucune offre ne correspond encore à votre profil.' : 'Aucune offre ne correspond.'}
+          description={isMatchTab ? "Lancez l'analyse ou élargissez la recherche." : 'Élargissez le rayon ou retirez un filtre.'}
           action={onResetFilters ? { label: 'Réinitialiser les filtres', onClick: onResetFilters } : undefined}
         />
       </div>
