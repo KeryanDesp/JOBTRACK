@@ -32,9 +32,13 @@ export function BoardColumn({ status, items, onOpen, emptyHint }: BoardColumnPro
         <h3 id={headingId} className="text-sm font-semibold">
           <ApplicationStatusBadge status={status} />
         </h3>
-        <Badge variant="secondary" aria-label={countLabel}>
+        {/* `aria-label` sur la pastille serait ignoré : `Badge` rend un `span`
+            sans rôle. Le nombre est donc masqué et repris en clair à côté, où
+            un lecteur d'écran le lira en entrant dans la colonne. */}
+        <Badge variant="secondary" aria-hidden="true">
           {items.length}
         </Badge>
+        <span className="sr-only">{countLabel}</span>
       </div>
 
       <div

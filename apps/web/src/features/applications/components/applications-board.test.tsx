@@ -1,7 +1,12 @@
 import type { ReactNode } from 'react';
 import type * as DndKitCore from '@dnd-kit/core';
-import type { DragEndEvent, DndContextProps } from '@dnd-kit/core';
-import type { ApplicationBoardDto, ApplicationDto, ApplicationStatus } from '@jobtrack/shared';
+import type { DragEndEvent, DragStartEvent, DndContextProps } from '@dnd-kit/core';
+import type {
+  ApplicationBoardDto,
+  ApplicationDetailDto,
+  ApplicationDto,
+  ApplicationStatus,
+} from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -90,6 +95,12 @@ function makeBoard(columns: Partial<Record<ApplicationStatus, ApplicationDto[]>>
   };
 }
 
+/** Réponse de `PATCH /applications/:id/move` : `useMoveApplication` la place en
+ *  cache, un `undefined` y déclencherait un avertissement de TanStack Query. */
+function movedDetail(overrides: Partial<ApplicationDetailDto> = {}): ApplicationDetailDto {
+  return { ...makeApplication(), events: [], ...overrides };
+}
+
 /** Évènement minimal : seuls `active.id` et `over.id` sont lus par le board. */
 function dragEnd(activeId: string, overId: string | null): DragEndEvent {
   return {
@@ -154,8 +165,12 @@ describe('resolveDrop', () => {
     expect(resolveDrop(board, 'a', 'a')).toBeNull();
   });
 
-  it('depot dans le vide de sa propre colonne : aucun changement', () => {
-    expect(resolveDrop(board, 'a', 'TO_APPLY')).toBeNull();
+  it('depot dans le vide de sa propre colonne : la carte descend en derniere position', () => {
+    expect(resolveDrop(board, 'a', 'TO_APPLY')).toEqual({ status: 'TO_APPLY', position: 2 });
+  });
+
+  it('depot dans le vide de sa propre colonne, carte deja derniere : aucun changement', () => {
+    expect(resolveDrop(board, 'c', 'TO_APPLY')).toBeNull();
   });
 
   it('identifiant actif inconnu : aucun changement', () => {
@@ -208,7 +223,7 @@ describe('ApplicationsBoard', () => {
   });
 
   it('un depot sur une autre colonne appelle PATCH move avec le statut et la position', async () => {
-    moveApplication.mockResolvedValue(undefined);
+    moveApplication.mockResolvedValue(movedDetail({ id: 'app-1', status: 'INTERVIEW' }));
     renderBoard(
       makeBoard({
         TO_APPLY: [makeApplication({ id: 'app-1' })],
@@ -226,6 +241,8 @@ describe('ApplicationsBoard', () => {
   });
 
   it('un depot qui ne change rien n_appelle pas PATCH move', () => {
+    // Carte unique de sa colonne : elle y est deja derniere, et un depot hors
+    // de toute cible (`over` nul) ne resout rien non plus.
     renderBoard(makeBoard({ TO_APPLY: [makeApplication({ id: 'app-1' })] }));
 
     act(() => {
@@ -234,8 +251,45 @@ describe('ApplicationsBoard', () => {
     act(() => {
       dnd.props?.onDragEnd?.(dragEnd('app-1', null));
     });
+    act(() => {
+      dnd.props?.onDragEnd?.(dragEnd('app-1', 'app-1'));
+    });
 
     expect(moveApplication).not.toHaveBeenCalled();
+  });
+
+  it('un depot dans le vide de sa propre colonne descend la carte en dernier', async () => {
+    moveApplication.mockResolvedValue(movedDetail({ id: 'app-1' }));
+    renderBoard(
+      makeBoard({
+        TO_APPLY: [makeApplication({ id: 'app-1' }), makeApplication({ id: 'app-2' })],
+      }),
+    );
+
+    act(() => {
+      dnd.props?.onDragEnd?.(dragEnd('app-1', 'TO_APPLY'));
+    });
+
+    await waitFor(() => {
+      expect(moveApplication).toHaveBeenCalledWith('app-1', { status: 'TO_APPLY', position: 1 });
+    });
+  });
+
+  it('la carte de la superposition est inerte : aucune commande en double', () => {
+    const { container } = renderBoard(makeBoard({ TO_APPLY: [makeApplication({ id: 'app-1' })] }));
+
+    // Une carte active porte trois commandes : ouvrir, poignee, « Deplacer vers… ».
+    expect(container.querySelectorAll('button')).toHaveLength(3);
+
+    act(() => {
+      dnd.props?.onDragStart?.({ active: { id: 'app-1' } } as unknown as DragStartEvent);
+    });
+
+    // La copie du `DragOverlay` affiche le meme contenu sans en rajouter aucune
+    // (le comptage porte sur le DOM brut : `getAllByRole` ignorerait de toute
+    // facon le sous-arbre `aria-hidden` de la superposition).
+    expect(screen.getAllByText('Developpeur React')).toHaveLength(2);
+    expect(container.querySelectorAll('button')).toHaveLength(3);
   });
 
   it('les annonces de lecteur d_ecran sont en francais', () => {

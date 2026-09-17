@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApplicationDetailDto, UpdateApplicationInput } from '@jobtrack/shared';
 import { ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -25,6 +25,9 @@ import { DeleteApplicationButton } from './delete-application-button';
 const NO_RESUME = 'aucun';
 const BASE_RESUME = 'principal';
 
+/** Durée d'affichage de la confirmation « Enregistré » (spec §7). */
+const SAVED_NOTICE_MS = 2000;
+
 interface ApplicationSheetProps {
   id: string | null;
   onClose: () => void;
@@ -45,9 +48,13 @@ export function ApplicationSheet({ id, onClose }: ApplicationSheetProps) {
         if (!open) onClose();
       }}
     >
+      {/* `sm:max-w-none` est indispensable : `tailwind-merge` ne considère pas
+          `max-w-none` et `sm:max-w-sm` comme concurrents (variantes
+          différentes), et le `sm:max-w-sm` du primitif rétrécirait sinon le
+          panneau entre 640 et 767 px, où il doit encore occuper tout l'écran. */}
       <SheetContent
         side="right"
-        className="w-full max-w-none gap-0 overflow-y-auto md:w-[30rem] md:max-w-[30rem]"
+        className="w-full max-w-none gap-0 overflow-y-auto sm:max-w-none md:w-[30rem] md:max-w-[30rem]"
       >
         {/* `key` : changer de candidature sans fermer le panneau doit repartir
             d'un brouillon de notes vierge, pas de celui de la précédente. */}
@@ -82,6 +89,9 @@ function ApplicationSheetBody({ id, onClose }: { id: string; onClose: () => void
       <>
         <SheetHeader>
           <SheetTitle>Candidature</SheetTitle>
+          <SheetDescription>
+            {notFound ? "Cette candidature n'existe plus." : 'Le détail est momentanément indisponible.'}
+          </SheetDescription>
         </SheetHeader>
         {notFound ? (
           <div role="status" className="p-4">
@@ -117,12 +127,29 @@ function ApplicationSheetContent({
 
   const [notes, setNotes] = useState(application.notes ?? '');
   const [saved, setSaved] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Le minuteur en cours est annulé au démontage : refermer le panneau pendant
+  // les deux secondes écrirait sinon dans un composant déjà parti.
+  useEffect(() => () => clearTimeout(savedTimerRef.current), []);
 
   const notesDirty = notes !== (application.notes ?? '');
 
   function save(input: UpdateApplicationInput): void {
     setSaved(false);
-    update.mutate({ id: application.id, input }, { onSuccess: () => setSaved(true) });
+    update.mutate(
+      { id: application.id, input },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          // « Enregistré » est une confirmation ponctuelle, pas un état : le
+          // laisser affiché ferait croire que la modification suivante n'a pas
+          // encore été prise, faute de changement visible.
+          clearTimeout(savedTimerRef.current);
+          savedTimerRef.current = setTimeout(() => setSaved(false), SAVED_NOTICE_MS);
+        },
+      },
+    );
   }
 
   function handleResumeChange(value: string): void {
@@ -172,7 +199,14 @@ function ApplicationSheetContent({
             id="candidature-date"
             type="date"
             value={application.appliedAt ?? ''}
-            onChange={(event) => save({ appliedAt: event.target.value === '' ? null : event.target.value })}
+            // Un `input[type=date]` émet aussi des valeurs intermédiaires vides
+            // (saisie clavier en cours, effacement partiel) : sans cette garde,
+            // chacune déclencherait un `PATCH` qui remettrait la date à `null`.
+            onChange={(event) => {
+              const next = event.target.value === '' ? null : event.target.value;
+              if (next === application.appliedAt) return;
+              save({ appliedAt: next });
+            }}
           />
         </div>
 

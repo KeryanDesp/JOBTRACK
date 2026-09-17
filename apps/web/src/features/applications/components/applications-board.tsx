@@ -21,7 +21,9 @@ import { APPLICATION_STATUSES, APPLICATION_STATUS_LABELS } from '@jobtrack/share
 import { ErrorState } from '@/components/shared/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApplicationsBoard, useMoveApplication } from '../hooks/use-applications';
-import { ApplicationCard, usePrefersReducedMotion } from './application-card';
+import { usePrefersReducedMotion } from '../hooks/use-prefers-reduced-motion';
+import { isApplicationStatus } from '../lib/status';
+import { ApplicationCard } from './application-card';
 import { BoardColumn } from './board-column';
 
 // ---------------------------------------------------------------------------
@@ -36,10 +38,6 @@ export interface DropTarget {
 interface CardLocation {
   status: ApplicationStatus;
   index: number;
-}
-
-function isApplicationStatus(value: string): value is ApplicationStatus {
-  return (APPLICATION_STATUSES as readonly string[]).includes(value);
 }
 
 function locateCard(board: ApplicationBoardDto, id: string): CardLocation | null {
@@ -73,10 +71,16 @@ export function resolveDrop(board: ApplicationBoardDto, activeId: string, overId
   if (overId === activeId) return null;
 
   if (isApplicationStatus(overId)) {
-    // Retomber sur sa propre colonne (hors de toute carte) ne réordonne rien :
-    // la carte garderait sa place, inutile d'écrire au serveur.
-    if (overId === from.status) return null;
-    return { status: overId, position: board.columns[overId].length };
+    const column = board.columns[overId];
+    if (overId === from.status) {
+      // Déposer sous les cartes de sa propre colonne : la carte descend en
+      // dernier. `column.length - 1` et non `column.length` parce qu'elle y
+      // figure déjà et que `moveCardInBoard` la retire avant de l'insérer.
+      const lastIndex = column.length - 1;
+      if (from.index === lastIndex) return null;
+      return { status: overId, position: lastIndex };
+    }
+    return { status: overId, position: column.length };
   }
 
   const over = locateCard(board, overId);
@@ -191,7 +195,9 @@ export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4">
+      {/* L'accrochage sert au défilement horizontal du mobile ; à partir de
+          `md` les cinq colonnes tiennent côte à côte et n'ont plus à s'aimanter. */}
+      <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 md:snap-none">
         {APPLICATION_STATUSES.map((status, index) => (
           <BoardColumn
             key={status}
@@ -206,7 +212,9 @@ export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
       {/* `dropAnimation={null}` : aucune animation de retombée quand l'utilisateur
           a demandé moins de mouvement (spec §7). */}
       <DragOverlay dropAnimation={reducedMotion ? null : undefined}>
-        {activeCard === null ? null : <ApplicationCard application={activeCard} onOpen={onOpen} />}
+        {activeCard === null ? null : (
+          <ApplicationCard application={activeCard} onOpen={onOpen} presentational />
+        )}
       </DragOverlay>
     </DndContext>
   );

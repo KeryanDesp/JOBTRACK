@@ -1,5 +1,4 @@
 import type { CSSProperties, Ref } from 'react';
-import { useEffect, useState } from 'react';
 import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -7,32 +6,11 @@ import type { ApplicationDto } from '@jobtrack/shared';
 import { GripVertical } from 'lucide-react';
 import { MatchBadge } from '@/features/matching/components/match-badge';
 import { cn } from '@/lib/utils';
+import { usePrefersReducedMotion } from '../hooks/use-prefers-reduced-motion';
 import { formatApplicationDate, sourceLabel } from '../lib/format';
 import { MoveToMenu } from './move-to-menu';
 
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-/**
- * `prefers-reduced-motion` (spec §7) sans dépendre de Framer Motion : la
- * valeur sert à retirer complètement la transition de réordonnancement de
- * `@dnd-kit` (une propriété CSS `transition` inline, que la règle globale de
- * `tokens.css` ne peut pas neutraliser). `matchMedia` est absent de jsdom :
- * l'absence de l'API vaut « pas de préférence » plutôt qu'une exception.
- */
-export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return;
-    const query = window.matchMedia(REDUCED_MOTION_QUERY);
-    setReduced(query.matches);
-    const handleChange = (event: MediaQueryListEvent) => setReduced(event.matches);
-    query.addEventListener('change', handleChange);
-    return () => query.removeEventListener('change', handleChange);
-  }, []);
-
-  return reduced;
-}
+const CARD_CLASS = 'bg-card text-card-foreground relative rounded-lg border p-3 shadow-xs';
 
 export interface DragHandleProps {
   ref?: Ref<HTMLButtonElement>;
@@ -40,39 +18,67 @@ export interface DragHandleProps {
   listeners?: DraggableSyntheticListeners;
 }
 
+/** Contenu visible d'une carte, identique dans la colonne et dans la superposition. */
+function CardContent({ application }: { application: ApplicationDto }) {
+  const match = application.job?.match ?? null;
+
+  return (
+    <>
+      <span className="block text-sm font-semibold">{application.company ?? 'Entreprise non précisée'}</span>
+      <span className="text-muted-foreground mt-0.5 block text-sm">{application.jobTitle}</span>
+      <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {application.salaryLabel !== null && (
+          <span className="text-foreground/80 font-medium">{application.salaryLabel}</span>
+        )}
+        <span className="text-muted-foreground">{formatApplicationDate(application.appliedAt)}</span>
+        <span className="text-muted-foreground">{sourceLabel(application)}</span>
+        {match !== null && match.score !== null && <MatchBadge score={match.score} band={match.band} size="sm" />}
+      </span>
+    </>
+  );
+}
+
 interface ApplicationCardProps {
   application: ApplicationDto;
   onOpen: (id: string) => void;
   /**
    * Écouteurs de saisie posés sur la seule poignée (spec §2) : le corps de la
-   * carte reste un bouton d'ouverture cliquable. Absent quand la carte est
-   * rendue dans le `DragOverlay`, qui ne doit enregistrer aucun nœud
-   * déplaçable supplémentaire pour le même identifiant.
+   * carte reste un bouton d'ouverture cliquable.
    */
   dragHandleProps?: DragHandleProps;
+  /**
+   * Copie inerte affichée dans le `DragOverlay` pendant un déplacement : ni
+   * bouton d'ouverture, ni poignée, ni menu « Déplacer vers… ». Sans cela, la
+   * carte saisie existerait deux fois dans le DOM avec les mêmes commandes,
+   * dont un second menu atteignable au clavier, et son texte serait annoncé
+   * en double par-dessus les annonces de déplacement.
+   */
+  presentational?: boolean;
 }
 
-export function ApplicationCard({ application, onOpen, dragHandleProps }: ApplicationCardProps) {
-  const match = application.job?.match ?? null;
+export function ApplicationCard({
+  application,
+  onOpen,
+  dragHandleProps,
+  presentational = false,
+}: ApplicationCardProps) {
+  if (presentational) {
+    return (
+      <div className={CARD_CLASS} aria-hidden="true">
+        <CardContent application={application} />
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-card text-card-foreground relative rounded-lg border p-3 shadow-xs">
+    <div className={CARD_CLASS}>
       <button
         type="button"
         onClick={() => onOpen(application.id)}
         aria-label={`Ouvrir la candidature ${application.jobTitle}`}
         className="focus-visible:ring-ring block w-full pr-16 text-left focus-visible:ring-2 focus-visible:outline-none"
       >
-        <span className="block text-sm font-semibold">{application.company ?? 'Entreprise non précisée'}</span>
-        <span className="text-muted-foreground mt-0.5 block text-sm">{application.jobTitle}</span>
-        <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          {application.salaryLabel !== null && (
-            <span className="text-foreground/80 font-medium">{application.salaryLabel}</span>
-          )}
-          <span className="text-muted-foreground">{formatApplicationDate(application.appliedAt)}</span>
-          <span className="text-muted-foreground">{sourceLabel(application)}</span>
-          {match !== null && match.score !== null && <MatchBadge score={match.score} band={match.band} size="sm" />}
-        </span>
+        <CardContent application={application} />
       </button>
 
       <div className="absolute top-2 right-2 flex items-center gap-0.5">
@@ -107,6 +113,9 @@ export function SortableApplicationCard({ application, onOpen }: SortableApplica
   const reducedMotion = usePrefersReducedMotion();
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: application.id,
+    // Sans cela, `@dnd-kit` pose un `aria-roledescription="sortable"` en
+    // anglais au milieu d'une interface entièrement française.
+    attributes: { roleDescription: 'candidature déplaçable' },
   });
 
   const style: CSSProperties = {

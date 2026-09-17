@@ -45,15 +45,15 @@ function makeApplication(overrides: Partial<ApplicationDto> = {}): ApplicationDt
   };
 }
 
-function renderCard(application: ApplicationDto = makeApplication()) {
+function renderCard(application: ApplicationDto = makeApplication(), presentational = false) {
   const onOpen = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(
+  const { container } = render(
     <QueryClientProvider client={client}>
-      <ApplicationCard application={application} onOpen={onOpen} />
+      <ApplicationCard application={application} onOpen={onOpen} presentational={presentational} />
     </QueryClientProvider>,
   );
-  return { onOpen };
+  return { onOpen, container };
 }
 
 describe('ApplicationCard', () => {
@@ -102,6 +102,18 @@ describe('ApplicationCard', () => {
     await user.click(screen.getByRole('button', { name: 'Ouvrir la candidature Developpeur React' }));
 
     expect(onOpen).toHaveBeenCalledWith('app-1');
+  });
+
+  it('en mode presentation, affiche le meme contenu sans aucune commande', () => {
+    const { container } = renderCard(makeApplication(), true);
+
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    expect(screen.getByText('Developpeur React')).toBeInTheDocument();
+    expect(screen.getByText('15 sept. 2026')).toBeInTheDocument();
+    // Ni bouton d'ouverture, ni poignee, ni menu « Deplacer vers… » : la copie
+    // rendue dans le `DragOverlay` ne doit rien dupliquer.
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+    expect(container.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
   });
 
   it('porte une poignee de deplacement nommee, distincte du corps cliquable', async () => {

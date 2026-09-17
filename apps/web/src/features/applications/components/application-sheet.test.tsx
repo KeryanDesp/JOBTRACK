@@ -177,6 +177,20 @@ describe('ApplicationSheet', () => {
     });
   });
 
+  it('ignore une date identique a celle deja enregistree', async () => {
+    fetchApplication.mockResolvedValue(makeDetail());
+    fetchResumes.mockResolvedValue([]);
+    fetchLetters.mockResolvedValue([]);
+    renderSheet();
+
+    await screen.findByRole('heading', { name: 'Developpeur React' });
+    // Valeur inchangee, puis valeur vide intermediaire suivie de la meme date :
+    // seul le passage par le vide doit ecrire, jamais un aller-retour identique.
+    fireEvent.change(screen.getByLabelText('Date de candidature'), { target: { value: '2026-09-15' } });
+
+    expect(updateApplication).not.toHaveBeenCalled();
+  });
+
   it('n_active le bouton des notes qu_une fois le texte modifie', async () => {
     fetchApplication.mockResolvedValue(makeDetail());
     fetchResumes.mockResolvedValue([]);
