@@ -18,7 +18,9 @@ export interface TrackApplicationButtonProps {
   onOpenChange: (open: boolean) => void;
   /**
    * Barre d'actions collante mobile (spec tâche 9) : libellé court
-   * (« Suivre »/« Suivie »), l'`aria-label` reste toujours complet.
+   * (« Suivre »/« Suivie »). L'`aria-label` complet n'est posé que dans ce
+   * mode (revue tâche 7, point 6) : en pleine largeur, le texte visible porte
+   * déjà ce même libellé, un `aria-label` identique ne ferait que le dupliquer.
    */
   compact?: boolean;
 }
@@ -38,11 +40,16 @@ export interface TrackApplicationButtonProps {
 export function TrackApplicationButton({ job, open, onOpenChange, compact = false }: TrackApplicationButtonProps) {
   if (job.application) {
     const statusLabel = APPLICATION_STATUS_LABELS[job.application.status];
+    const fullLabel = `Candidature suivie · ${statusLabel}`;
     return (
       <Button asChild variant="outline">
-        <Link to={`/applications?candidature=${job.application.id}`} aria-label={`Candidature suivie · ${statusLabel}`}>
+        {/* `aria-label` uniquement en mode compact (revue tâche 7, point 6) :
+            en pleine largeur, le texte visible porte déjà `fullLabel` — y
+            répéter le même `aria-label` ne ferait que dupliquer le « · » pour
+            un lecteur d'écran, sans rien ajouter. */}
+        <Link to={`/applications?candidature=${job.application.id}`} aria-label={compact ? fullLabel : undefined}>
           <BookmarkCheck aria-hidden="true" />
-          {compact ? 'Suivie' : `Candidature suivie · ${statusLabel}`}
+          {compact ? 'Suivie' : fullLabel}
         </Link>
       </Button>
     );
@@ -52,7 +59,11 @@ export function TrackApplicationButton({ job, open, onOpenChange, compact = fals
     <Button
       type="button"
       variant="secondary"
-      aria-label="Suivre cette candidature"
+      // `aria-haspopup="dialog"` (revue tâche 7, point 6) : ce bouton ouvre
+      // `ApplicationFormDialog`, jamais un menu. Même raisonnement que
+      // `job.application` ci-dessus pour `aria-label`, omis hors mode compact.
+      aria-haspopup="dialog"
+      aria-label={compact ? 'Suivre cette candidature' : undefined}
       aria-expanded={open}
       onClick={() => onOpenChange(true)}
     >

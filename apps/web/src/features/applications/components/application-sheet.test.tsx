@@ -280,6 +280,30 @@ describe('ApplicationSheet', () => {
     });
   });
 
+  it('ferme le panneau de facon optimiste, avant meme la reponse du serveur (pas de flash Candidature introuvable)', async () => {
+    fetchApplication.mockResolvedValue(makeDetail());
+    fetchResumes.mockResolvedValue([]);
+    fetchLetters.mockResolvedValue([]);
+    let resolveDelete: () => void = () => {};
+    deleteApplication.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onClose } = renderSheet();
+
+    await screen.findByRole('heading', { name: 'Developpeur React' });
+    await user.click(screen.getByRole('button', { name: 'Supprimer' }));
+    await user.click(screen.getByRole('button', { name: 'Supprimer définitivement' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(deleteApplication).toHaveBeenCalledWith('app-1');
+
+    resolveDelete();
+  });
+
   it('ne charge rien tant qu_aucune candidature n_est selectionnee', () => {
     renderSheet(null);
 

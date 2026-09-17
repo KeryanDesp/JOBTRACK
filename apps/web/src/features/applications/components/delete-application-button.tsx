@@ -21,24 +21,24 @@ interface DeleteApplicationButtonProps {
 }
 
 /**
- * Suppression avec confirmation (spec §2, point 5). Le dialogue ne se ferme
- * qu'après la réussite : un échec laisse la confirmation ouverte, le toast
- * d'erreur venant de `useDeleteApplication`.
+ * Suppression avec confirmation (spec §2, point 5). La confirmation ferme et
+ * `onDeleted()` (qui referme `ApplicationSheet`, cf. son appelant) est appelé
+ * de façon optimiste, avant même la réponse du serveur, plutôt qu'à la
+ * réussite de la mutation : `ApplicationSheet` reste sinon montée pendant
+ * l'aller-retour réseau, et `useApplication` y relance une requête sur un
+ * identifiant en cours de suppression — un flash « Candidature introuvable »
+ * précédait alors la fermeture réelle. Un échec ne rouvre pas la
+ * confirmation (le panneau est déjà fermé) ; le toast d'erreur de
+ * `useDeleteApplication` suffit à en informer.
  */
 export function DeleteApplicationButton({ id, jobId, onDeleted }: DeleteApplicationButtonProps) {
   const [open, setOpen] = useState(false);
   const remove = useDeleteApplication();
 
   function handleConfirm(): void {
-    remove.mutate(
-      { id, jobId },
-      {
-        onSuccess: () => {
-          setOpen(false);
-          onDeleted();
-        },
-      },
-    );
+    setOpen(false);
+    onDeleted();
+    remove.mutate({ id, jobId });
   }
 
   return (

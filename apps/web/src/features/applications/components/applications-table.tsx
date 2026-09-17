@@ -94,23 +94,27 @@ function ResumeCell({ application }: { application: ApplicationDto }) {
  * candidature porte une URL `http(s)` (spec §5 — jamais un autre schéma, et
  * toujours `rel="noopener noreferrer"`).
  */
+/**
+ * Sous `lg`, la table déborde de son conteneur (spec §7, revue visuelle
+ * tranche 6) : le libellé texte disparaît alors, seule l'icône du lien
+ * externe reste visible — `aria-label` porte le nom accessible complet dans
+ * les deux cas, la disparition du texte n'est que visuelle.
+ */
 function SourceCell({ application }: { application: ApplicationDto }) {
   const label = sourceLabel(application);
   if (!isHttpUrl(application.sourceUrl)) return <span>{label}</span>;
 
   return (
-    <span className="inline-flex items-center gap-1.5">
-      {label}
-      <a
-        href={application.sourceUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`Ouvrir l'offre ${application.jobTitle} sur ${label}`}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        <ExternalLink aria-hidden="true" className="size-3.5" />
-      </a>
-    </span>
+    <a
+      href={application.sourceUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Ouvrir l'offre ${application.jobTitle} sur ${label}`}
+      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5"
+    >
+      <span className="hidden lg:inline">{label}</span>
+      <ExternalLink aria-hidden="true" className="size-3.5" />
+    </a>
   );
 }
 
@@ -207,7 +211,13 @@ export function ApplicationsTable({
 
   return (
     <div className="space-y-6">
-      <div className="hidden md:block">
+      {/* `[&_[data-slot=table-cell]]:px-1.5`/`table-head` : marge horizontale
+          réduite par cellule (spec §7, revue visuelle tranche 6) — la table
+          débordait de ~41 px à 1024 px (colonne Actions rognée) ; combiné au
+          sélecteur de statut resserré (`w-36` ci-dessous) et à la disparition
+          du libellé de la colonne Source sous `lg`, elle tient désormais dans
+          les ~720 px disponibles à côté du menu latéral. */}
+      <div className="hidden md:block [&_[data-slot=table-cell]]:px-1.5 [&_[data-slot=table-head]]:px-1.5">
         <Table>
           <TableHeader>
             <TableRow>
@@ -225,11 +235,12 @@ export function ApplicationsTable({
           <TableBody>
             {items.map((application) => (
               <TableRow key={application.id}>
-                <TableCell className="max-w-[16rem] font-medium whitespace-normal">
+                <TableCell className="max-w-[12rem] font-medium">
                   <button
                     type="button"
                     onClick={() => onOpen(application.id)}
-                    className="rounded-sm text-left underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                    title={application.jobTitle}
+                    className="block max-w-full truncate rounded-sm text-left underline-offset-4 hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                   >
                     {application.jobTitle}
                   </button>
@@ -248,6 +259,7 @@ export function ApplicationsTable({
                     size="sm"
                     ariaLabel={`Statut de ${application.jobTitle}`}
                     onChange={(status) => handleStatusChange(application, status)}
+                    className="w-36 min-w-0"
                   />
                 </TableCell>
                 <TableCell className="text-right">

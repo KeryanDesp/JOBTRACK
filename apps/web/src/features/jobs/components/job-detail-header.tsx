@@ -2,7 +2,7 @@ import type { JobDetailDto } from '@jobtrack/shared';
 import { EXPERIENCE_LEVEL_LABELS, JOB_SOURCE_LABELS, REMOTE_MODE_LABELS } from '@jobtrack/shared';
 import { Bookmark, BookmarkCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -151,9 +151,16 @@ export function JobDetailHeader({ job }: JobDetailHeaderProps) {
   const location = formatLocation(job.locationLabel, job.departmentCode);
   const experience = experienceText(job);
 
-  const tailoredResumes = (resumesQuery.data ?? [])
-    .filter((resume) => resume.jobId === job.id)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  // `useMemo` (revue tâche 7, point 6) : évite de refiltrer/retrier la liste
+  // complète des CV à chaque rendu (ex. frappe dans un champ voisin) alors que
+  // seuls `resumesQuery.data` et `job.id` en changent le résultat.
+  const tailoredResumes = useMemo(
+    () =>
+      (resumesQuery.data ?? [])
+        .filter((resume) => resume.jobId === job.id)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [resumesQuery.data, job.id],
+  );
 
   function handleOpenApplication(applicationId: string): void {
     navigate(`/applications?candidature=${applicationId}`);

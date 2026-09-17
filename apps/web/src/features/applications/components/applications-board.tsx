@@ -195,9 +195,14 @@ export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      {/* L'accrochage sert au défilement horizontal du mobile ; à partir de
-          `md` les cinq colonnes tiennent côte à côte et n'ont plus à s'aimanter. */}
-      <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 md:snap-none">
+      {/* Colonnes de largeur fixe (280 px) avec défilement horizontal aimanté
+          jusqu'à `xl` : à `md`/`lg`, `md:flex-1` ne laissait que 107–182 px par
+          colonne (texte coupé, dernière colonne rognée) — cinq colonnes ne
+          tiennent tout simplement pas côte à côte avant `xl` (≥ 1280 px), où
+          elles peuvent enfin grandir (`xl:flex-1`, voir `BoardColumn`).
+          `pr-4` évite que la dernière colonne ne soit rognée par le bord du
+          conteneur défilant. */}
+      <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 pr-4 xl:snap-none xl:pr-0">
         {APPLICATION_STATUSES.map((status, index) => (
           <BoardColumn
             key={status}
@@ -222,12 +227,12 @@ export function ApplicationsBoard({ onOpen }: ApplicationsBoardProps) {
 
 function BoardSkeleton() {
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
+    <div className="flex gap-4 overflow-x-auto pb-4 pr-4 xl:pr-0">
       <p role="status" className="sr-only">
         Chargement des candidatures…
       </p>
       {APPLICATION_STATUSES.map((status) => (
-        <div key={status} className="w-[280px] shrink-0 md:w-auto md:flex-1" aria-hidden="true">
+        <div key={status} className="w-[280px] shrink-0 xl:w-auto xl:min-w-[220px] xl:flex-1" aria-hidden="true">
           <div className="flex items-center justify-between gap-2 px-1 pb-2">
             <Skeleton className="h-5 w-32" />
             <Skeleton className="h-5 w-6" />

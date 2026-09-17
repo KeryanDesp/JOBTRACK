@@ -441,4 +441,28 @@ describe('useDeleteApplication', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(client.getQueryState(jobKeys.detail('job-1'))?.isInvalidated).toBe(true);
   });
+
+  it('purge le detail en cache dans onMutate, avant meme la reponse du serveur', async () => {
+    let resolveDelete: () => void = () => {};
+    deleteApplication.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    const client = makeClient();
+    client.setQueryData(applicationKeys.detail('app-1'), makeApplicationDetail());
+
+    const { result } = renderHook(() => useDeleteApplication(), { wrapper: wrapperFor(client) });
+    act(() => result.current.mutate({ id: 'app-1' }));
+
+    // La purge se produit sans attendre la résolution de `deleteApplication` :
+    // exactement ce qui évite à `ApplicationSheet` de relancer une requête sur
+    // un identifiant en cours de suppression pendant l'aller-retour réseau.
+    await waitFor(() => expect(client.getQueryData(applicationKeys.detail('app-1'))).toBeUndefined());
+    expect(result.current.isSuccess).toBe(false);
+
+    resolveDelete();
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
 });

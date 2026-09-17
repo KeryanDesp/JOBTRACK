@@ -62,6 +62,30 @@ describe('DeleteApplicationButton', () => {
     });
   });
 
+  it('previent l_appelant immediatement (fermeture optimiste), avant meme la reponse du serveur', async () => {
+    const user = userEvent.setup();
+    let resolveDelete: () => void = () => {};
+    deleteApplication.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+    const { onDeleted } = renderButton();
+
+    await user.click(screen.getByRole('button', { name: 'Supprimer' }));
+    await user.click(screen.getByRole('button', { name: 'Supprimer définitivement' }));
+
+    // `onDeleted` et l'appel réseau sont déjà partis alors que la promesse de
+    // suppression n'est pas encore résolue : la fermeture ne dépend jamais de
+    // la réponse du serveur.
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    expect(deleteApplication).toHaveBeenCalledWith('app-1');
+    expect(screen.queryByRole('heading', { name: 'Supprimer cette candidature ?' })).not.toBeInTheDocument();
+
+    resolveDelete();
+  });
+
   it('annuler ferme la confirmation sans rien supprimer', async () => {
     const user = userEvent.setup();
     const { onDeleted } = renderButton();

@@ -24,7 +24,7 @@ export function BoardColumn({ status, items, onOpen, emptyHint }: BoardColumnPro
   const countLabel = items.length > 1 ? `${items.length} candidatures` : `${items.length} candidature`;
 
   return (
-    <section aria-labelledby={headingId} className="w-[280px] shrink-0 snap-start md:w-auto md:flex-1">
+    <section aria-labelledby={headingId} className="w-[280px] shrink-0 snap-start xl:w-auto xl:min-w-[220px] xl:flex-1">
       <div className="flex items-center justify-between gap-2 px-1 pb-2">
         {/* La pastille porte le titre de la colonne : même couleur de statut que
             dans la table et le panneau de détail, sans perdre le niveau de titre

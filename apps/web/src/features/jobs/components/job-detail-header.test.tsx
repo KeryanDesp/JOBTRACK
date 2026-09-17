@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import type * as ResumeApi from '@/services/api/resume';
 import { jobKeys } from '../lib/query-keys';
 import { JobDetailHeader } from './job-detail-header';
 
@@ -26,19 +27,9 @@ vi.mock('@/services/api/jobs', () => ({
 // remplacé ci-dessous, ce hook restant, lui, appelé directement par l'en-tête.
 const fetchResumes = vi.hoisted(() => vi.fn());
 
-vi.mock('@/services/api/resume', () => ({
-  fetchBaseResume: vi.fn(),
-  updateResumeTemplate: vi.fn(),
+vi.mock('@/services/api/resume', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResumeApi>()),
   fetchResumes,
-  fetchResume: vi.fn(),
-  tailorResume: vi.fn(),
-  updateResume: vi.fn(),
-  deleteResume: vi.fn(),
-  fetchLetters: vi.fn(),
-  fetchLetter: vi.fn(),
-  createLetter: vi.fn(),
-  updateLetter: vi.fn(),
-  deleteLetter: vi.fn(),
 }));
 
 /**

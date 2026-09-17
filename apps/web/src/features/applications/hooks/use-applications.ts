@@ -255,18 +255,29 @@ export interface DeleteApplicationVariables {
 }
 
 /**
- * `DELETE /applications/:id` (spec §6) : le travail de cache (purge du détail
- * via `removeQueries` — pas seulement une invalidation, sinon `staleTime`
- * laisserait la fiche supprimée survivre jusqu'au prochain focus — et
- * invalidation du reste) est regroupé dans `onSettled`, même principe que
- * `useDeleteResume` (`features/resume/hooks/use-resume.ts`) ; les toasts
- * restent dans `onSuccess`/`onError`, spécifiques à chaque issue.
+ * `DELETE /applications/:id` (spec §6). `removeQueries` sur le détail se
+ * produit deux fois à dessein : dès `onMutate` (avant même la réponse
+ * serveur), pour que `ApplicationSheet` — fermée de façon optimiste par
+ * `DeleteApplicationButton` au même instant — ne laisse pas `useApplication`
+ * relancer une requête sur un identifiant en cours de suppression pendant les
+ * quelques millisecondes avant que le démontage du panneau ne soit effectif
+ * (cette course provoquait un flash « Candidature introuvable » avant
+ * fermeture) ; puis de nouveau dans `onSettled`, filet de sécurité si `onMutate`
+ * n'a pas pu s'exécuter (ex. suppression déclenchée sans passer par le panneau).
+ * Le reste du travail de cache (invalidation, même principe que
+ * `useDeleteResume`, `features/resume/hooks/use-resume.ts`) reste groupé dans
+ * `onSettled` ; les toasts restent dans `onSuccess`/`onError`, spécifiques à
+ * chaque issue.
  */
 export function useDeleteApplication() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ id }: DeleteApplicationVariables) => deleteApplication(id),
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: applicationKeys.detail(id) });
+      queryClient.removeQueries({ queryKey: applicationKeys.detail(id) });
+    },
     onSuccess: () => {
       toast.success('Candidature supprimée.');
     },

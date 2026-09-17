@@ -123,4 +123,20 @@ describe('TrackApplicationButton', () => {
 
     expect(screen.queryByRole('button', { name: 'Suivre cette candidature' })).not.toBeInTheDocument();
   });
+
+  it('porte aria-haspopup=dialog : ce bouton ouvre un dialogue, jamais un menu', () => {
+    renderButton(makeDetail({ application: null }));
+
+    expect(screen.getByRole('button', { name: 'Suivre cette candidature' })).toHaveAttribute('aria-haspopup', 'dialog');
+  });
+
+  it('n_ajoute pas d_aria-label redondant avec le texte visible hors mode compact', () => {
+    renderButton(makeDetail({ application: null }));
+    expect(screen.getByRole('button', { name: 'Suivre cette candidature' })).not.toHaveAttribute('aria-label');
+
+    renderButton(makeDetail({ application: { id: 'app-5', status: 'APPLIED' } }));
+    expect(screen.getByRole('link', { name: 'Candidature suivie · Candidature envoyée' })).not.toHaveAttribute(
+      'aria-label',
+    );
+  });
 });

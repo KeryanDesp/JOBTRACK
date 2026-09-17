@@ -278,10 +278,35 @@ describe('ApplicationFormDialog en mode offre', () => {
     expect(createApplicationApi.mock.calls[0]?.[0]).toMatchObject({
       jobId: 'job_1',
       status: 'TO_APPLY',
-      resumeId: null,
+      // `JOB` porte un CV adapté (préselectionné, voir tests dédiés ci-dessous) :
+      // non touché ici, c'est donc lui qui part avec la candidature.
+      resumeId: 'r1',
       usedBaseResume: false,
       coverLetterId: null,
     });
+  });
+
+  it('preselectionne le cv adapte le plus recent de l_offre dans CV utilise', () => {
+    renderDialog({ job: JOB });
+
+    expect(screen.getByRole('combobox', { name: 'CV utilisé' })).toHaveTextContent('CV Business Analyst');
+  });
+
+  it('n_affiche aucun cv preselectionne quand l_offre n_en a aucun', () => {
+    renderDialog({ job: { ...JOB, tailoredResumes: [] } });
+
+    expect(screen.getByRole('combobox', { name: 'CV utilisé' })).toHaveTextContent('Aucun');
+  });
+
+  it('la preselection du cv le plus recent n_empeche pas de revenir a Aucun', async () => {
+    const user = userEvent.setup();
+    renderDialog({ job: JOB });
+
+    await chooseOption(user, 'CV utilisé', 'Aucun');
+    await user.click(screen.getByRole('button', { name: 'Suivre cette candidature' }));
+
+    await waitFor(() => expect(createApplicationApi).toHaveBeenCalledTimes(1));
+    expect(createApplicationApi.mock.calls[0]?.[0]).toMatchObject({ resumeId: null, usedBaseResume: false });
   });
 
   it('propose les CV adaptes de cette offre puis la lettre de cette offre', async () => {

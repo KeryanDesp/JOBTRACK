@@ -471,11 +471,17 @@ function JobApplicationForm({ job, onCreated, onOpenApplication, onClose }: Mode
   const letters = useLetters();
   const createApplication = useCreateApplication();
 
+  // `job.tailoredResumes` arrive déjà triés du plus récent au plus ancien
+  // (`JobDetailHeader`) : le CV en tête est donc préselectionné plutôt que
+  // « Aucun » quand l'offre en a au moins un — le cas le plus fréquent est
+  // justement celui d'avoir adapté un CV avant de suivre la candidature.
+  // `resumeChoice` reste un champ ordinaire du formulaire : l'utilisateur peut
+  // toujours revenir sur « Aucun »/« CV principal » via le sélecteur.
   const form = useForm<JobFormValues, unknown, CreateFromJobInput>({
     resolver: zodResolverWith<JobFormValues, CreateFromJobInput>(createFromJobSchema, (raw) =>
       normalizeFromJob(raw as JobFormValues, job.id),
     ),
-    defaultValues: JOB_DEFAULTS,
+    defaultValues: { ...JOB_DEFAULTS, resumeChoice: job.tailoredResumes[0]?.id ?? RESUME_NONE },
   });
 
   const errors = form.formState.errors;

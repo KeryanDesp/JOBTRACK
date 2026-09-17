@@ -95,13 +95,20 @@ export function ApplicationsFilters({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs value={tab} onValueChange={(next) => onTabChange(next as ApplicationTab)} className="max-w-full">
-          <TabsList className="flex-wrap">
+      {/* Sous `sm`, les six onglets ne tiennent jamais sur une ligne : plutôt que
+          de les laisser passer à la ligne (la seconde recouvrait alors le
+          bouton « Ajouter »), ils défilent horizontalement sur une seule ligne
+          (`overflow-x-auto`/`snap-x`) et « Ajouter » descend sur sa propre
+          ligne, pleine largeur. À partir de `sm`, la disposition d'origine
+          (onglets et bouton sur la même ligne, onglets pouvant passer à la
+          ligne) reprend telle quelle. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <Tabs value={tab} onValueChange={(next) => onTabChange(next as ApplicationTab)} className="w-full max-w-full sm:w-auto">
+          <TabsList className="scrollbar-none w-full flex-nowrap justify-start gap-1 overflow-x-auto snap-x snap-mandatory sm:w-auto sm:flex-wrap sm:justify-center sm:overflow-visible sm:snap-none">
             {APPLICATION_TAB_VALUES.map((value) => {
               const count = countFor(value);
               return (
-                <TabsTrigger key={value} value={value}>
+                <TabsTrigger key={value} value={value} className="shrink-0 snap-start sm:shrink sm:flex-1">
                   {APPLICATION_TAB_LABELS[value]}
                   {count === undefined ? (
                     <Skeleton data-slot="tab-count-skeleton" className="size-2 rounded-full" aria-hidden="true" />
@@ -114,7 +121,7 @@ export function ApplicationsFilters({
           </TabsList>
         </Tabs>
 
-        <AddApplicationButton onClick={onAdd} className="sm:ml-auto" />
+        <AddApplicationButton onClick={onAdd} className="w-full sm:ml-auto sm:w-auto" />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
