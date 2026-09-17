@@ -1,3 +1,4 @@
+export * from './applications';
 export * from './auth';
 export * from './cv-import';
 export * from './env';

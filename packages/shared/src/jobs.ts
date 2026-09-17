@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { JobApplicationRefDto } from './applications';
 import type { MatchScoreSummaryDto } from './matching';
 import { contractTypeSchema, experienceLevelSchema, remoteModeSchema } from './profile';
 
@@ -443,6 +444,8 @@ export interface JobDetailDto extends Omit<JobSummaryDto, 'skills' | 'sources'> 
   skills: JobSkillDto[];
   sources: JobSourceDto[];
   requirements: JobRequirementDto[];
+  /** Candidature de l'utilisateur pour cette offre, `null` si non suivie (tranche 6). */
+  application: JobApplicationRefDto | null;
 }
 
 export type SyncStatus = 'ok' | 'cached' | 'degraded' | 'not_configured';
