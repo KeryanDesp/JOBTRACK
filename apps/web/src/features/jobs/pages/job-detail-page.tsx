@@ -74,8 +74,6 @@ function NotFoundBlock() {
  * tâche) — visibles sans condition de largeur d'écran, donc déjà présents
  * sur mobile comme sur desktop, contrairement à la barre d'actions collante
  * de l'en-tête (dupliquée, elle, en CSS) que cette page ne modifie pas.
- * `/resume/letter/:jobId` n'a pas encore de route (tâche 8) : le lien existe
- * déjà (spec §7) et renverra vers « Page introuvable » jusque là.
  */
 function ResumeActionsRow({ jobId }: { jobId: string }) {
   return (

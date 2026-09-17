@@ -1,4 +1,4 @@
-import type { CoverLetterContent, CoverLetterTone } from '@jobtrack/shared';
+import type { CoverLetterContent, CoverLetterDto, CoverLetterTone } from '@jobtrack/shared';
 import { resumeFileName } from '@jobtrack/shared';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -13,6 +13,7 @@ import { useJob } from '@/features/jobs/hooks/use-jobs';
 import { ApiError } from '@/services/api/client';
 import { CoverLetterEditor } from '../components/cover-letter-editor';
 import { DownloadLetterPdfButton } from '../components/download-letter-pdf-button';
+import { LetterErrorAlert } from '../components/letter-error-alert';
 import { LetterPreview } from '../components/letter-preview';
 import { TonePicker } from '../components/tone-picker';
 import { useBaseResume, useCreateLetter, useDeleteLetter, useLetter, useUpdateLetter } from '../hooks/use-resume';
@@ -56,12 +57,9 @@ export function CoverLetterPage() {
   const baseResumeQuery = useBaseResume();
   const letterQuery = useLetter(letterId);
   const createLetter = useCreateLetter();
-  const updateLetter = useUpdateLetter(letterId);
   const deleteLetter = useDeleteLetter();
 
   const [tone, setTone] = useState<CoverLetterTone>(DEFAULT_TONE);
-  const [regenerateTone, setRegenerateTone] = useState<CoverLetterTone>(DEFAULT_TONE);
-  const [liveContent, setLiveContent] = useState<CoverLetterContent | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   if (jobQuery.isPending || baseResumeQuery.isPending) return <PageSkeleton />;
@@ -69,7 +67,14 @@ export function CoverLetterPage() {
   if (jobQuery.isError) {
     return (
       <div className="mx-auto max-w-5xl">
-        <ErrorState message={errorMessage(jobQuery.error, "Impossible de charger l'offre. Réessayez.")} onRetry={() => void jobQuery.refetch()} />
+        <NotFoundOrError
+          error={jobQuery.error}
+          onRetry={() => void jobQuery.refetch()}
+          notFoundMessage="Offre introuvable."
+          backHref="/resume"
+          backLabel="Retour à Mon CV"
+          fallbackMessage="Impossible de charger l'offre. Réessayez."
+        />
       </div>
     );
   }
@@ -124,62 +129,28 @@ export function CoverLetterPage() {
       {letterId !== '' && letterQuery.isPending && <PageSkeleton />}
 
       {letterId !== '' && letterQuery.isError && (
-        <NotFoundOrError error={letterQuery.error} onRetry={() => void letterQuery.refetch()} />
+        <NotFoundOrError
+          error={letterQuery.error}
+          onRetry={() => void letterQuery.refetch()}
+          notFoundMessage="Lettre introuvable."
+          backHref="/resume"
+          backLabel="Retour à Mon CV"
+          fallbackMessage="Impossible de charger cette lettre. Réessayez."
+        />
       )}
 
       {letterId !== '' && letterQuery.data && (
-        <>
-          <div className="grid gap-6 lg:grid-cols-2">
-            <CoverLetterEditor
-              key={`${letterQuery.data.id}-${letterQuery.data.updatedAt}`}
-              content={letterQuery.data.content}
-              tone={letterQuery.data.tone}
-              onChange={setLiveContent}
-              onSave={(content) => updateLetter.mutate({ content })}
-              isSaving={updateLetter.isPending}
-            />
-            <LetterPreview
-              content={liveContent ?? letterQuery.data.content}
-              senderName={senderName}
-              senderCity={senderCity}
-              company={job.company}
-              dateLine={dateLine}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <DownloadLetterPdfButton
-              content={liveContent ?? letterQuery.data.content}
-              senderName={senderName}
-              senderCity={senderCity}
-              company={job.company}
-              dateLine={dateLine}
-              fileName={resumeFileName('Lettre', baseResume.content.identity, job.company)}
-            />
-            <Button type="button" variant="outline" onClick={() => setConfirmDeleteOpen(true)}>
-              Supprimer
-            </Button>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Régénérer avec un autre ton</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <TonePicker value={regenerateTone} onChange={setRegenerateTone} disabled={createLetter.isPending} />
-              <Button type="button" variant="outline" onClick={() => handleGenerate(regenerateTone)} disabled={createLetter.isPending}>
-                {createLetter.isPending ? (
-                  <>
-                    <Loader2 className="animate-spin" aria-hidden="true" />
-                    Régénération…
-                  </>
-                ) : (
-                  'Régénérer'
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-        </>
+        <LetterWorkspace
+          key={letterQuery.data.id}
+          letter={letterQuery.data}
+          jobId={jobId}
+          company={job.company}
+          senderName={senderName}
+          senderCity={senderCity}
+          dateLine={dateLine}
+          fileName={resumeFileName('Lettre', baseResume.content.identity, job.company)}
+          onDeleteClick={() => setConfirmDeleteOpen(true)}
+        />
       )}
 
       <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
@@ -202,6 +173,107 @@ export function CoverLetterPage() {
   );
 }
 
+interface LetterWorkspaceProps {
+  letter: CoverLetterDto;
+  jobId: string;
+  company: string | null;
+  senderName: string;
+  senderCity: string | null;
+  dateLine: string;
+  fileName: string;
+  onDeleteClick: () => void;
+}
+
+/**
+ * Éditeur, aperçu, téléchargement et régénération d'une lettre déjà générée
+ * (spec §2/§4/§5/§7, tâche 8, revue) — remonté par le composant appelant via
+ * `key={letter.id}` à chaque changement de lettre (nouvelle lettre régénérée,
+ * navigation directe entre deux lettres). Ce remontage réinitialise
+ * naturellement `liveContent` (aperçu en temps réel) et `regenerateTone`
+ * (initialisé sur le ton de *cette* lettre) sans effet dédié ni flash de
+ * contenu obsolète : `letterQuery.data` de la nouvelle lettre est déjà en
+ * cache (posé par `useCreateLetter`/`useLetter`) au moment du remontage.
+ */
+function LetterWorkspace({ letter, jobId, company, senderName, senderCity, dateLine, fileName, onDeleteClick }: LetterWorkspaceProps) {
+  const navigate = useNavigate();
+  const updateLetter = useUpdateLetter(letter.id);
+  const createLetter = useCreateLetter();
+
+  const [liveContent, setLiveContent] = useState<CoverLetterContent | null>(null);
+  const [regenerateTone, setRegenerateTone] = useState<CoverLetterTone>(letter.tone);
+  const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
+
+  const displayContent = liveContent ?? letter.content;
+
+  function handleConfirmRegenerate(): void {
+    setConfirmRegenerateOpen(false);
+    createLetter.mutate(
+      { jobId, tone: regenerateTone },
+      { onSuccess: (created) => navigate(`?lettre=${created.id}`, { replace: true }) },
+    );
+  }
+
+  return (
+    <>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <CoverLetterEditor
+          key={letter.updatedAt}
+          content={letter.content}
+          tone={letter.tone}
+          onChange={setLiveContent}
+          onSave={(content) => updateLetter.mutate({ content })}
+          isSaving={updateLetter.isPending}
+        />
+        <LetterPreview content={displayContent} senderName={senderName} senderCity={senderCity} company={company} dateLine={dateLine} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <DownloadLetterPdfButton content={displayContent} senderName={senderName} senderCity={senderCity} company={company} dateLine={dateLine} fileName={fileName} />
+        <Button type="button" variant="outline" onClick={onDeleteClick}>
+          Supprimer
+        </Button>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Régénérer avec un autre ton</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <LetterErrorAlert error={createLetter.error} />
+          <TonePicker value={regenerateTone} onChange={setRegenerateTone} disabled={createLetter.isPending} />
+          <Button type="button" variant="outline" onClick={() => setConfirmRegenerateOpen(true)} disabled={createLetter.isPending}>
+            {createLetter.isPending ? (
+              <>
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                Régénération…
+              </>
+            ) : (
+              'Régénérer'
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmRegenerateOpen} onOpenChange={setConfirmRegenerateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Régénérer la lettre ?</DialogTitle>
+            <DialogDescription>Une nouvelle lettre sera créée. Celle-ci est conservée dans Mon CV.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmRegenerateOpen(false)}>
+              Annuler
+            </Button>
+            <Button type="button" onClick={handleConfirmRegenerate}>
+              Régénérer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 interface GenerationPanelProps {
   profileComplete: boolean;
   tone: CoverLetterTone;
@@ -218,7 +290,7 @@ interface GenerationPanelProps {
  * nécessite d'aller compléter le profil, les deux autres sont hors du
  * contrôle de l'utilisateur dans l'instant). Toute autre erreur reste
  * transitoire : le bloc de génération reste affiché, avec le message d'erreur
- * au-dessus.
+ * (`LetterErrorAlert`, partagé avec la carte « Régénérer », revue) au-dessus.
  */
 function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGenerating, error }: GenerationPanelProps) {
   if (!profileComplete) {
@@ -237,36 +309,8 @@ function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGe
 
   const code = error instanceof ApiError ? error.code : undefined;
 
-  if (code === 'AI_NOT_CONFIGURED') {
-    return (
-      <Alert>
-        <AlertCircle aria-hidden="true" />
-        <AlertTitle>Le service IA n&apos;est pas configuré.</AlertTitle>
-      </Alert>
-    );
-  }
-
-  if (code === 'PROFILE_INCOMPLETE') {
-    return (
-      <Alert>
-        <AlertCircle aria-hidden="true" />
-        <AlertTitle>Complétez votre profil pour générer une lettre.</AlertTitle>
-        <AlertDescription>
-          <Link to="/profile" className="text-primary underline-offset-4 hover:underline">
-            Compléter mon profil
-          </Link>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  if (code === 'RATE_LIMITED') {
-    return (
-      <Alert variant="destructive">
-        <AlertCircle aria-hidden="true" />
-        <AlertTitle>{error instanceof ApiError ? error.message : 'Trop de générations récentes. Réessayez plus tard.'}</AlertTitle>
-      </Alert>
-    );
+  if (code === 'AI_NOT_CONFIGURED' || code === 'PROFILE_INCOMPLETE' || code === 'RATE_LIMITED') {
+    return <LetterErrorAlert error={error} />;
   }
 
   return (
@@ -275,12 +319,7 @@ function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGe
         <CardTitle>Choisissez un ton</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {error !== undefined && error !== null && (
-          <Alert variant="destructive">
-            <AlertCircle aria-hidden="true" />
-            <AlertTitle>{error instanceof ApiError ? error.message : 'Une erreur est survenue. Veuillez réessayer.'}</AlertTitle>
-          </Alert>
-        )}
+        <LetterErrorAlert error={error} />
         <TonePicker value={tone} onChange={onToneChange} disabled={isGenerating} />
         <Button type="button" onClick={onGenerate} disabled={isGenerating}>
           {isGenerating ? (
@@ -297,18 +336,29 @@ function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGe
   );
 }
 
-/** 404 (« lettre introuvable », lien de retour) ou toute autre erreur (message + « Réessayer »). */
-function NotFoundOrError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+interface NotFoundOrErrorProps {
+  error: unknown;
+  onRetry: () => void;
+  /** Affiché à la place d'`ErrorState` (sans « Réessayer », inutile pour un 404) quand `error` en est un. */
+  notFoundMessage: string;
+  backHref: string;
+  backLabel: string;
+  /** Message générique d'`ErrorState` si `error` ne porte pas de message lisible (pas un `ApiError`). */
+  fallbackMessage: string;
+}
+
+/** 404 (message dédié, lien de retour, sans « Réessayer ») ou toute autre erreur (message + « Réessayer »). */
+function NotFoundOrError({ error, onRetry, notFoundMessage, backHref, backLabel, fallbackMessage }: NotFoundOrErrorProps) {
   const notFound = error instanceof ApiError && error.status === 404;
   if (notFound) {
     return (
       <div className="space-y-4 py-16 text-center">
-        <p className="text-base font-medium">Lettre introuvable.</p>
-        <Link to="/resume" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
-          Retour à Mon CV
+        <p className="text-base font-medium">{notFoundMessage}</p>
+        <Link to={backHref} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+          {backLabel}
         </Link>
       </div>
     );
   }
-  return <ErrorState message={errorMessage(error, 'Impossible de charger cette lettre. Réessayez.')} onRetry={onRetry} />;
+  return <ErrorState message={errorMessage(error, fallbackMessage)} onRetry={onRetry} />;
 }

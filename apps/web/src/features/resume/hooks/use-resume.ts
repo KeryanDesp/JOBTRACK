@@ -57,7 +57,10 @@ export function useBaseResume() {
  * `PATCH /resume/template` (spec §2/§6 : sélecteur de modèle mémorisé) : le
  * choix s'applique immédiatement au CV principal en cache, avant la réponse
  * serveur (aucune raison d'attendre pour un simple changement de présentation) ;
- * un échec restaure la valeur précédente et informe l'utilisateur.
+ * un échec restaure la valeur précédente et informe l'utilisateur. Au succès,
+ * la réponse (déjà le `BaseResumeDto` complet) remplace directement le cache
+ * — pas d'`invalidateQueries` ici, qui referait un aller-retour réseau inutile
+ * pour des données que la réponse porte déjà (profil + les six collections).
  */
 export function useResumeTemplate() {
   const queryClient = useQueryClient();
@@ -72,12 +75,12 @@ export function useResumeTemplate() {
       }
       return { previous };
     },
+    onSuccess: (data) => {
+      queryClient.setQueryData(resumeKeys.base, data);
+    },
     onError: (error, _input, context) => {
       if (context?.previous) queryClient.setQueryData(resumeKeys.base, context.previous);
       toast.error(errorMessage(error, 'La mise à jour du modèle a échoué.'));
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: resumeKeys.base });
     },
   });
 }

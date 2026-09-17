@@ -23,7 +23,6 @@ const styles = StyleSheet.create({
   paragraph: { fontSize: 11, lineHeight: 1.5, marginBottom: 12, color: '#262626' },
   closing: { fontSize: 11, marginTop: 12 },
   signature: { fontSize: 11, fontFamily: 'Times-Bold', marginTop: 6 },
-  footer: { position: 'absolute', bottom: 20, left: 0, right: 0, textAlign: 'center', fontSize: 8, color: '#a3a3a3' },
 });
 
 export function Pdf({ content, senderName, senderCity, company, dateLine }: LetterDocumentProps) {
@@ -58,8 +57,6 @@ export function Pdf({ content, senderName, senderCity, company, dateLine }: Lett
 
         <Text style={styles.closing}>{content.closing}</Text>
         <Text style={styles.signature}>{content.signature}</Text>
-
-        <Text style={styles.footer} fixed render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
       </Page>
     </Document>
   );

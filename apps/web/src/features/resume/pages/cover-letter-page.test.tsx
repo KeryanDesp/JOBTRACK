@@ -229,10 +229,7 @@ describe('CoverLetterPage — lettre existante', () => {
     await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
 
     await waitFor(() =>
-      expect(updateLetter).toHaveBeenCalledWith(
-        'letter-1',
-        expect.objectContaining({ content: expect.objectContaining({ subject: 'Nouvel objet' }) }),
-      ),
+      expect(updateLetter).toHaveBeenCalledWith('letter-1', { content: { ...makeLetter().content, subject: 'Nouvel objet' } }),
     );
   });
 
@@ -284,5 +281,113 @@ describe('CoverLetterPage — lettre existante', () => {
 
     await waitFor(() => expect(deleteLetter).toHaveBeenCalledWith('letter-1'));
     expect(await screen.findByText('Page Mon CV')).toBeInTheDocument();
+  });
+
+  it('desactive Enregistrer a nouveau apres un enregistrement reussi', async () => {
+    fetchJob.mockResolvedValue(makeJob());
+    fetchBaseResume.mockResolvedValue(makeBaseResume());
+    fetchLetter.mockResolvedValue(makeLetter());
+    updateLetter.mockResolvedValue(
+      makeLetter({ updatedAt: '2026-09-02T00:00:00.000Z', content: { ...makeLetter().content, subject: 'Nouvel objet' } }),
+    );
+
+    const user = userEvent.setup();
+    renderPage('?lettre=letter-1');
+
+    const subjectInput = await screen.findByLabelText('Objet');
+    const saveButton = screen.getByRole('button', { name: 'Enregistrer' });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(subjectInput);
+    await user.type(subjectInput, 'Nouvel objet');
+    expect(screen.getByRole('button', { name: 'Enregistrer' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+
+    await waitFor(() => expect(updateLetter).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Enregistrer' })).toBeDisabled());
+  });
+
+  it('ajoute et retire des paragraphes avec un plafond de 6', async () => {
+    fetchJob.mockResolvedValue(makeJob());
+    fetchBaseResume.mockResolvedValue(makeBaseResume());
+    fetchLetter.mockResolvedValue(makeLetter());
+
+    const user = userEvent.setup();
+    renderPage('?lettre=letter-1');
+
+    await screen.findByLabelText('Objet');
+    const addButton = screen.getByRole('button', { name: 'Ajouter un paragraphe' });
+
+    for (let index = 0; index < 5; index += 1) {
+      await user.click(addButton);
+    }
+
+    expect(screen.getAllByLabelText(/^Paragraphe \d$/)).toHaveLength(6);
+    expect(addButton).toBeDisabled();
+
+    const [firstRemoveButton] = screen.getAllByRole('button', { name: /^Retirer le paragraphe/ });
+    if (!firstRemoveButton) throw new Error('Bouton "Retirer le paragraphe" introuvable.');
+    await user.click(firstRemoveButton);
+
+    expect(screen.getAllByLabelText(/^Paragraphe \d$/)).toHaveLength(5);
+    expect(addButton).toBeEnabled();
+  });
+});
+
+describe('CoverLetterPage — regeneration', () => {
+  it("demande confirmation avant de regenerer, cree une nouvelle lettre et affiche son objet", async () => {
+    fetchJob.mockResolvedValue(makeJob());
+    fetchBaseResume.mockResolvedValue(makeBaseResume());
+    const newLetter = makeLetter({
+      id: 'letter-2',
+      tone: 'SHORT',
+      content: { ...makeLetter().content, subject: 'Nouvelle candidature' },
+    });
+    fetchLetter.mockImplementation((id: string) => Promise.resolve(id === 'letter-2' ? newLetter : makeLetter()));
+    createLetter.mockResolvedValue(newLetter);
+
+    const user = userEvent.setup();
+    renderPage('?lettre=letter-1');
+
+    expect(await screen.findByLabelText('Objet')).toHaveValue('Candidature — Développeuse React');
+
+    await user.click(screen.getByRole('radio', { name: /courte/i }));
+    await user.click(screen.getByRole('button', { name: 'Régénérer' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Une nouvelle lettre sera créée. Celle-ci est conservée dans Mon CV.')).toBeInTheDocument();
+    expect(createLetter).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Régénérer' }));
+
+    await waitFor(() => expect(createLetter).toHaveBeenCalledWith({ jobId: 'job-1', tone: 'SHORT' }));
+    expect(await screen.findByLabelText('Objet')).toHaveValue('Nouvelle candidature');
+    expect(screen.getByText('Objet : Nouvelle candidature')).toBeInTheDocument();
+  });
+});
+
+describe('CoverLetterPage — erreurs de chargement', () => {
+  it('affiche lettre introuvable (sans bouton reessayer) sur un 404', async () => {
+    fetchJob.mockResolvedValue(makeJob());
+    fetchBaseResume.mockResolvedValue(makeBaseResume());
+    fetchLetter.mockRejectedValue(new ApiError('Lettre introuvable.', 404, 'NOT_FOUND'));
+
+    renderPage('?lettre=letter-1');
+
+    expect(await screen.findByText('Lettre introuvable.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Retour à Mon CV' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).not.toBeInTheDocument();
+  });
+
+  it('affiche offre introuvable (sans bouton reessayer) sur un 404 de l offre', async () => {
+    fetchJob.mockRejectedValue(new ApiError('Offre introuvable.', 404, 'NOT_FOUND'));
+    fetchBaseResume.mockResolvedValue(makeBaseResume());
+
+    renderPage();
+
+    expect(await screen.findByText('Offre introuvable.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Retour à Mon CV' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).not.toBeInTheDocument();
   });
 });

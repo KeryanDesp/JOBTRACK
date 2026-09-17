@@ -12,11 +12,7 @@ export function Preview({ content, senderName, senderCity, company, dateLine }: 
   const hasRecipientBlock = Boolean(content.recipient) || Boolean(company);
 
   return (
-    <div
-      aria-label="Aperçu de la lettre de motivation, page 1"
-      className="w-[210mm] min-h-[297mm] bg-white p-[20mm] font-serif text-neutral-900"
-      style={{ colorScheme: 'light' }}
-    >
+    <div className="w-[210mm] min-h-[297mm] bg-white p-[20mm] font-serif text-neutral-900" style={{ colorScheme: 'light' }}>
       <header className="mb-10 flex items-start justify-between gap-6 text-sm text-neutral-800">
         <div>
           <p>{senderName}</p>
@@ -45,7 +41,7 @@ export function Preview({ content, senderName, senderCity, company, dateLine }: 
       </div>
 
       <p className="mt-6 text-sm text-neutral-900">{content.closing}</p>
-      <p className="mt-2 text-sm font-medium text-neutral-900">{content.signature}</p>
+      <p className="mt-2 text-sm font-semibold text-neutral-900">{content.signature}</p>
     </div>
   );
 }

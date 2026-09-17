@@ -645,7 +645,7 @@ export const coverLetterContentSchema = z
     recipient: z.string().trim().max(120).nullable(),
     subject: z.string().trim().min(1, 'Ce champ est obligatoire.').max(160),
     greeting: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
-    paragraphs: z.array(z.string().trim().min(1).max(900)).min(1).max(6),
+    paragraphs: z.array(z.string().trim().min(1, 'Le paragraphe ne peut pas être vide.').max(900, 'Maximum 900 caractères.')).min(1).max(6),
     closing: z.string().trim().min(1, 'Ce champ est obligatoire.').max(160),
     signature: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
   })
