@@ -145,6 +145,20 @@ Vérifié par le coordinateur sur une offre semée : en-tête, badges, descripti
 ### Task 10 — amendement après exécution (`4642110`)
 `apps/web/e2e/jobs.spec.ts` : état du connecteur piloté par `GET /jobs/capabilities`, navigation sans « Bientôt », recherche → URL (`q`, `tri`), filtres mobile (`Sheet`), favoris vide puis sauvegarde/retrait si des offres existent, détail introuvable. Playwright 16 → 26 (25 + 1 ignoré par conception sur desktop). Piège : le compteur d'inscriptions (20/h/IP) est partagé avec les exécutions concurrentes — à remettre à zéro dans la Redis de dev avant une exécution complète.
 
+### Revue finale de branche et recette (2026-09-17)
+Revue finale : **non fusionnable** au premier passage — deux critiques dans les scripts de développement ajoutés par le coordinateur (`unseed` supprimait tout `Job` sans source, favoris réels compris par cascade ; aucun garde-fou contre une base de production) et onze importants — tous corrigés (`62e44b1` api, `c5f31cd` web, `7b0eafc` e2e). API : purge bornée aux offres dont toutes les sources sont `FT-`, garde `NODE_ENV`/hôte local (`JOBS_SEED_CONFIRM=1` sinon), `contractNature`/`romeCode` nettoyés et codes INSEE/postaux validés, chaînes des schémas tolérants tronquées (20 000 / 2 000 / 200), index de tri **réellement utilisables** (partiels `WHERE "expiredAt" IS NULL`, `DESC NULLS LAST`, `text_pattern_ops` sur les communes — noms distincts des index Prisma, `migrate diff` sans écart), `resolveByName` supprimé, entreprises du connecteur factice préfixées (plus de rattachement aux offres semées), `SourceOffer<TRaw>` générique. Web : une erreur de rafraîchissement (429) garde la liste et affiche le message serveur en alerte ; onglets désactivés portés par `TabsTrigger` (`aria-disabled`, plus d'imbrication interactive) ; combobox « Lieux » nommée ; rayon des préférences borné et aligné sur les options ; sources groupées par type ; `useJobsCapabilities` câblé (bannière immédiate) ; `Sheet` mobile défilant et `Popover` modaux ; `JOB_NOT_FOUND` à la sauvegarde ; salaire borné ; libellé « Code INSEE … » ; liens de pagination réels. Reporté : « déplacements » sans champ ; ordre de l'enum `INTERIM` (migration vs schéma) ; index `Job_lastSeenAt` inutilisé ; CSP sur Vercel.
+
+Recette des critères (spec §11), par le coordinateur :
+1. **En attente** — recherche réelle : `FRANCE_TRAVAIL_CLIENT_ID/SECRET` absents de `.env` ; mécanisme prouvé par connecteur factice (synchro, cache 15 min, `refresh` limité) en e2e.
+2. **OK** — sans identifiants : bannière « Connecteur non configuré », liste servie depuis la base, toutes les suites vertes sans réseau.
+3. **OK** — empreinte entreprise|titre|commune : deux annonces → un `Job`, deux sources ; mise à jour conditionnelle sans doublon (unitaires + e2e).
+4. **OK** — vérifié dans le navigateur sur 13 offres semées : filtres, tri, onglet « Nouvelles », préférences reprises dans l'URL, rechargement conservant la recherche ; pagination en e2e.
+5. **OK** — détail en texte brut, compétences exigées/souhaitées, offre retirée signalée (e2e), sauvegarde optimiste et idempotente, isolation par utilisateur (e2e), `/favorites` liste et retire (vérifié visuellement).
+6. **OK** — panne/429 France Travail → `degraded` + cache (e2e), jamais de 500 ; journaux sans secret ni contenu ; côté web une erreur de rafraîchissement ne vide plus la liste.
+7. **OK** — shared 141, api 363 unitaires + 115 e2e, web 210 + 26 Playwright (25 + 1 ignoré par conception) ; lint, typecheck et build 4/4 ; aucun `any` ; états chargement/vide/erreur/mobile/sombre sur les trois écrans.
+
+Note de clôture : 10/10 tâches, chaque tâche revue (deux revues sécurité : client et module API) et corrigée ; vérification visuelle de chaque chemin d'écriture par le coordinateur sur données semées. Déploiement : le web est en ligne sur Vercel (`jobtrack-two-gray.vercel.app`, production = `main`) ; l'API reste à héberger (proxy `/api` prévu dans `vercel.json`). À valider par l'utilisateur : ingestion à la demande (15 min), 3 lieux et 6 appels par synchronisation, 8 appels/s, télétravail déduit du texte, favoris dans cette tranche.
+
 ---
 
 ## Limites assumées
