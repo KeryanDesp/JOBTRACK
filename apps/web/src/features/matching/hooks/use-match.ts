@@ -1,6 +1,7 @@
-import type { AnalyzeJobsResponseDto, JobListResponseDto, MatchScoreDto } from '@jobtrack/shared';
+import type { AnalyzeJobsResponseDto, JobListResponseDto, JobSummaryDto } from '@jobtrack/shared';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { ApiError } from '@/services/api/client';
 import { analyzeJobs, fetchJobMatch, retryJobAnalysis } from '@/services/api/matching';
 import { matchKeys } from '../lib/query-keys';
 
@@ -9,31 +10,115 @@ import { matchKeys } from '../lib/query-keys';
 // connaître les paramètres de chacune (même principe que `use-jobs.ts`).
 const SEARCH_PREFIX = ['jobs', 'search'] as const;
 
+/** Deux scores sommaires sont égaux champ à champ (jamais par référence : chaque réponse serveur crée de nouveaux objets). */
+function sameMatch(a: JobSummaryDto['match'], b: JobSummaryDto['match']): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return (
+    a.score === b.score &&
+    a.band === b.band &&
+    a.priority === b.priority &&
+    a.explanation.top.length === b.explanation.top.length &&
+    a.explanation.weak.length === b.explanation.weak.length &&
+    a.explanation.top.every((line, index) => line === b.explanation.top[index]) &&
+    a.explanation.weak.every((line, index) => line === b.explanation.weak[index])
+  );
+}
+
+/**
+ * Applique les scores d'une réponse `POST /jobs/analyses` à une liste en
+ * cache : seules les offres explicitement présentes dans `scores` sont
+ * touchées (`Object.hasOwn`, pas `??`) — une offre absente de la réponse
+ * (hors de la page analysée) garde son score précédent, tandis qu'une offre
+ * présente avec un score `null` (données insuffisantes, profil incomplet…)
+ * voit bien son `match` remis à `null` plutôt que de garder un ancien score
+ * périmé. Les références sont préservées quand rien ne change (offre non
+ * concernée ou score identique) : les cartes non concernées (`memo`,
+ * `job-card.tsx`) ne se re-rendent pas.
+ */
+function mergeScoresIntoList(list: JobListResponseDto, scores: AnalyzeJobsResponseDto['scores']): JobListResponseDto {
+  let changed = false;
+  const items = list.items.map((item) => {
+    if (!Object.hasOwn(scores, item.id)) return item;
+    const nextMatch = scores[item.id] ?? null;
+    if (sameMatch(item.match, nextMatch)) return item;
+    changed = true;
+    return { ...item, match: nextMatch };
+  });
+  return changed ? { ...list, items } : list;
+}
+
 /**
  * Répercute la réponse de `POST /jobs/analyses` dans le cache TanStack Query :
- * chaque liste de recherche en cache reçoit le score à jour pour les offres
- * concernées (`item.match = scores[id] ?? item.match`, une offre absente de la
- * réponse ou dont le score est encore `null` garde son état précédent), et le
- * score détaillé déjà en cache (`matchKeys.detail`) reçoit les mêmes champs
- * sommaires — les champs propres au détail (facteurs, statut d'analyse...)
- * restent ceux déjà en cache jusqu'au prochain `GET /jobs/:id/match`.
+ * les listes de recherche reçoivent les scores sommaires (`mergeScoresIntoList`),
+ * et le score détaillé déjà en cache (`matchKeys.detail`) est **invalidé**
+ * plutôt que fusionné pour chaque offre analysée — la réponse ne porte que le
+ * résumé (score/bande/priorité/explication), jamais les facteurs ni le statut
+ * d'analyse détaillé ; les y fusionner laisserait `factors`/`analysis.status`
+ * périmés en cache jusqu'au prochain `GET` explicite.
  */
-function mergeAnalyzeScoresIntoCache(queryClient: QueryClient, scores: AnalyzeJobsResponseDto['scores']): void {
-  queryClient.setQueriesData<JobListResponseDto>({ queryKey: SEARCH_PREFIX }, (old) => {
-    if (!old) return old;
-    return {
-      ...old,
-      items: old.items.map((item) => ({ ...item, match: scores[item.id] ?? item.match })),
-    };
-  });
+function applyAnalyzeScores(queryClient: QueryClient, scores: AnalyzeJobsResponseDto['scores']): void {
+  queryClient.setQueriesData<JobListResponseDto>({ queryKey: SEARCH_PREFIX }, (old) => (old ? mergeScoresIntoList(old, scores) : old));
 
-  for (const [jobId, score] of Object.entries(scores)) {
-    if (!score) continue;
-    queryClient.setQueryData<MatchScoreDto>(matchKeys.detail(jobId), (old) => (old ? { ...old, ...score } : old));
+  for (const jobId of Object.keys(scores)) {
+    void queryClient.invalidateQueries({ queryKey: matchKeys.detail(jobId) });
   }
 }
 
-/** `GET /jobs/:id/match` : score détaillé, recalculé côté serveur si l'empreinte du profil a changé. */
+function isRateLimited(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429;
+}
+
+function isAiNotConfigured(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'AI_NOT_CONFIGURED';
+}
+
+/** Réponse synthétique quand l'IA n'est pas configurée (spec §2/§6) : jamais une erreur, un état à afficher. */
+const NOT_CONFIGURED_RESPONSE: AnalyzeJobsResponseDto = {
+  analyzed: 0,
+  pending: 0,
+  failed: 0,
+  notConfigured: true,
+  profileComplete: true,
+  scores: {},
+};
+
+const RETRY_DELAY_MS = 4_000;
+
+/**
+ * `POST /jobs/analyses`, robuste (spec §6, revue) : `AI_NOT_CONFIGURED` (503)
+ * n'est jamais une erreur côté appelant — il devient une réponse normale avec
+ * `notConfigured: true`, pour que ni `useAnalyzeJobs` ni `useAnalysisPolling`
+ * n'affichent de message d'erreur générique à la place du bandeau dédié. Un
+ * 429 (`RATE_LIMITED`) est définitif pour cet appel : aucun réessai n'aurait
+ * de sens avant l'expiration du seau. Toute autre panne (réseau, 500…) est
+ * transitoire : un seul réessai après 4 s, puis abandon — jamais de boucle de
+ * réessais indéfinie qui masquerait une vraie panne prolongée.
+ */
+async function runAnalyzeJobs(jobIds: string[]): Promise<AnalyzeJobsResponseDto> {
+  try {
+    return await analyzeJobs(jobIds);
+  } catch (error) {
+    if (isAiNotConfigured(error)) return NOT_CONFIGURED_RESPONSE;
+    if (isRateLimited(error)) throw error;
+
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    try {
+      return await analyzeJobs(jobIds);
+    } catch (retryError) {
+      if (isAiNotConfigured(retryError)) return NOT_CONFIGURED_RESPONSE;
+      throw retryError;
+    }
+  }
+}
+
+/**
+ * `GET /jobs/:id/match` : score détaillé, recalculé côté serveur si l'empreinte
+ * du profil a changé. `refetchInterval` reprend la main tant que le serveur
+ * indique une analyse encore en cours (`analysis.status === 'pending'`,
+ * typiquement juste après un déclenchement par un autre onglet/utilisateur) :
+ * le panneau de détail se met à jour tout seul sans action de l'appelant.
+ */
 export function useJobMatch(id: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: matchKeys.detail(id),
@@ -43,24 +128,29 @@ export function useJobMatch(id: string, options: { enabled?: boolean } = {}) {
     // temps réel : une minute évite une revalidation à chaque focus de fenêtre
     // pendant qu'un panneau de détail reste ouvert.
     staleTime: 60_000,
+    refetchInterval: (query) => (query.state.data?.analysis.status === 'pending' ? 2_000 : false),
   });
 }
 
 /**
  * `POST /jobs/analyses` (spec §2/§6) : lance l'analyse des offres manquantes et
- * calcule les scores, puis répercute la réponse dans tout le cache concerné
- * (`mergeAnalyzeScoresIntoCache`). Expose un état dérivé de la dernière réponse
- * plutôt que le seul statut de la mutation : `pending`/`notConfigured`/
- * `profileComplete` pilotent l'affichage (bannière IA non configurée, profil
- * incomplet) sans que l'appelant ait à relire `mutation.data` lui-même.
+ * calcule les scores, puis répercute la réponse dans le cache (`applyAnalyzeScores`).
+ * `pending` retombe à `0` sur une erreur (`mutation.isError`) plutôt que de
+ * garder la dernière valeur connue de `mutation.data` : sans ce garde-fou, une
+ * bannière de progression resterait affichée indéfiniment après un échec.
+ *
+ * `analyzeAsync` (en plus de `analyze`) est conservé pour `features/jobs`
+ * (`jobs-page.tsx`, `job-detail-page.tsx`) : ces pages enchaînent une action
+ * (tri par défaut, relecture du score détaillé) une fois l'analyse terminée,
+ * ce que `mutate` (fire-and-forget) ne permet pas.
  */
 export function useAnalyzeJobs() {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
-    mutationFn: (jobIds: string[]) => analyzeJobs(jobIds),
+    mutationFn: (jobIds: string[]) => runAnalyzeJobs(jobIds),
     onSuccess: (data) => {
-      mergeAnalyzeScoresIntoCache(queryClient, data.scores);
+      applyAnalyzeScores(queryClient, data.scores);
     },
   });
 
@@ -68,7 +158,7 @@ export function useAnalyzeJobs() {
     analyze: (jobIds: string[]) => mutation.mutate(jobIds),
     analyzeAsync: (jobIds: string[]) => mutation.mutateAsync(jobIds),
     isAnalyzing: mutation.isPending,
-    pending: mutation.data?.pending ?? 0,
+    pending: mutation.isError ? 0 : (mutation.data?.pending ?? 0),
     notConfigured: mutation.data?.notConfigured ?? false,
     profileComplete: mutation.data?.profileComplete ?? true,
     error: mutation.error,
@@ -97,11 +187,14 @@ const IDLE_STATE: AnalysisPollingState = {
 /**
  * Interroge `POST /jobs/analyses` toutes les 2 s tant que la dernière réponse
  * portait `pending > 0`, pendant 60 s au plus (spec §2/§7 : l'analyse tourne
- * côté serveur, le client se contente de revenir la constater). Un budget de
- * temps écoulé plutôt qu'un nombre d'essais fixe : l'intervalle est constant
- * (2 s) donc les deux se valent ici, mais un budget de temps reste correct si
- * l'intervalle change un jour. Le sondage s'arrête si le composant appelant
- * est démonté (nettoyage de l'effet) ou si la liste d'identifiants est vide.
+ * côté serveur, le client se contente de revenir la constater). `runAnalyzeJobs`
+ * porte déjà la résilience par appel (503 → état, 429 → abandon immédiat,
+ * panne transitoire → un réessai après 4 s) : cette boucle n'a donc qu'à
+ * réagir au résultat final de chaque tour — sur une erreur qui en ressort
+ * malgré tout (429, ou panne toujours là après le réessai), `pending` retombe
+ * à `0` et le sondage s'arrête, jamais de programmation d'un tour de plus. Le
+ * sondage s'arrête aussi si le composant appelant est démonté (nettoyage de
+ * l'effet) ou si la liste d'identifiants est vide.
  */
 export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
   const queryClient = useQueryClient();
@@ -109,10 +202,16 @@ export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
   // La liste change de référence à chaque rendu du composant appelant (souvent
   // `.map(...).filter(...)` en ligne) : une clé stable (identifiants triés,
   // joints) évite de relancer le sondage à chaque rendu alors que le contenu
-  // n'a pas changé.
+  // n'a pas changé. `jobIdsRef` porte la liste réelle à utiliser par l'effet
+  // de sondage ; elle est tenue à jour par un effet séparé plutôt que pendant
+  // le rendu (une écriture de ref pendant le rendu est un effet de bord que
+  // React ne garantit pas de n'exécuter qu'une fois, notamment en mode strict).
   const jobIdsKey = [...jobIds].sort().join(',');
-  const jobIdsRef = useRef(jobIds);
-  jobIdsRef.current = jobIds;
+  const jobIdsRef = useRef<string[]>(jobIds);
+
+  useEffect(() => {
+    jobIdsRef.current = jobIds;
+  }, [jobIds]);
 
   useEffect(() => {
     const ids = jobIdsRef.current;
@@ -128,9 +227,9 @@ export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
     async function poll(): Promise<void> {
       setState((previous) => ({ ...previous, isAnalyzing: true }));
       try {
-        const response = await analyzeJobs(ids);
+        const response = await runAnalyzeJobs(ids);
         if (cancelled) return;
-        mergeAnalyzeScoresIntoCache(queryClient, response.scores);
+        applyAnalyzeScores(queryClient, response.scores);
         setState({
           isAnalyzing: false,
           pending: response.pending,
@@ -147,6 +246,7 @@ export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
         setState((previous) => ({
           ...previous,
           isAnalyzing: false,
+          pending: 0,
           error: error instanceof Error ? error : new Error('Une erreur est survenue. Veuillez réessayer.'),
         }));
       }
@@ -158,9 +258,6 @@ export function useAnalysisPolling(jobIds: string[]): AnalysisPollingState {
       cancelled = true;
       clearTimeout(timer);
     };
-    // Dépendances volontairement limitées à `jobIdsKey` (contenu stable) et
-    // `queryClient` : `jobIdsRef.current`, lu au déclenchement de l'effet,
-    // porte la liste réelle sans provoquer un nouveau sondage à chaque rendu.
   }, [jobIdsKey, queryClient]);
 
   return state;

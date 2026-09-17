@@ -60,13 +60,15 @@ describe('fetchJobMatch', () => {
 });
 
 describe('retryJobAnalysis', () => {
-  it('poste sur /jobs/:id/analyses/retry avec la methode POST', async () => {
-    const fetchMock = stubFetch({}, 202);
+  it('poste sur /jobs/:id/analyses/retry et resout sans corps sur un 202 vide', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
 
-    await retryJobAnalysis('job-1');
+    const result = await retryJobAnalysis('job-1');
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url.endsWith('/jobs/job-1/analyses/retry')).toBe(true);
     expect(init.method).toBe('POST');
+    expect(result).toBeUndefined();
   });
 });

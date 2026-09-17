@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
+import { cn } from '@/lib/utils';
 import { ApiError } from '@/services/api/client';
 import { bandTone, formatScore, recommendationFor } from '../lib/format';
 import { IncompleteProfileNotice } from './incomplete-profile-notice';
@@ -45,10 +46,12 @@ function MatchPanelSkeleton() {
  * viennent du moteur de score (`MatchScoreDto`) — jamais composées ici.
  *
  * États gérés dans l'ordre : squelette (`isPending`) ; erreur réseau
- * (`error`) ; statut d'analyse (`none`/`pending`/`failed`/`ai_not_configured`) ;
- * profil incomplet (`profileComplete`) ; rendu complet, avec un bandeau
- * supplémentaire si `insufficientData` (les facteurs déjà évalués restent
- * affichés).
+ * (`error`) ; profil incomplet (`profileComplete`, avant même de proposer
+ * « Analyser cette offre » — sans compétence ni expérience dans le profil, le
+ * score ne sera de toute façon pas calculable une fois l'offre analysée) ;
+ * statut d'analyse (`none`/`pending`/`failed`/`ai_not_configured`) ; rendu
+ * complet, avec un bandeau supplémentaire si `insufficientData` (les facteurs
+ * déjà évalués restent affichés).
  */
 export function MatchPanel({ match, isPending, error, onAnalyze, onRetry, isAnalyzing }: MatchPanelProps) {
   if (isPending) return <MatchPanelSkeleton />;
@@ -59,6 +62,10 @@ export function MatchPanel({ match, isPending, error, onAnalyze, onRetry, isAnal
   }
 
   if (!match) return null;
+
+  if (!match.profileComplete) {
+    return <IncompleteProfileNotice />;
+  }
 
   if (match.analysis.status === 'none') {
     return (
@@ -117,10 +124,6 @@ export function MatchPanel({ match, isPending, error, onAnalyze, onRetry, isAnal
     );
   }
 
-  if (!match.profileComplete) {
-    return <IncompleteProfileNotice />;
-  }
-
   const tone = bandTone(match.band);
   const skillsFactor = match.factors.find((factor) => factor.key === 'skills');
   const matchingSkills = skillsFactor ? skillsFactor.evidence.filter((entry) => entry.kind === 'ok') : [];
@@ -140,7 +143,7 @@ export function MatchPanel({ match, isPending, error, onAnalyze, onRetry, isAnal
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className={`text-lg font-semibold ${tone.text}`}>
+        <h3 className={cn('text-lg font-semibold', tone.text)}>
           {match.band ? MATCH_BAND_LABELS[match.band] : 'Correspondance non évaluée'}
           {match.score !== null && ` · ${formatScore(match.score)}`}
         </h3>

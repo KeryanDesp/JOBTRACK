@@ -112,6 +112,13 @@ describe('MatchPanel', () => {
     expect(screen.getByText('Complétez vos compétences et expériences pour obtenir un score fiable.')).toBeInTheDocument();
   });
 
+  it('priorise le bandeau profil incomplet sur le bouton analyser cette offre', () => {
+    renderPanel({ match: makeMatch({ profileComplete: false, analysis: { status: 'none', error: null } }) });
+
+    expect(screen.getByText('Complétez vos compétences et expériences pour obtenir un score fiable.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Analyser cette offre' })).not.toBeInTheDocument();
+  });
+
   it('affiche une alerte donnees insuffisantes tout en listant les facteurs evalues', () => {
     renderPanel({
       match: makeMatch({

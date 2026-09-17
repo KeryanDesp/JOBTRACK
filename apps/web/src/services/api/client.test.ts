@@ -135,6 +135,18 @@ describe('apiRequest', () => {
     });
   });
 
+  it('resout avec undefined sur un corps vide, quel que soit le statut de succes (202)', async () => {
+    stubFetch(new Response(null, { status: 202 }));
+
+    await expect(apiRequest('/jobs/job-1/analyses/retry', { method: 'POST' })).resolves.toBeUndefined();
+  });
+
+  it('resout avec undefined sur un 205 sans corps', async () => {
+    stubFetch(new Response(null, { status: 205 }));
+
+    await expect(apiRequest('/health')).resolves.toBeUndefined();
+  });
+
   it('ignore un cookie csrf absent', async () => {
     document.cookie = 'jt_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));

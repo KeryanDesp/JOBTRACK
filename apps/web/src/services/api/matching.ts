@@ -12,7 +12,9 @@ export function analyzeJobs(jobIds: string[]): Promise<AnalyzeJobsResponseDto> {
 /** `GET /jobs/:id/match` : score détaillé (facteurs, explications, statut d'analyse). */
 export const fetchJobMatch = (id: string) => apiRequest<MatchScoreDto>(`/jobs/${id}/match`);
 
-// `apiRequest` ne traite que le 204 comme « sans corps » (voir `client.ts`) : un
-// 202 est donc décodé en JSON comme toute autre réponse (`{}` ou un corps minimal
-// selon l'implémentation serveur), jamais supposé vide ici.
-export const retryJobAnalysis = (id: string) => apiRequest<void>(`/jobs/${id}/analyses/retry`, { method: 'POST' });
+// `apiRequest` (voir `client.ts`) est désormais agnostique au corps : un 202
+// sans corps résout à `undefined` comme un 204, sans dépendre du statut exact
+// choisi par l'implémentation serveur.
+export function retryJobAnalysis(id: string): Promise<void> {
+  return apiRequest<void>(`/jobs/${id}/analyses/retry`, { method: 'POST' });
+}
