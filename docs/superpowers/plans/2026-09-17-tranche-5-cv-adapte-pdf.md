@@ -131,3 +131,8 @@ Exercé dans le navigateur intégré, sans clé IA : `/resume` (CV de base Class
 | Pagination de l'aperçu HTML approximative | Le PDF fait foi ; l'aperçu indique « aperçu » |
 | PDF côté client uniquement | Archivage serveur en T6 |
 | Deux modèles | Personnalisation reportée |
+| Aperçu A4 non réduit à l'échelle sur mobile (défilement horizontal dans son cadre) | Aperçu mis à l'échelle en T6+ ; le PDF fait foi |
+| Libellé d'expérience brut de France Travail (« 2 An(s) ») affiché tel quel à l'étape 1 | Normalisation du libellé côté connecteur (tranche 3) à reprendre |
+| `subject`/`greeting`/`closing` de la lettre assainis et bornés mais non ancrés (seuls les paragraphes le sont) | L'utilisateur relit la lettre avant envoi ; ancrage étendu si abus constaté en recette |
+| Ancrage : un nom commun capitalisé en milieu de phrase (« Pilotage ») est rejeté ; « Azure » en début de phrase est exempté par le suffixe « -ure » | À surveiller en recette réelle ; liste d'exceptions si nécessaire |
+| `projects[].url` transmis au modèle dans le profil (spec §8 « liens » visait les liens de contact ; `identity.links` n'est jamais renseigné) | Retiré du profil envoyé si la recette réelle montre un usage indésirable |
