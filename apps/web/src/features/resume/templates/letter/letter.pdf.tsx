@@ -1,5 +1,6 @@
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 import type { LetterDocumentProps } from '../../lib/letter-templates';
+import { sameOrganizationLabel } from '../../lib/letter-templates';
 import { registerPdfHyphenation } from '../../lib/pdf-hyphenation';
 
 /**
@@ -26,7 +27,10 @@ const styles = StyleSheet.create({
 });
 
 export function Pdf({ content, senderName, senderCity, company, dateLine }: LetterDocumentProps) {
-  const hasRecipientBlock = Boolean(content.recipient) || Boolean(company);
+  // Parité avec le jumeau HTML (`letter.preview.tsx`, revue tâche 8 fixup) : pas de ligne
+  // « entreprise » dupliquant le destinataire quand les deux désignent la même structure.
+  const showCompanyLine = Boolean(company) && !sameOrganizationLabel(content.recipient, company);
+  const hasRecipientBlock = Boolean(content.recipient) || showCompanyLine;
 
   return (
     <Document>
@@ -42,7 +46,7 @@ export function Pdf({ content, senderName, senderCity, company, dateLine }: Lett
         {hasRecipientBlock && (
           <View style={styles.recipientBlock}>
             {content.recipient && <Text style={styles.recipientLine}>{content.recipient}</Text>}
-            {company && <Text style={styles.recipientLine}>{company}</Text>}
+            {showCompanyLine && <Text style={styles.recipientLine}>{company}</Text>}
           </View>
         )}
 

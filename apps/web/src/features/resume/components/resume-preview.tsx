@@ -18,22 +18,52 @@ export interface ResumePreviewProps {
 }
 
 // 1mm = 96/25.4 px à la résolution CSS de référence (96dpi) : conversion
-// nécessaire puisque `pageHeightPx` (mesurée en pixels CSS réels par
-// `ResizeObserver`) doit être comparée à la hauteur A4 en millimètres pour en
-// déduire un nombre de pages approximatif (spec, revue tâche 6).
+// nécessaire puisque les hauteurs mesurées en pixels CSS réels (`ResizeObserver`,
+// `measureContentHeight`) doivent être comparées à la hauteur A4 en millimètres
+// pour en déduire un nombre de pages approximatif (spec, revue tâche 6).
 export const PX_PER_MM = 96 / 25.4;
 export const A4_HEIGHT_MM = 297;
 
+/** Hauteur d'une page A4 en pixels CSS (résolution de référence 96dpi). */
+const PAGE_HEIGHT_PX = A4_HEIGHT_MM * PX_PER_MM;
+
 /**
  * Nombre de pages approximatif d'après la hauteur naturelle (non réduite) du
- * jumeau HTML : seul le rendu réel du PDF (pagination `@react-pdf/renderer`)
- * fait foi (légende affichée sous l'aperçu) — cette valeur ne sert qu'à
- * l'indication visuelle (nom accessible, séparateurs de page) et peut différer
- * de la pagination PDF exacte (marges, sauts de page réels différents).
+ * *contenu* du jumeau HTML (voir `measureContentHeight` — jamais celle, biaisée,
+ * du feuillet lui-même) : seul le rendu réel du PDF (pagination
+ * `@react-pdf/renderer`) fait foi (légende affichée sous l'aperçu) — cette
+ * valeur ne sert qu'à l'indication visuelle (nom accessible, séparateurs de
+ * page) et peut différer de la pagination PDF exacte (marges, sauts de page
+ * réels différents). Tolérance d'1 px (revue tâche 6 fixup) : un contenu tenant
+ * exactement sur une page (`contentHeightPx === PAGE_HEIGHT_PX`, à l'arrondi de
+ * mesure près) ne doit pas basculer à « page 2 ».
  */
-function computePageCount(pageHeightPx: number): number {
-  if (pageHeightPx <= 0) return 1;
-  return Math.max(1, Math.ceil(pageHeightPx / PX_PER_MM / A4_HEIGHT_MM));
+export function computePageCount(contentHeightPx: number): number {
+  if (contentHeightPx <= 0) return 1;
+  return Math.max(1, Math.ceil((contentHeightPx - 1) / PAGE_HEIGHT_PX));
+}
+
+const TEMPLATE_CONTENT_SELECTOR = '[data-slot="template-content"]';
+
+/**
+ * Hauteur réelle du contenu d'un feuillet A4 (`sheet`, l'élément racine du
+ * jumeau HTML — `w-[210mm] min-h-[297mm]`), sans le plancher visuel imposé par
+ * ce `min-height` (qui rend `sheet.scrollHeight` toujours ≥ une page, même
+ * pour un contenu très court — bug initial, revue tâche 6 : un feuillet de
+ * 1123px pour une lettre de 3 paragraphes annonçait à tort « page 2 »).
+ * Chaque jumeau (`templates/{classic,modern,letter}/*.preview.tsx`) enveloppe
+ * son contenu dans un `data-slot="template-content"` sans hauteur minimale
+ * propre : sa hauteur naturelle (`offsetHeight`) n'est jamais étirée par le
+ * feuillet parent. On y ajoute le padding vertical porté par le feuillet lui
+ * (pas par ce wrapper) pour obtenir la hauteur totale équivalente.
+ */
+export function measureContentHeight(sheet: HTMLElement | null): number {
+  if (!sheet) return 0;
+  const content = sheet.querySelector<HTMLElement>(TEMPLATE_CONTENT_SELECTOR);
+  if (!content) return sheet.scrollHeight;
+  const style = window.getComputedStyle(sheet);
+  const verticalPadding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+  return content.offsetHeight + verticalPadding;
 }
 
 /**
@@ -50,7 +80,11 @@ export function ResumePreview({ content, template, fit = 'auto', className }: Re
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
-  const [pageHeightPx, setPageHeightPx] = useState(0);
+  // Hauteur visuelle réelle du feuillet (mise en page/défilement, jamais sous la hauteur A4) et
+  // hauteur du contenu (nombre de pages, séparateurs) — distinctes depuis la revue tâche 6 fixup :
+  // la première reste toujours ≥ une page (le `min-height` du feuillet), la seconde ne l'est plus.
+  const [sheetHeightPx, setSheetHeightPx] = useState(0);
+  const [contentHeightPx, setContentHeightPx] = useState(0);
 
   // Observe le conteneur (largeur disponible) **et** la page (hauteur/largeur
   // naturelles) : un changement de contenu peut faire grandir/rétrécir la page
@@ -67,7 +101,8 @@ export function ResumePreview({ content, template, fit = 'auto', className }: Re
 
     function update() {
       if (!container || !page) return;
-      setPageHeightPx(page.scrollHeight);
+      setSheetHeightPx(page.scrollHeight);
+      setContentHeightPx(measureContentHeight(page.firstElementChild as HTMLElement | null));
 
       if (fit === 'none') {
         setScale(1);
@@ -88,9 +123,9 @@ export function ResumePreview({ content, template, fit = 'auto', className }: Re
   }, [fit, template, content]);
 
   const { Preview } = RESUME_TEMPLATE_REGISTRY[template];
-  const pageCount = computePageCount(pageHeightPx);
+  const pageCount = computePageCount(contentHeightPx);
   const pageBreaks = Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) => index + 2);
-  const scaledHeight = pageHeightPx > 0 ? pageHeightPx * scale : undefined;
+  const scaledHeight = sheetHeightPx > 0 ? sheetHeightPx * scale : undefined;
 
   return (
     <figure className={cn('flex flex-col gap-2', className)}>

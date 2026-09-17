@@ -284,13 +284,16 @@ interface GenerationPanelProps {
 }
 
 /**
- * Bloc de génération (spec §2/§5, tâche 8) : profil incomplet, IA non
- * configurée et budget épuisé remplacent entièrement le choix de ton — aucun
- * de ces trois états n'a de sens à retenter immédiatement (le premier
- * nécessite d'aller compléter le profil, les deux autres sont hors du
- * contrôle de l'utilisateur dans l'instant). Toute autre erreur reste
- * transitoire : le bloc de génération reste affiché, avec le message d'erreur
- * (`LetterErrorAlert`, partagé avec la carte « Régénérer », revue) au-dessus.
+ * Bloc de génération (spec §2/§5, tâche 8) : profil incomplet remplace
+ * entièrement le choix de ton (il n'y a rien à retenter avant d'aller
+ * compléter le profil). Toute autre erreur — y compris IA non configurée,
+ * profil jugé incomplet côté serveur ou budget épuisé (revue tâche 8 fixup :
+ * ces trois codes remplaçaient auparavant tout le panneau, empêchant de
+ * retenter ou de revenir en arrière) — reste transitoire ou nécessite une
+ * action que ce panneau permet toujours : il reste affiché, avec le message
+ * d'erreur (`LetterErrorAlert`, partagé avec la carte « Régénérer », revue)
+ * au-dessus, le bouton réactivé pour retenter (désactivé seulement pendant la
+ * génération), et un lien secondaire pour revenir à Mon CV.
  */
 function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGenerating, error }: GenerationPanelProps) {
   if (!profileComplete) {
@@ -307,12 +310,6 @@ function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGe
     );
   }
 
-  const code = error instanceof ApiError ? error.code : undefined;
-
-  if (code === 'AI_NOT_CONFIGURED' || code === 'PROFILE_INCOMPLETE' || code === 'RATE_LIMITED') {
-    return <LetterErrorAlert error={error} />;
-  }
-
   return (
     <Card>
       <CardHeader>
@@ -321,16 +318,21 @@ function GenerationPanel({ profileComplete, tone, onToneChange, onGenerate, isGe
       <CardContent className="space-y-4">
         <LetterErrorAlert error={error} />
         <TonePicker value={tone} onChange={onToneChange} disabled={isGenerating} />
-        <Button type="button" onClick={onGenerate} disabled={isGenerating}>
-          {isGenerating ? (
-            <>
-              <Loader2 className="animate-spin" aria-hidden="true" />
-              Génération…
-            </>
-          ) : (
-            'Générer la lettre'
-          )}
-        </Button>
+        <div className="flex flex-wrap items-center gap-4">
+          <Button type="button" onClick={onGenerate} disabled={isGenerating}>
+            {isGenerating ? (
+              <>
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                Génération…
+              </>
+            ) : (
+              'Générer la lettre'
+            )}
+          </Button>
+          <Link to="/resume" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+            Retour à Mon CV
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

@@ -7,6 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export type ResumeChangesSection = 'educations' | 'certifications' | 'projects';
 
+/**
+ * Titre de carte des éléments écartés, par section (revue tâche 7 fixup) :
+ * l'accord de genre diffère de `RESUME_SECTION_LABELS` (« Formations »,
+ * « Certifications » au féminin, mais « Projets » au masculin) — une simple
+ * concaténation `{label} écartées` donnait donc « Projets écartées ».
+ */
+const REJECTED_SECTION_TITLES: Record<ResumeChangesSection, string> = {
+  educations: 'Formations écartées',
+  certifications: 'Certifications écartées',
+  projects: 'Projets écartés',
+};
+
 interface ExperienceLabel {
   role: string;
   company: string;
@@ -180,7 +192,7 @@ export function ResumeChanges({ changes, content, experienceLabels, labels, onRe
         return (
           <Card key={section}>
             <CardHeader>
-              <CardTitle>{RESUME_SECTION_LABELS[section]} écartées</CardTitle>
+              <CardTitle>{REJECTED_SECTION_TITLES[section]}</CardTitle>
             </CardHeader>
             <CardContent>
               {sectionLabels ? (

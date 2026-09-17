@@ -1,7 +1,7 @@
 import type { CoverLetterContent } from '@jobtrack/shared';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { A4_HEIGHT_MM, PX_PER_MM } from './resume-preview';
+import { A4_HEIGHT_MM, computePageCount, measureContentHeight } from './resume-preview';
 import { Preview as LetterDocumentPreview } from '../templates/letter/letter.preview';
 
 export interface LetterPreviewProps {
@@ -11,12 +11,6 @@ export interface LetterPreviewProps {
   company: string | null;
   dateLine: string;
   className?: string;
-}
-
-/** Même calcul que `resume-preview.tsx` (`computePageCount`), non exporté là-bas : dupliqué ici, trois lignes pures. */
-function computePageCount(pageHeightPx: number): number {
-  if (pageHeightPx <= 0) return 1;
-  return Math.max(1, Math.ceil(pageHeightPx / PX_PER_MM / A4_HEIGHT_MM));
 }
 
 /**
@@ -31,7 +25,10 @@ export function LetterPreview({ content, senderName, senderCity, company, dateLi
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
-  const [pageHeightPx, setPageHeightPx] = useState(0);
+  // Hauteur visuelle réelle du feuillet et hauteur du contenu — distinctes depuis la revue tâche 6
+  // fixup (voir le même commentaire dans `resume-preview.tsx`).
+  const [sheetHeightPx, setSheetHeightPx] = useState(0);
+  const [contentHeightPx, setContentHeightPx] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -40,7 +37,8 @@ export function LetterPreview({ content, senderName, senderCity, company, dateLi
 
     function update() {
       if (!container || !page) return;
-      setPageHeightPx(page.scrollHeight);
+      setSheetHeightPx(page.scrollHeight);
+      setContentHeightPx(measureContentHeight(page.firstElementChild as HTMLElement | null));
       const containerWidth = container.clientWidth;
       const pageWidth = page.scrollWidth;
       if (containerWidth <= 0 || pageWidth <= 0) return;
@@ -54,9 +52,9 @@ export function LetterPreview({ content, senderName, senderCity, company, dateLi
     return () => observer.disconnect();
   }, [content, senderName, senderCity, company, dateLine]);
 
-  const pageCount = computePageCount(pageHeightPx);
+  const pageCount = computePageCount(contentHeightPx);
   const pageBreaks = Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) => index + 2);
-  const scaledHeight = pageHeightPx > 0 ? pageHeightPx * scale : undefined;
+  const scaledHeight = sheetHeightPx > 0 ? sheetHeightPx * scale : undefined;
 
   return (
     <figure className={cn('flex flex-col gap-2', className)}>

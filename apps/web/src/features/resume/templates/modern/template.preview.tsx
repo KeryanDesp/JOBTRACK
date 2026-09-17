@@ -28,161 +28,166 @@ export function Preview({ content }: { content: ResumeContent }) {
 
   return (
     <div className="w-[210mm] min-h-[297mm] bg-white font-sans text-neutral-900" style={{ colorScheme: 'light' }}>
-      <header className="flex items-start justify-between gap-6 bg-neutral-900 px-[14mm] py-[10mm] text-white">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            {identity.firstName} {identity.lastName}
-          </h1>
-          {identity.title && <p className="mt-1 text-lg text-neutral-300">{identity.title}</p>}
-        </div>
-        {(contactLines.length > 0 || (identity.links && identity.links.length > 0)) && (
-          <ul className="shrink-0 text-right text-xs text-neutral-300">
-            {contactLines.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-            {identity.links?.map((link) => (
-              <li key={link.url}>
-                <a href={link.url} className="underline">
-                  {link.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </header>
+      {/* `data-slot="template-content"` (revue tâche 6 fixup) : hauteur réelle du contenu, jamais
+          étirée par le `min-height` ci-dessus — lue par `measureContentHeight` (`resume-preview.tsx`)
+          pour calculer le nombre de pages sans le biais du feuillet toujours haut d'au moins 297mm. */}
+      <div data-slot="template-content">
+        <header className="flex items-start justify-between gap-6 bg-neutral-900 px-[14mm] py-[10mm] text-white">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              {identity.firstName} {identity.lastName}
+            </h1>
+            {identity.title && <p className="mt-1 text-lg text-neutral-300">{identity.title}</p>}
+          </div>
+          {(contactLines.length > 0 || (identity.links && identity.links.length > 0)) && (
+            <ul className="shrink-0 text-right text-xs text-neutral-300">
+              {contactLines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+              {identity.links?.map((link) => (
+                <li key={link.url}>
+                  <a href={link.url} className="underline">
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </header>
 
-      <div className="flex">
-        {hasMain && (
-          <main className="flex-1 space-y-6 p-[10mm]">
-            {sections.includes('summary') && (
-              <section>
-                <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.summary}</h2>
-                <p className="text-sm leading-relaxed whitespace-pre-line text-neutral-800">{content.summary}</p>
-              </section>
-            )}
+        <div className="flex">
+          {hasMain && (
+            <main className="flex-1 space-y-6 p-[10mm]">
+              {sections.includes('summary') && (
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.summary}</h2>
+                  <p className="text-sm leading-relaxed whitespace-pre-line text-neutral-800">{content.summary}</p>
+                </section>
+              )}
 
-            {sections.includes('experiences') && (
-              <section>
-                <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
-                  {RESUME_SECTION_LABELS.experiences}
-                </h2>
-                <ul className="space-y-4">
-                  {content.experiences.map((experience) => (
-                    <li key={experience.id}>
-                      <p className="text-sm font-semibold text-neutral-900">{experience.role}</p>
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="text-xs text-neutral-600">{experience.company}</p>
-                        <p className="shrink-0 text-xs text-neutral-500">
-                          {formatDateRange(experience.startDate, experience.endDate, experience.isCurrent)}
+              {sections.includes('experiences') && (
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
+                    {RESUME_SECTION_LABELS.experiences}
+                  </h2>
+                  <ul className="space-y-4">
+                    {content.experiences.map((experience) => (
+                      <li key={experience.id}>
+                        <p className="text-sm font-semibold text-neutral-900">{experience.role}</p>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="text-xs text-neutral-600">{experience.company}</p>
+                          <p className="shrink-0 text-xs text-neutral-500">
+                            {formatDateRange(experience.startDate, experience.endDate, experience.isCurrent)}
+                          </p>
+                        </div>
+                        {experience.location && <p className="text-xs text-neutral-500">{experience.location}</p>}
+                        {experience.highlights.length > 0 && (
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-sm text-neutral-800">
+                            {experience.highlights.map((highlight, index) => (
+                              <li key={index}>{highlight}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {sections.includes('educations') && (
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
+                    {RESUME_SECTION_LABELS.educations}
+                  </h2>
+                  <ul className="space-y-2">
+                    {content.educations.map((education) => (
+                      <li key={education.id} className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm text-neutral-900">
+                          <span className="font-semibold">{education.degree}</span>
+                          {education.field ? ` — ${education.field}` : ''}{' '}
+                          <span className="text-neutral-600">· {education.school}</span>
                         </p>
-                      </div>
-                      {experience.location && <p className="text-xs text-neutral-500">{experience.location}</p>}
-                      {experience.highlights.length > 0 && (
-                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-sm text-neutral-800">
-                          {experience.highlights.map((highlight, index) => (
-                            <li key={index}>{highlight}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+                        <p className="shrink-0 text-xs text-neutral-500">{formatDateRange(education.startDate, education.endDate)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </main>
+          )}
 
-            {sections.includes('educations') && (
-              <section>
-                <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
-                  {RESUME_SECTION_LABELS.educations}
-                </h2>
-                <ul className="space-y-2">
-                  {content.educations.map((education) => (
-                    <li key={education.id} className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm text-neutral-900">
-                        <span className="font-semibold">{education.degree}</span>
-                        {education.field ? ` — ${education.field}` : ''}{' '}
-                        <span className="text-neutral-600">· {education.school}</span>
-                      </p>
-                      <p className="shrink-0 text-xs text-neutral-500">{formatDateRange(education.startDate, education.endDate)}</p>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-          </main>
+          {hasSidebar && (
+            <aside className="w-[65mm] shrink-0 space-y-6 border-l border-neutral-200 bg-neutral-50 p-[10mm]">
+              {sections.includes('skills') && (
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.skills}</h2>
+                  <ul className="space-y-1">
+                    {content.skills.map((skill) => (
+                      <li key={skill.id} className="text-sm text-neutral-800">
+                        {skill.name} <span className="text-xs text-neutral-500">· {formatSkillLevel(skill.level)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {sections.includes('languages') && (
+                <section>
+                  <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
+                    {RESUME_SECTION_LABELS.languages}
+                  </h2>
+                  <ul className="space-y-1">
+                    {content.languages.map((language) => (
+                      <li key={language.id} className="text-sm text-neutral-800">
+                        {language.name} <span className="text-xs text-neutral-500">· {formatLanguageLevel(language.level)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </aside>
+          )}
+        </div>
+
+        {sections.includes('certifications') && (
+          <section className="px-[14mm] pb-6">
+            <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.certifications}</h2>
+            <ul className="space-y-1">
+              {content.certifications.map((certification) => (
+                <li key={certification.id} className="flex items-baseline justify-between gap-2">
+                  <p className="text-sm text-neutral-900">
+                    <span className="font-semibold">{certification.name}</span>{' '}
+                    <span className="text-neutral-600">· {certification.issuer}</span>
+                  </p>
+                  {certification.issuedAt && (
+                    <p className="shrink-0 text-xs text-neutral-500">{formatMonthYear(certification.issuedAt)}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
-        {hasSidebar && (
-          <aside className="w-[65mm] shrink-0 space-y-6 border-l border-neutral-200 bg-neutral-50 p-[10mm]">
-            {sections.includes('skills') && (
-              <section>
-                <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.skills}</h2>
-                <ul className="space-y-1">
-                  {content.skills.map((skill) => (
-                    <li key={skill.id} className="text-sm text-neutral-800">
-                      {skill.name} <span className="text-xs text-neutral-500">· {formatSkillLevel(skill.level)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            {sections.includes('languages') && (
-              <section>
-                <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">
-                  {RESUME_SECTION_LABELS.languages}
-                </h2>
-                <ul className="space-y-1">
-                  {content.languages.map((language) => (
-                    <li key={language.id} className="text-sm text-neutral-800">
-                      {language.name} <span className="text-xs text-neutral-500">· {formatLanguageLevel(language.level)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-          </aside>
+        {sections.includes('projects') && (
+          <section className="px-[14mm] pb-[14mm]">
+            <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.projects}</h2>
+            <ul className="space-y-2">
+              {content.projects.map((project) => (
+                <li key={project.id}>
+                  <p className="text-sm font-semibold text-neutral-900">{project.name}</p>
+                  {project.url && (
+                    <a href={project.url} className="text-xs text-blue-700 underline">
+                      {project.url}
+                    </a>
+                  )}
+                  {project.description && <p className="text-sm text-neutral-800">{project.description}</p>}
+                  {project.technologies.length > 0 && <p className="text-xs text-neutral-500">{project.technologies.join(' · ')}</p>}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
-
-      {sections.includes('certifications') && (
-        <section className="px-[14mm] pb-6">
-          <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.certifications}</h2>
-          <ul className="space-y-1">
-            {content.certifications.map((certification) => (
-              <li key={certification.id} className="flex items-baseline justify-between gap-2">
-                <p className="text-sm text-neutral-900">
-                  <span className="font-semibold">{certification.name}</span>{' '}
-                  <span className="text-neutral-600">· {certification.issuer}</span>
-                </p>
-                {certification.issuedAt && (
-                  <p className="shrink-0 text-xs text-neutral-500">{formatMonthYear(certification.issuedAt)}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {sections.includes('projects') && (
-        <section className="px-[14mm] pb-[14mm]">
-          <h2 className="mb-2 text-xs font-semibold tracking-widest text-neutral-500 uppercase">{RESUME_SECTION_LABELS.projects}</h2>
-          <ul className="space-y-2">
-            {content.projects.map((project) => (
-              <li key={project.id}>
-                <p className="text-sm font-semibold text-neutral-900">{project.name}</p>
-                {project.url && (
-                  <a href={project.url} className="text-xs text-blue-700 underline">
-                    {project.url}
-                  </a>
-                )}
-                {project.description && <p className="text-sm text-neutral-800">{project.description}</p>}
-                {project.technologies.length > 0 && <p className="text-xs text-neutral-500">{project.technologies.join(' · ')}</p>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 }

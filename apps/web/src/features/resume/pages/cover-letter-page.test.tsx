@@ -175,7 +175,7 @@ describe('CoverLetterPage — generation', () => {
     expect(await screen.findByLabelText('Objet')).toHaveValue('Candidature — Développeuse React');
   });
 
-  it("affiche l etat IA non configuree et masque le choix de ton", async () => {
+  it("affiche l etat IA non configuree sans masquer le choix de ton (retenter, retour a Mon CV)", async () => {
     fetchJob.mockResolvedValue(makeJob());
     fetchBaseResume.mockResolvedValue(makeBaseResume());
     createLetter.mockRejectedValue(new ApiError("Le service IA n'est pas configuré.", 503, 'AI_NOT_CONFIGURED'));
@@ -186,7 +186,13 @@ describe('CoverLetterPage — generation', () => {
     await user.click(await screen.findByRole('button', { name: 'Générer la lettre' }));
 
     expect(await screen.findByText("Le service IA n'est pas configuré.")).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Générer la lettre' })).not.toBeInTheDocument();
+    // Le panneau (choix de ton + bouton) reste affiche pour permettre de retenter (revue tache 8
+    // fixup) — l alerte s ajoute au-dessus, elle ne le remplace plus.
+    expect(screen.getByRole('radio', { name: /courte/i })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /professionnelle/i })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /très personnalisée/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Générer la lettre' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Retour à Mon CV' })).toBeInTheDocument();
   });
 
   it('affiche un bandeau profil incomplet sans proposer de generer', async () => {

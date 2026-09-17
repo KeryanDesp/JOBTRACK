@@ -290,10 +290,15 @@ test('lettre de motivation - choix du ton puis etat sans ia', async ({ page }) =
       page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes('/resume/letters')),
       generateButton.click(),
     ]);
-    // `LetterErrorAlert` (spec §2/§5, tâche 8) remplace tout le panneau de génération pour ce
-    // code — jamais superposé au sélecteur de ton.
+    // `LetterErrorAlert` (spec §2/§5, tâche 8, revue tâche 8 fixup) s'affiche au-dessus du
+    // panneau de génération pour ce code — elle ne le remplace plus : le sélecteur de ton et le
+    // bouton restent utilisables pour retenter, avec un lien de secours vers Mon CV.
     await expect(page.getByText(AI_NOT_CONFIGURED_MESSAGE, { exact: true })).toBeVisible();
-    await expect(tonePicker).toHaveCount(0);
+    await expect(tonePicker.getByRole('radio', { name: /Courte/ })).toBeVisible();
+    await expect(tonePicker.getByRole('radio', { name: /Professionnelle/ })).toBeVisible();
+    await expect(tonePicker.getByRole('radio', { name: /Très personnalisée/ })).toBeVisible();
+    await expect(generateButton).toBeEnabled();
+    await expect(page.getByRole('link', { name: 'Retour à Mon CV' })).toBeVisible();
   } else if (probe.status === 409 && probe.code === 'PROFILE_INCOMPLETE') {
     await expect(page.getByText('Complétez votre profil pour générer une lettre.', { exact: true })).toBeVisible();
     test.info().annotations.push({

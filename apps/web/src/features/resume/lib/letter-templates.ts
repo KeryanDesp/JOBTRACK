@@ -45,3 +45,27 @@ export function formatLetterDateLine(city: string | null | undefined, date: Date
   const formatted = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
   return city && city.trim() !== '' ? `${city}, le ${formatted}` : `Le ${formatted}`;
 }
+
+/** Marques combinantes (accents) après `normalize('NFD')` — propriété Unicode `Mark`, pas une plage de points de code écrite en dur (risque d'insérer des caractères combinants illisibles dans le fichier source). */
+const DIACRITIC_MARK_PATTERN = /\p{Mark}/gu;
+
+/** Casse, accents et espaces de bord ignorés — deux libellés « identiques à l'œil » (ex. « Piloto Software » / « piloto software ») ne doivent pas être détectés comme différents. */
+function normalizeOrganizationLabel(value: string): string {
+  return value
+    .trim()
+    .toLocaleLowerCase('fr-FR')
+    .normalize('NFD')
+    .replace(DIACRITIC_MARK_PATTERN, '');
+}
+
+/**
+ * Vrai quand `recipient` et `company` désignent la même structure (revue
+ * tâche 8 fixup) : le bloc destinataire des jumeaux HTML/PDF de la lettre
+ * (`templates/letter/{letter.preview,letter.pdf}.tsx`) affichait les deux
+ * champs sans condition, dupliquant la ligne quand l'offre et le destinataire
+ * saisi désignent la même entreprise (ex. « Piloto Software » dans les deux).
+ */
+export function sameOrganizationLabel(recipient: string | null, company: string | null): boolean {
+  if (recipient === null || company === null) return false;
+  return normalizeOrganizationLabel(recipient) === normalizeOrganizationLabel(company);
+}
