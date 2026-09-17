@@ -21,11 +21,17 @@ import {
 } from './job-analysis.prompt';
 
 const LOCK_PREFIX = 'matching:analysis:';
-// Même durée que le seuil de péremption d'un `PENDING` ci-dessous : un appel qui détient le
-// verrou toute cette durée est de toute façon considéré comme abandonné par le prochain appelant.
-const LOCK_TTL_MS = 120_000;
-const STALE_PENDING_MS = 2 * 60 * 1000;
+// Doit couvrir le pire cas d'un appel `messages.parse` côté client Anthropic
+// (`anthropic.provider.ts` : `maxRetries: 2`, `timeout: 90_000`) — 1 + 2 tentatives de 90 s
+// au pire, soit 270 s — avec une marge : un verrou plus court expirerait avant la fin d'un
+// appel légitime et laisserait un second appelant démarrer une analyse concurrente. Le seuil
+// de péremption d'un `PENDING` ci-dessous est aligné sur la même durée pour la même raison.
+const LOCK_TTL_MS = 300_000;
+const STALE_PENDING_MS = 5 * 60 * 1000;
 const MAX_OUTPUT_TOKENS = 4000;
+// Budget par appel (spec §4 : 20 offres par appel `POST /jobs/analyses`) : plafond dur, jamais
+// dépassé même si l'appelant (bug, évolution future) demande une `limit` plus grande.
+export const MAX_ANALYSES_PER_CALL = 20;
 
 const JOB_NOT_FOUND_MESSAGE = 'Offre introuvable.';
 
@@ -39,7 +45,7 @@ return 0
 
 type LockResult = { status: 'acquired'; token: string } | { status: 'held' } | { status: 'unavailable' };
 
-export type JobAnalysisOutcomeStatus = 'done' | 'failed' | 'skipped_pending' | 'skipped_done';
+export type JobAnalysisOutcomeStatus = 'done' | 'failed' | 'skipped_pending' | 'skipped_done' | 'skipped_failed';
 
 export interface JobAnalysisOutcome {
   status: JobAnalysisOutcomeStatus;
@@ -87,12 +93,20 @@ export class JobAnalysisService {
 
   /**
    * Analyse une offre si nécessaire : `skipped_done` si déjà `DONE` à la version courante,
-   * `skipped_pending` si une analyse récente (< 2 min) est en cours ailleurs ou si le verrou
-   * est détenu par un autre appelant. Ne lève jamais d'exception pour une offre introuvable
-   * (jamais de 500) ; lève `AiNotConfiguredError`/`AiUnavailableError` pour que l'appelant les
-   * mappe en 503 — dans ces deux cas, aucune trace de cet appel ne subsiste (rollback).
+   * `skipped_failed` si déjà `FAILED` à la version courante (jamais rejouée automatiquement —
+   * seul `retry` la relance explicitement), `skipped_pending` si une analyse récente (< 5 min)
+   * est en cours ailleurs ou si le verrou est détenu par un autre appelant. Ne lève jamais
+   * d'exception pour une offre introuvable (jamais de 500) ; lève
+   * `AiNotConfiguredError`/`AiUnavailableError` pour que l'appelant les mappe en 503 — dans ces
+   * deux cas, aucune trace de cet appel ne subsiste (rollback).
    */
   async analyze(jobId: string, now: Date = new Date()): Promise<JobAnalysisOutcome> {
+    return this.runAnalysis(jobId, now, false);
+  }
+
+  /** `force` n'est jamais exposé publiquement : seul `retry` (sur une analyse déjà `FAILED`,
+   * garde vérifiée avant l'appel) contourne ainsi le garde-fou anti-rejeu de `runAnalysis`. */
+  private async runAnalysis(jobId: string, now: Date, force: boolean): Promise<JobAnalysisOutcome> {
     const job = await this.prisma.job.findUnique({
       where: { id: jobId },
       include: { skills: true, requirements: true },
@@ -102,6 +116,14 @@ export class JobAnalysisService {
     const existing = await this.prisma.jobAnalysis.findUnique({ where: { jobId } });
     if (existing && existing.status === 'DONE' && existing.version === JOB_ANALYSIS_VERSION) {
       return { status: 'skipped_done' };
+    }
+    if (
+      existing &&
+      existing.status === 'FAILED' &&
+      existing.version === JOB_ANALYSIS_VERSION &&
+      !force
+    ) {
+      return { status: 'skipped_failed', error: existing.error ?? JOB_ANALYSIS_FAILED_MESSAGE };
     }
     if (existing && existing.status === 'PENDING' && now.getTime() - existing.updatedAt.getTime() < STALE_PENDING_MS) {
       return { status: 'skipped_pending' };
@@ -168,7 +190,19 @@ export class JobAnalysisService {
         this.logger.warn(`Analyse de l'offre ${jobId} en échec (${errorClass}).`);
         await this.prisma.jobAnalysis.update({
           where: { jobId },
-          data: { status: 'FAILED', version: JOB_ANALYSIS_VERSION, error: JOB_ANALYSIS_FAILED_MESSAGE },
+          data: {
+            status: 'FAILED',
+            version: JOB_ANALYSIS_VERSION,
+            error: JOB_ANALYSIS_FAILED_MESSAGE,
+            // Efface tout résultat antérieur (`DONE` d'une version plus ancienne, par exemple) :
+            // un `FAILED` à la version courante ne doit jamais laisser croire, via des champs
+            // orphelins, qu'une analyse aboutie de cette version existe.
+            requirements: Prisma.DbNull,
+            model: null,
+            inputTokens: null,
+            outputTokens: null,
+            analyzedAt: null,
+          },
         });
         return { status: 'failed', error: JOB_ANALYSIS_FAILED_MESSAGE };
       }
@@ -181,10 +215,12 @@ export class JobAnalysisService {
    * Analyse séquentiellement (jamais en parallèle : un budget d'appels Anthropic partagé et un
    * verrou par offre suffisent, pas besoin de plus de débit ici). S'arrête et repropage dès
    * qu'une offre lève `AiNotConfiguredError`/`AiUnavailableError` — les offres restantes ne sont
-   * jamais tentées, ce qui les laisse simplement non comptées.
+   * jamais tentées, ce qui les laisse simplement non comptées. `options.limit` ne peut jamais
+   * dépasser `MAX_ANALYSES_PER_CALL` (plafond dur) ; sans `limit`, ce plafond sert de défaut.
    */
   async analyzeMany(jobIds: readonly string[], options: { limit?: number } = {}): Promise<JobAnalysisManyResult> {
-    const ids = options.limit !== undefined ? jobIds.slice(0, options.limit) : jobIds;
+    const limit = Math.min(options.limit ?? MAX_ANALYSES_PER_CALL, MAX_ANALYSES_PER_CALL);
+    const ids = jobIds.slice(0, limit);
     const counts: JobAnalysisManyResult = { done: 0, failed: 0, skipped: 0, pending: 0 };
 
     for (const jobId of ids) {
@@ -197,6 +233,7 @@ export class JobAnalysisService {
           counts.failed += 1;
           break;
         case 'skipped_done':
+        case 'skipped_failed':
           counts.skipped += 1;
           break;
         case 'skipped_pending':
@@ -208,7 +245,9 @@ export class JobAnalysisService {
     return counts;
   }
 
-  /** Relance une analyse en échec ; refuse toute autre statut (déjà `DONE`/`PENDING`, ou inexistante). */
+  /** Relance une analyse en échec ; refuse toute autre statut (déjà `DONE`/`PENDING`, ou
+   * inexistante). Seul appelant à passer `force: true` à `runAnalysis` : la garde ci-dessus
+   * (statut `FAILED` déjà vérifié) est le seul cas où contourner le garde-fou anti-rejeu est sûr. */
   async retry(jobId: string): Promise<JobAnalysisOutcome> {
     const existing = await this.prisma.jobAnalysis.findUnique({ where: { jobId } });
     if (!existing || existing.status !== 'FAILED') {
@@ -217,7 +256,7 @@ export class JobAnalysisService {
         message: 'Seule une analyse en échec peut être relancée.',
       });
     }
-    return this.analyze(jobId);
+    return this.runAnalysis(jobId, new Date(), true);
   }
 
   /** Lecture bon marché (projection minimale) : `null` pour une offre jamais analysée. */
@@ -323,7 +362,7 @@ export class JobAnalysisService {
     } catch (error) {
       // Redis indisponible : on ne bloque jamais l'analyse pour autant — mais sans verrou réel,
       // personne ne le détient : `unavailable`, jamais `acquired` avec un jeton qui ne protégerait rien.
-      this.logger.warn(`Verrou d'analyse indisponible (Redis) pour l'offre ${jobId} : ${(error as Error).message}`);
+      this.logger.warn(`Verrou d'analyse indisponible (Redis) pour l'offre ${jobId} : ${this.describeError(error)}`);
       return { status: 'unavailable' };
     }
   }
@@ -333,7 +372,7 @@ export class JobAnalysisService {
     try {
       await this.redis.client.eval(UNLOCK_SCRIPT, 1, key, token);
     } catch (error) {
-      this.logger.warn(`Libération du verrou d'analyse impossible pour l'offre ${jobId} : ${(error as Error).message}`);
+      this.logger.warn(`Libération du verrou d'analyse impossible pour l'offre ${jobId} : ${this.describeError(error)}`);
     }
   }
 
@@ -362,9 +401,7 @@ export class JobAnalysisService {
         },
       });
     } catch (error) {
-      this.logger.warn(
-        `Retour arrière de l'analyse impossible pour l'offre ${jobId} : ${(error as Error).constructor.name}`,
-      );
+      this.logger.warn(`Retour arrière de l'analyse impossible pour l'offre ${jobId} : ${this.describeError(error)}`);
     }
   }
 
@@ -372,5 +409,11 @@ export class JobAnalysisService {
    * chaînes/nombres/booléens/tableaux/objets imbriqués, jamais de `Date` ni de fonction. */
   private toJson(requirements: JobRequirements): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(requirements)) as Prisma.InputJsonValue;
+  }
+
+  /** Jamais de `(error as Error)` : une erreur interceptée peut être n'importe quelle valeur
+   * (`throw 'texte'`, `throw 42`…), pas seulement une instance d'`Error`. */
+  private describeError(error: unknown): string {
+    return error instanceof Error ? error.message : 'erreur inconnue';
   }
 }
