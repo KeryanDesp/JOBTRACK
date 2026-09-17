@@ -2,11 +2,16 @@ import type { JobDetailDto } from '@jobtrack/shared';
 import { EXPERIENCE_LEVEL_LABELS, JOB_SOURCE_LABELS, REMOTE_MODE_LABELS } from '@jobtrack/shared';
 import { Bookmark, BookmarkCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ApplicationFormDialog } from '@/features/applications/components/application-form-dialog';
+import { TrackApplicationButton } from '@/features/applications/components/track-application-button';
+import { useResumes } from '@/features/resume/hooks/use-resume';
 import { useSaveJob } from '../hooks/use-jobs';
 import { formatLocation, formatSalaryRange, isHttpUrl } from '../lib/format';
 import { JobFreshness } from './job-freshness';
@@ -71,8 +76,25 @@ function SaveJobTextButton({ jobId, saved }: { jobId: string; saved: boolean }) 
  * source dont l'URL est `http(s)` (revue f9bf90c, point 8) plutôt que
  * `sources[0]` sans condition : une source dont l'URL serait absente/invalide
  * ne doit jamais produire un lien mort en tête d'action.
+ *
+ * `TrackApplicationButton` (spec §2 item 1, tâche 7) prend place juste après
+ * ce CTA externe et avant « Sauvegarder » ; `trackDialogOpen`/
+ * `onTrackDialogOpenChange` sont possédés par `JobDetailHeader` (voir sa
+ * docstring) et simplement relayés ici aux deux rendus de cette rangée.
  */
-function ActionsRow({ job, className }: { job: JobDetailDto; className: string }) {
+function ActionsRow({
+  job,
+  className,
+  compact,
+  trackDialogOpen,
+  onTrackDialogOpenChange,
+}: {
+  job: JobDetailDto;
+  className: string;
+  compact: boolean;
+  trackDialogOpen: boolean;
+  onTrackDialogOpenChange: (open: boolean) => void;
+}) {
   const primarySource = job.sources.find((source) => isHttpUrl(source.url));
   return (
     <div className={className}>
@@ -83,6 +105,7 @@ function ActionsRow({ job, className }: { job: JobDetailDto; className: string }
           </a>
         </Button>
       )}
+      <TrackApplicationButton job={job} open={trackDialogOpen} onOpenChange={onTrackDialogOpenChange} compact={compact} />
       <SaveJobTextButton jobId={job.id} saved={job.saved} />
     </div>
   );
@@ -105,14 +128,43 @@ function experienceText(job: JobDetailDto): string | null {
  * f9bf90c, point 1) — les deux étaient auparavant `fixed bottom-0 z-40` et se
  * recouvraient ; `AppBottomNav` mesure environ 4 rem (`icône + libellé +
  * py-2`), d'où le décalage.
+ *
+ * Suivi de candidature (spec §2 item 1, tâche 7) : l'état d'ouverture de
+ * `ApplicationFormDialog` et l'instance du dialogue elle-même vivent ici,
+ * jamais dans `TrackApplicationButton` — ce bouton est rendu deux fois par
+ * `ActionsRow` (inline et barre collante mobile) ; un état/dialogue par
+ * instance en ouvrirait deux au lieu d'un seul quand l'utilisateur clique.
+ * Les CV adaptés de cette offre (`useResumes`, déjà triés par date de mise à
+ * jour décroissante côté API) sont filtrés puis re-triés ici (défense en
+ * profondeur, spec §2 : « les plus récents en premier ») avant d'être
+ * proposés au formulaire.
  */
 export function JobDetailHeader({ job }: JobDetailHeaderProps) {
+  const navigate = useNavigate();
+  const resumesQuery = useResumes();
+  const [trackDialogOpen, setTrackDialogOpen] = useState(false);
+
   // Repli sur le libellé brut de la source (revue f9bf90c, point 6) : un salaire non
   // reconnu par le mapper (motif inconnu, spec §5) garde `salaryLabel` plutôt que de
   // disparaître complètement de l'en-tête.
   const salary = formatSalaryRange(job.salaryMinAnnual, job.salaryMaxAnnual, job.currency) ?? job.salaryLabel;
   const location = formatLocation(job.locationLabel, job.departmentCode);
   const experience = experienceText(job);
+
+  // `useMemo` (revue tâche 7, point 6) : évite de refiltrer/retrier la liste
+  // complète des CV à chaque rendu (ex. frappe dans un champ voisin) alors que
+  // seuls `resumesQuery.data` et `job.id` en changent le résultat.
+  const tailoredResumes = useMemo(
+    () =>
+      (resumesQuery.data ?? [])
+        .filter((resume) => resume.jobId === job.id)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [resumesQuery.data, job.id],
+  );
+
+  function handleOpenApplication(applicationId: string): void {
+    navigate(`/applications?candidature=${applicationId}`);
+  }
 
   let companyNode: ReactNode = 'Entreprise non précisée';
   if (job.company) {
@@ -165,12 +217,42 @@ export function JobDetailHeader({ job }: JobDetailHeaderProps) {
 
       <JobFreshness publishedAt={job.publishedAt} className="block text-xs text-muted-foreground" />
 
-      <ActionsRow job={job} className="hidden flex-wrap items-center gap-3 sm:flex" />
+      <ActionsRow
+        job={job}
+        className="hidden flex-wrap items-center gap-3 sm:flex"
+        compact={false}
+        trackDialogOpen={trackDialogOpen}
+        onTrackDialogOpenChange={setTrackDialogOpen}
+      />
 
       {/* `bottom-[calc(4rem+…)]` place la barre au-dessus d'`AppBottomNav` (voir docstring du composant) plutôt qu'à `bottom-0`, où les deux se recouvraient. */}
       <div className="mobile-action-bar fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 border-t bg-background pt-3 pb-3 sm:hidden">
-        <ActionsRow job={job} className="mx-auto flex max-w-3xl flex-wrap items-center gap-3 px-4" />
+        <ActionsRow
+          job={job}
+          className="mx-auto flex max-w-3xl flex-wrap items-center gap-3 px-4"
+          compact
+          trackDialogOpen={trackDialogOpen}
+          onTrackDialogOpenChange={setTrackDialogOpen}
+        />
       </div>
+
+      {/*
+        Instance unique du dialogue (voir docstring du composant) : les deux
+        `ActionsRow` ci-dessus ne font que basculer `trackDialogOpen`, jamais
+        monter leur propre `ApplicationFormDialog`. `onCreated` ne fait rien de
+        plus que fermer le dialogue (déjà géré par `ApplicationFormDialog`
+        lui-même) : le toast « Candidature ajoutée » est affiché par le
+        formulaire (spec §2), et le rendu « suivie » du bouton arrive tout seul
+        via l'invalidation de `jobKeys.detail` faite par `useCreateApplication`
+        (revue `use-applications.ts`) — jamais de second toast à poser ici.
+      */}
+      <ApplicationFormDialog
+        open={trackDialogOpen}
+        onOpenChange={setTrackDialogOpen}
+        job={{ id: job.id, title: job.title, company: job.company, tailoredResumes }}
+        onCreated={() => {}}
+        onOpenApplication={handleOpenApplication}
+      />
     </div>
   );
 }

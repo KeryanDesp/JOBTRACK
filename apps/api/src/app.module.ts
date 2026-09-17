@@ -5,6 +5,7 @@ import { CsrfGuard } from './common/csrf.guard';
 import { RateLimitGuard } from './common/rate-limit.guard';
 import { AuthGuard } from './modules/auth/auth.guard';
 import { AuthModule } from './modules/auth/auth.module';
+import { ApplicationsModule } from './modules/applications/applications.module';
 import { CvImportModule } from './modules/cv-import/cv-import.module';
 import { HealthModule } from './modules/health/health.module';
 import { JobsModule } from './modules/jobs/jobs.module';
@@ -23,6 +24,7 @@ import { ResumeModule } from './modules/resume/resume.module';
     JobsModule,
     MatchingModule,
     ResumeModule,
+    ApplicationsModule,
     HealthModule,
   ],
   providers: [

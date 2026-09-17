@@ -23,6 +23,7 @@ model User {
   savedJobs     SavedJob[]
   resumes       Resume[]
   coverLetters  CoverLetter[]
+  applications  Application[]
 }
 
 enum OAuthProvider {
@@ -317,6 +318,7 @@ model Job {
   matches      MatchScore[]
   resumes      Resume[]
   coverLetters CoverLetter[]
+  applications Application[]
   // Index de tri utilisables par le moteur (revue sécurité, tâche 4) — Prisma ne sait
   // exprimer ni le tri DESC + NULLS LAST, ni la condition partielle : la migration
   // `job_indexes_for_sorts` ajoute, à côté des index ci-dessus, `Job_salary_sort_idx`,
@@ -518,6 +520,7 @@ model Resume {
   job          Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
   versions     ResumeVersion[]
   coverLetters CoverLetter[]
+  applications Application[]
 
   @@index([userId, updatedAt])
   @@index([jobId])
@@ -555,10 +558,90 @@ model CoverLetter {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  job    Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  resume Resume? @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job          Job?          @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  resume       Resume?       @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  applications Application[]
 
   @@index([userId, updatedAt])
   @@index([jobId])
+}
+
+enum ApplicationStatus {
+  TO_APPLY
+  APPLIED
+  INTERVIEW
+  OFFER
+  REJECTED
+}
+
+enum ApplicationSource {
+  FRANCE_TRAVAIL
+  LINKEDIN
+  INDEED
+  CAREER_SITE
+  NETWORK
+  OTHER
+}
+
+enum ApplicationEventType {
+  CREATED
+  STATUS_CHANGED
+  NOTE_UPDATED
+  RESUME_CHANGED
+}
+
+// Une candidature suivie par l'utilisateur pour une offre (ou saisie manuellement).
+// Les champs `jobTitle`/`company`/`locationLabel`/`salaryLabel`/`contractLabel` sont
+// un instantané pris à la création : la candidature doit survivre à la disparition
+// de l'offre (purge, expiration — cahier des charges §41), donc ils ne sont jamais
+// resynchronisés depuis `Job` et restent valides même si `jobId` passe à NULL.
+model Application {
+  id             String            @id @default(cuid())
+  userId         String
+  jobId          String?
+  resumeId       String?
+  coverLetterId  String?
+  status         ApplicationStatus @default(TO_APPLY)
+  position       Int               @default(0)
+  jobTitle       String
+  company        String?
+  locationLabel  String?
+  salaryLabel    String?
+  contractLabel  String?
+  source         ApplicationSource
+  sourceUrl      String?
+  // Un **jour**, jamais un instant (spec §4) : colonne `DATE` côté Postgres, et non un
+  // `timestamp` dont l'heure serait toujours 00:00 UTC. Prisma rend une `Date` à minuit UTC,
+  // que le DTO expose en `AAAA-MM-JJ` — la colonne ne peut donc plus porter d'heure trompeuse
+  // écrite par un autre chemin, et un filtre par date se lit sans conversion.
+  appliedAt      DateTime?         @db.Date
+  usedBaseResume Boolean           @default(false)
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job         Job?               @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  resume      Resume?            @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  coverLetter CoverLetter?       @relation(fields: [coverLetterId], references: [id], onDelete: SetNull)
+  events      ApplicationEvent[]
+
+  @@unique([userId, jobId])
+  @@index([userId, status, position])
+  @@index([userId, updatedAt])
+}
+
+model ApplicationEvent {
+  id            String               @id @default(cuid())
+  applicationId String
+  type          ApplicationEventType
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus?
+  note          String?
+  createdAt     DateTime             @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
 }

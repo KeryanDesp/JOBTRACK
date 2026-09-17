@@ -1,14 +1,15 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { NAV_ITEMS } from '@/constants/navigation';
+import { ApplicationsPage } from '@/features/applications/pages/applications-page';
 import { ForgotPasswordPage } from '@/features/auth/pages/forgot-password-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { ImportCvPage } from '@/features/cv-import/pages/import-cv-page';
-import { LandingPage } from '@/features/landing/landing-page';
 import { FavoritesPage } from '@/features/jobs/pages/favorites-page';
 import { JobDetailPage } from '@/features/jobs/pages/job-detail-page';
 import { JobsPage } from '@/features/jobs/pages/jobs-page';
+import { LandingPage } from '@/features/landing/landing-page';
 import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
 import { OnboardingPage } from '@/features/onboarding/pages/onboarding-page';
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
             if (item.to === '/jobs') return { path: item.to, element: <JobsPage /> };
             if (item.to === '/favorites') return { path: item.to, element: <FavoritesPage /> };
             if (item.to === '/resume') return { path: item.to, element: <ResumePage /> };
+            if (item.to === '/applications') return { path: item.to, element: <ApplicationsPage /> };
             return { path: item.to, element: <ComingSoonPage label={item.label} /> };
           }),
         ],

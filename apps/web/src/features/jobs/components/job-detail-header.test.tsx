@@ -1,10 +1,11 @@
-import type { JobDetailDto } from '@jobtrack/shared';
+import type { JobDetailDto, ResumeSummaryDto } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import type * as ResumeApi from '@/services/api/resume';
 import { jobKeys } from '../lib/query-keys';
 import { JobDetailHeader } from './job-detail-header';
 
@@ -21,9 +22,74 @@ vi.mock('@/services/api/jobs', () => ({
   searchJobs: vi.fn(),
 }));
 
+// `JobDetailHeader` appelle `useResumes()` (tâche 7) pour filtrer les CV adaptés de l'offre
+// proposés à `ApplicationFormDialog` — mock requis même quand ce dialogue lui-même est
+// remplacé ci-dessous, ce hook restant, lui, appelé directement par l'en-tête.
+const fetchResumes = vi.hoisted(() => vi.fn());
+
+vi.mock('@/services/api/resume', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResumeApi>()),
+  fetchResumes,
+}));
+
+/**
+ * Remplace `ApplicationFormDialog` par un faux composant (tâche 7 : « mock
+ * `ApplicationFormDialog` ou le rendre avec des providers ») : ce test porte
+ * sur le câblage de `JobDetailHeader` (état partagé, filtrage des CV,
+ * `onOpenApplication`), jamais sur le formulaire lui-même (couvert par son
+ * propre fichier de test, hors périmètre de cette tâche). `applicationFormDialogSpy`
+ * capture les props reçues à chaque rendu pour vérifier le filtrage des CV
+ * adaptés sans avoir à ouvrir le dialogue.
+ */
+const applicationFormDialogSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('@/features/applications/components/application-form-dialog', () => ({
+  ApplicationFormDialog: (props: {
+    open: boolean;
+    onOpenApplication: (id: string) => void;
+  }) => {
+    applicationFormDialogSpy(props);
+    if (!props.open) return null;
+    return (
+      <div role="dialog">
+        <button type="button" onClick={() => props.onOpenApplication('app-existing')}>
+          Ouvrir la fiche (test)
+        </button>
+      </div>
+    );
+  },
+}));
+
+function makeResumeSummary(overrides: Partial<ResumeSummaryDto> = {}): ResumeSummaryDto {
+  return {
+    id: 'resume-1',
+    title: 'CV Développeuse full-stack — Acme',
+    jobId: 'job-1',
+    jobTitle: 'Développeuse full-stack',
+    company: 'Acme',
+    template: 'CLASSIC',
+    currentVersion: 1,
+    createdAt: '2026-09-17T00:00:00.000Z',
+    updatedAt: '2026-09-17T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+/** Affiche l'URL courante (tâche 7 : vérifie que `onOpenApplication` navigue bien). */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>;
+}
+
+beforeEach(() => {
+  fetchResumes.mockResolvedValue([]);
+});
+
 afterEach(() => {
   saveJob.mockReset();
   unsaveJob.mockReset();
+  fetchResumes.mockReset();
+  applicationFormDialogSpy.mockReset();
 });
 
 function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
@@ -80,6 +146,7 @@ function makeDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
     requirements: [],
     saved: false,
     match: null,
+    application: null,
     ...overrides,
   };
 }
@@ -122,6 +189,21 @@ function renderHarness(job: JobDetailDto) {
         <TooltipProvider>
           <Harness job={job} />
         </TooltipProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** Comme `renderHeader`, avec `LocationProbe` en plus pour vérifier une navigation (tâche 7). */
+function renderHeaderWithProbe(job: JobDetailDto) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TooltipProvider>
+          <JobDetailHeader job={job} />
+        </TooltipProvider>
+        <LocationProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -201,5 +283,68 @@ describe('JobDetailHeader', () => {
 
     const [link] = screen.getAllByRole('link', { name: "Voir l'offre sur France Travail" });
     expect(link).toHaveAttribute('href', 'https://candidat.francetravail.fr/offres/recherche/detail/job-1');
+  });
+
+  it('ouvre un seul dialogue de suivi partage malgre les deux instances du bouton (inline + barre mobile)', async () => {
+    const user = userEvent.setup();
+    renderHeader(makeDetail({ application: null }));
+
+    const [inlineTrigger, mobileTrigger] = screen.getAllByRole('button', { name: 'Suivre cette candidature' });
+    if (!inlineTrigger || !mobileTrigger) throw new Error('Boutons "Suivre cette candidature" introuvables.');
+
+    await user.click(inlineTrigger);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+
+    // Le second déclencheur (barre mobile) bascule le même état partagé : toujours un seul dialogue.
+    await user.click(mobileTrigger);
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  it('filtre les CV adaptes de cette offre, les plus recents en premier, avant de les passer au dialogue', async () => {
+    fetchResumes.mockResolvedValue([
+      makeResumeSummary({ id: 'resume-autre-offre', jobId: 'job-2', updatedAt: '2026-09-17T12:00:00.000Z' }),
+      makeResumeSummary({ id: 'resume-ancien', jobId: 'job-1', updatedAt: '2026-09-01T00:00:00.000Z' }),
+      makeResumeSummary({ id: 'resume-recent', jobId: 'job-1', updatedAt: '2026-09-16T00:00:00.000Z' }),
+    ]);
+    renderHeader(makeDetail({ id: 'job-1', application: null }));
+
+    await waitFor(() => {
+      const lastCall = applicationFormDialogSpy.mock.calls.at(-1)?.[0] as
+        | { job: { tailoredResumes: { id: string }[] } }
+        | undefined;
+      expect(lastCall?.job.tailoredResumes.map((resume) => resume.id)).toEqual(['resume-recent', 'resume-ancien']);
+    });
+  });
+
+  it('navigue vers la fiche existante quand le dialogue signale onOpenApplication (ex: doublon 409)', async () => {
+    const user = userEvent.setup();
+    renderHeaderWithProbe(makeDetail({ application: null }));
+
+    const [inlineTrigger] = screen.getAllByRole('button', { name: 'Suivre cette candidature' });
+    if (!inlineTrigger) throw new Error('Bouton "Suivre cette candidature" introuvable.');
+    await user.click(inlineTrigger);
+
+    await user.click(await screen.findByRole('button', { name: 'Ouvrir la fiche (test)' }));
+
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/applications?candidature=app-existing');
+  });
+
+  it('affiche le libelle complet en ligne et le libelle compact Suivre dans la barre mobile (offre non suivie)', () => {
+    renderHeader(makeDetail({ application: null }));
+
+    expect(screen.getByText('Suivre cette candidature')).toBeInTheDocument();
+    expect(screen.getByText('Suivre')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Suivre cette candidature' })).toHaveLength(2);
+  });
+
+  it('affiche le libelle complet avec statut en ligne et le libelle compact Suivie dans la barre mobile (offre suivie)', () => {
+    renderHeader(makeDetail({ application: { id: 'app-1', status: 'INTERVIEW' } }));
+
+    expect(screen.getByText('Candidature suivie · Entretien')).toBeInTheDocument();
+    expect(screen.getByText('Suivie')).toBeInTheDocument();
+    const links = screen.getAllByRole('link', { name: 'Candidature suivie · Entretien' });
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toHaveAttribute('href', '/applications?candidature=app-1');
   });
 });

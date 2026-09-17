@@ -90,6 +90,7 @@ function makeJobDetail(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
     skills: [],
     sources: [],
     requirements: [],
+    application: null,
     ...overrides,
   };
 }
