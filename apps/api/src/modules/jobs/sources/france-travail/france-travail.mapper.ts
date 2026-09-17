@@ -35,6 +35,19 @@ const APPRENTICESHIP_NATURE_CODES = new Set(['E2', 'FS']);
 
 const POSTAL_CODE_PATTERN = /^\d{5}$/;
 
+/**
+ * Un code commune ou un code postal exploitable : cinq chiffres, ou (Corse)
+ * `2A`/`2B` suivi de trois chiffres pour un code commune. Une valeur qui ne
+ * respecte pas ce format (source hostile ou champ mal renseigné) devient
+ * `null` plutôt que d'être propagée telle quelle jusqu'en base.
+ */
+const LOCATION_CODE_PATTERN = /^\d{5}$|^2[AB]\d{3}$/;
+
+function cleanLocationCode(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return LOCATION_CODE_PATTERN.test(value) ? value : null;
+}
+
 function isHttpUrl(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
@@ -150,8 +163,8 @@ function mapLocation(offer: FranceTravailOffer): {
   locationLabel: string | null;
 } {
   const lieu = offer.lieuTravail;
-  const communeCode = lieu?.commune ?? null;
-  const postalCode = lieu?.codePostal ?? null;
+  const communeCode = cleanLocationCode(lieu?.commune);
+  const postalCode = cleanLocationCode(lieu?.codePostal);
 
   let departmentCode: string | null = null;
   if (communeCode) departmentCode = departmentCodeFromCommuneCode(communeCode);
@@ -220,7 +233,7 @@ export function mapFranceTravailOffer(offer: FranceTravailOffer, now: Date = new
     longitude: location.longitude,
     contractType,
     contractLabel: cleanLabel(offer.typeContratLibelle ?? offer.typeContrat),
-    contractNature: offer.natureContrat ?? null,
+    contractNature: cleanLabel(offer.natureContrat),
     remoteMode,
     remoteModeInferred: remoteMode !== null,
     experienceLevel,
@@ -236,7 +249,7 @@ export function mapFranceTravailOffer(offer: FranceTravailOffer, now: Date = new
     positionsCount: positiveInteger(offer.nombrePostes),
     accessibleTh: offer.accessibleTH ?? null,
     sectorLabel: cleanLabel(offer.secteurActiviteLibelle),
-    romeCode: offer.romeCode ?? null,
+    romeCode: cleanLabel(offer.romeCode),
     romeLabel: cleanLabel(offer.romeLibelle),
     qualificationLabel: cleanLabel(offer.qualificationLibelle),
     publishedAt,

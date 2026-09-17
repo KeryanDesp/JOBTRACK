@@ -106,28 +106,6 @@ export class CommuneService {
     return rows.map(toCommuneDto);
   }
 
-  /**
-   * Correspondance exacte (normalisée) d'abord, puis préfixe. Plusieurs communes
-   * homonymes (même nom normalisé, communes distinctes) donnent `null` plutôt qu'un
-   * choix arbitraire : aucun ordre ne rendrait ce choix sûr, jamais de préférence
-   * silencieuse pour l'une d'entre elles.
-   */
-  async resolveByName(name: string): Promise<CommuneDto | null> {
-    const key = normalizeForKey(name);
-    if (!key) return null;
-
-    const exactMatches = await this.prisma.commune.findMany({ where: { nameNormalized: key }, take: 2 });
-    if (exactMatches.length > 1) return null;
-    const [exact] = exactMatches;
-    if (exact) return toCommuneDto(exact);
-
-    const prefix = await this.prisma.commune.findFirst({
-      where: { nameNormalized: { startsWith: key } },
-      orderBy: { name: 'asc' },
-    });
-    return prefix ? toCommuneDto(prefix) : null;
-  }
-
   private async safeRedisGet(key: string): Promise<string | null> {
     try {
       return await this.redis.client.get(key);

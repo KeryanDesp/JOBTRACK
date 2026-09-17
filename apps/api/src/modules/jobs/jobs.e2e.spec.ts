@@ -27,6 +27,16 @@ const BASE = '/api/v1/jobs';
 // candidates au nettoyage e2e ci-dessous, ni inversement.
 const E2E_EXTERNAL_ID_PREFIX = 'E2E-';
 
+// Noms d'entreprise des fixtures, préfixés comme `FakeConnector` le fait désormais pour
+// `entreprise.nom` (revue sécurité, tâche 6) : une empreinte e2e ne doit jamais pouvoir se
+// rattacher à une offre `FT-…` semée pour le développement (`pnpm jobs:seed`), y compris via
+// le nom de l'entreprise plutôt que via l'identifiant externe.
+const SOLARIS_INGENIERIE = `${E2E_EXTERNAL_ID_PREFIX}Solaris Ingénierie`;
+const NOVA_SYSTEMES = `${E2E_EXTERNAL_ID_PREFIX}Nova Systèmes`;
+const BRIGHTLOOP_TECHNOLOGIES = `${E2E_EXTERNAL_ID_PREFIX}BrightLoop Technologies`;
+const VERDANIA_SAS = `${E2E_EXTERNAL_ID_PREFIX}Verdania SAS`;
+const PILOTO_SOFTWARE = `${E2E_EXTERNAL_ID_PREFIX}Piloto Software`;
+
 // Codes du référentiel de test (`fixtures/france-travail/communes-sample.json`), à
 // l'exclusion des deux lignes invalides (code ou libellé vide, jamais insérées) : la seule
 // donnée que `ensureLoaded()` insère pour cette suite, nettoyée une fois à la toute fin
@@ -278,7 +288,7 @@ describe('GET /jobs — synchronisation et cache', () => {
     expect(response.body.page).toBe(1);
     expect(response.body.pageSize).toBe(20);
 
-    const solaris = findByCompany(response.body.items, 'Solaris Ingénierie');
+    const solaris = findByCompany(response.body.items, SOLARIS_INGENIERIE);
     expect(solaris.saved).toBe(false);
     expect(solaris.sources).toEqual(['FRANCE_TRAVAIL']);
     expect(solaris).not.toHaveProperty('description');
@@ -381,7 +391,7 @@ describe('GET /jobs — filtres et tri', () => {
 
     expect(response.body.items.length).toBeGreaterThan(0);
     for (const item of response.body.items) expect(item.remoteMode).toBe('HYBRID');
-    expect(response.body.items.some((item) => item.company === 'BrightLoop Technologies')).toBe(true);
+    expect(response.body.items.some((item) => item.company === BRIGHTLOOP_TECHNOLOGIES)).toBe(true);
   });
 
   it('exp=JUNIOR ne renvoie que des offres de niveau junior', async () => {
@@ -403,7 +413,7 @@ describe('GET /jobs — filtres et tri', () => {
       expect(best as number).toBeGreaterThanOrEqual(40_000);
     }
     // Une offre sans salaire exploitable ("Selon profil") ne doit jamais apparaître.
-    expect(response.body.items.some((item) => item.company === 'Verdania SAS')).toBe(false);
+    expect(response.body.items.some((item) => item.company === VERDANIA_SAS)).toBe(false);
   });
 
   it('depuis=1 ne renvoie que des offres publiees dans les 24 dernieres heures', async () => {
@@ -416,7 +426,7 @@ describe('GET /jobs — filtres et tri', () => {
       expect(now - new Date(item.publishedAt).getTime()).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 1000);
     }
     // Nancy (FT-0002) est délibérément ancienne dans le connecteur factice.
-    expect(response.body.items.some((item) => item.company === 'Nova Systèmes')).toBe(false);
+    expect(response.body.items.some((item) => item.company === NOVA_SYSTEMES)).toBe(false);
   });
 
   it('onglet=new se comporte comme depuis=1 (publiees depuis 24 h)', async () => {
@@ -424,7 +434,7 @@ describe('GET /jobs — filtres et tri', () => {
     const response = await search(session, 'onglet=new');
 
     expect(response.body.items.length).toBeGreaterThan(0);
-    expect(response.body.items.some((item) => item.company === 'Nova Systèmes')).toBe(false);
+    expect(response.body.items.some((item) => item.company === NOVA_SYSTEMES)).toBe(false);
   });
 
   it('lieu=57463 limite aux offres de Metz (et de son departement)', async () => {
@@ -433,7 +443,7 @@ describe('GET /jobs — filtres et tri', () => {
 
     expect(response.body.items.length).toBeGreaterThan(0);
     for (const item of response.body.items) expect(item.departmentCode).toBe('57');
-    expect(response.body.items.some((item) => item.company === 'Solaris Ingénierie')).toBe(true);
+    expect(response.body.items.some((item) => item.company === SOLARIS_INGENIERIE)).toBe(true);
   });
 
   it('des parametres lieu repetes sont combines en plusieurs communes', async () => {
@@ -441,8 +451,8 @@ describe('GET /jobs — filtres et tri', () => {
     const response = await search(session, 'lieu=57463&lieu=54395');
 
     expect(response.body.items.length).toBeGreaterThan(0);
-    expect(response.body.items.some((item) => item.company === 'Solaris Ingénierie')).toBe(true);
-    expect(response.body.items.some((item) => item.company === 'Nova Systèmes')).toBe(true);
+    expect(response.body.items.some((item) => item.company === SOLARIS_INGENIERIE)).toBe(true);
+    expect(response.body.items.some((item) => item.company === NOVA_SYSTEMES)).toBe(true);
     for (const item of response.body.items) expect(['57', '54']).toContain(item.departmentCode);
   });
 
@@ -452,7 +462,7 @@ describe('GET /jobs — filtres et tri', () => {
 
     expect(response.body.items.length).toBeGreaterThan(0);
     for (const item of response.body.items) expect(item.title.toLowerCase()).toContain('react');
-    expect(response.body.items.some((item) => item.company === 'Piloto Software')).toBe(true);
+    expect(response.body.items.some((item) => item.company === PILOTO_SOFTWARE)).toBe(true);
   });
 
   it('q=% echappe les metacaracteres LIKE au lieu de tout renvoyer', async () => {
@@ -520,7 +530,7 @@ describe('GET /jobs/:id — detail', () => {
   it('renvoie le detail complet (sources, competences, exigences, saved), sans champ interne', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const summary = findByCompany(list.body.items, 'Solaris Ingénierie');
+    const summary = findByCompany(list.body.items, SOLARIS_INGENIERIE);
 
     const response = await getJson<JobDetailDto>(session, `/${summary.id}`);
 
@@ -550,7 +560,7 @@ describe('GET /jobs/:id — detail', () => {
   it('une offre non revue depuis plus de 24h et disparue de la source devient expiree', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const nova = findByCompany(list.body.items, 'Nova Systèmes');
+    const nova = findByCompany(list.body.items, NOVA_SYSTEMES);
 
     await prisma.job.update({
       where: { id: nova.id },
@@ -568,7 +578,7 @@ describe('GET /jobs/:id — detail', () => {
   it('au plus un appel source par offre et par heure, quel que soit le resultat (erreur incluse)', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const nova = findByCompany(list.body.items, 'Nova Systèmes');
+    const nova = findByCompany(list.body.items, NOVA_SYSTEMES);
 
     await prisma.job.update({
       where: { id: nova.id },
@@ -591,7 +601,7 @@ describe('Favoris', () => {
   it('sauvegarder une offre la marque saved dans la liste et dans /jobs/saved', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const solaris = findByCompany(list.body.items, 'Solaris Ingénierie');
+    const solaris = findByCompany(list.body.items, SOLARIS_INGENIERIE);
 
     const save = await app.inject({
       method: 'POST',
@@ -601,7 +611,7 @@ describe('Favoris', () => {
     expect(save.statusCode).toBe(204);
 
     const relisted = await search(session);
-    expect(findByCompany(relisted.body.items, 'Solaris Ingénierie').saved).toBe(true);
+    expect(findByCompany(relisted.body.items, SOLARIS_INGENIERIE).saved).toBe(true);
 
     const saved = await getJson<JobSummaryDto[]>(session, '/saved');
     expect(saved.body.some((item) => item.id === solaris.id && item.saved)).toBe(true);
@@ -610,7 +620,7 @@ describe('Favoris', () => {
   it('sauvegarder deux fois est idempotent (une seule ligne)', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const solaris = findByCompany(list.body.items, 'Solaris Ingénierie');
+    const solaris = findByCompany(list.body.items, SOLARIS_INGENIERIE);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const response = await app.inject({
@@ -639,7 +649,7 @@ describe('Favoris', () => {
   it('retirer une offre est idempotent, y compris quand elle n_est pas sauvegardee', async () => {
     const session = await registerUser();
     const list = await search(session);
-    const solaris = findByCompany(list.body.items, 'Solaris Ingénierie');
+    const solaris = findByCompany(list.body.items, SOLARIS_INGENIERIE);
 
     await app.inject({ method: 'POST', url: `${BASE}/${solaris.id}/save`, headers: authHeaders(session) });
 
@@ -651,7 +661,7 @@ describe('Favoris', () => {
     expect(firstUnsave.statusCode).toBe(204);
 
     const relisted = await search(session);
-    expect(findByCompany(relisted.body.items, 'Solaris Ingénierie').saved).toBe(false);
+    expect(findByCompany(relisted.body.items, SOLARIS_INGENIERIE).saved).toBe(false);
 
     const secondUnsave = await app.inject({
       method: 'DELETE',
@@ -664,13 +674,13 @@ describe('Favoris', () => {
   it('isole les favoris entre utilisateurs : B ne voit ni le drapeau ni l_offre de A', async () => {
     const sessionA = await registerUser();
     const listA = await search(sessionA);
-    const solaris = findByCompany(listA.body.items, 'Solaris Ingénierie');
+    const solaris = findByCompany(listA.body.items, SOLARIS_INGENIERIE);
 
     await app.inject({ method: 'POST', url: `${BASE}/${solaris.id}/save`, headers: authHeaders(sessionA) });
 
     const sessionB = await registerUser();
     const listB = await search(sessionB);
-    expect(findByCompany(listB.body.items, 'Solaris Ingénierie').saved).toBe(false);
+    expect(findByCompany(listB.body.items, SOLARIS_INGENIERIE).saved).toBe(false);
 
     const savedB = await getJson<JobSummaryDto[]>(sessionB, '/saved');
     expect(savedB.body).toEqual([]);

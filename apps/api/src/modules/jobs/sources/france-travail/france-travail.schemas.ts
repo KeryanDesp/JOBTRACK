@@ -28,6 +28,21 @@ function tolerantArray<T extends z.ZodType<unknown, z.ZodTypeDef, unknown>>(
   });
 }
 
+/**
+ * Chaîne libre optionnelle, tronquée à `max` caractères plutôt que rejetée :
+ * dans l'esprit tolérant de ce fichier (voir l'en-tête), un champ texte trop
+ * long (source hostile ou aberrante) ne doit jamais faire échouer le parsing
+ * d'une offre entière — il est simplement raccourci, comme `cleanText` le
+ * refait de toute façon plus loin dans le mapper pour les champs affichés.
+ */
+function tolerantString(max: number) {
+  return z
+    .string()
+    .optional()
+    .nullable()
+    .transform((value) => (value == null ? value : value.slice(0, max)));
+}
+
 /** Jeton OAuth2 (`client_credentials`). `access_token` est le seul champ indispensable. */
 export const franceTravailTokenSchema = z
   .object({
@@ -42,34 +57,37 @@ export type FranceTravailToken = z.infer<typeof franceTravailTokenSchema>;
 
 const franceTravailFormationSchema = z
   .object({
-    codeFormation: z.string().optional().nullable(),
-    domaineLibelle: z.string().optional().nullable(),
-    niveauLibelle: z.string().optional().nullable(),
-    commentaire: z.string().optional().nullable(),
-    exigence: z.string().optional().nullable(),
+    codeFormation: tolerantString(200),
+    domaineLibelle: tolerantString(200),
+    niveauLibelle: tolerantString(200),
+    commentaire: tolerantString(200),
+    exigence: tolerantString(200),
   })
   .strip();
 
 const franceTravailLangueSchema = z
   .object({
-    libelle: z.string().optional().nullable(),
-    exigence: z.string().optional().nullable(),
+    libelle: tolerantString(200),
+    exigence: tolerantString(200),
   })
   .strip();
 
 const franceTravailCompetenceSchema = z
   .object({
-    code: z.string().optional().nullable(),
-    libelle: z.string().optional().nullable(),
-    exigence: z.string().optional().nullable(),
+    code: tolerantString(200),
+    libelle: tolerantString(200),
+    exigence: tolerantString(200),
   })
   .strip();
 
 const franceTravailLieuTravailSchema = z
   .object({
-    libelle: z.string().optional().nullable(),
+    libelle: tolerantString(200),
     latitude: z.number().optional().nullable(),
     longitude: z.number().optional().nullable(),
+    // Codes, jamais du texte libre : longueur non bornée ici, la forme exacte
+    // (cinq chiffres, ou `2A`/`2B` + trois chiffres) est vérifiée plus loin par
+    // le mapper (`cleanLocationCode`), qui renvoie `null` sur toute anomalie.
     codePostal: z.string().optional().nullable(),
     commune: z.string().optional().nullable(),
   })
@@ -77,8 +95,8 @@ const franceTravailLieuTravailSchema = z
 
 const franceTravailEntrepriseSchema = z
   .object({
-    nom: z.string().optional().nullable(),
-    description: z.string().optional().nullable(),
+    nom: tolerantString(200),
+    description: tolerantString(2000),
     logo: z.string().optional().nullable(),
     url: z.string().optional().nullable(),
   })
@@ -86,22 +104,22 @@ const franceTravailEntrepriseSchema = z
 
 const franceTravailSalaireSchema = z
   .object({
-    libelle: z.string().optional().nullable(),
-    commentaire: z.string().optional().nullable(),
-    complement1: z.string().optional().nullable(),
-    complement2: z.string().optional().nullable(),
+    libelle: tolerantString(200),
+    commentaire: tolerantString(200),
+    complement1: tolerantString(200),
+    complement2: tolerantString(200),
   })
   .strip();
 
 const franceTravailContactSchema = z
   .object({
-    nom: z.string().optional().nullable(),
-    coordonnees1: z.string().optional().nullable(),
-    coordonnees2: z.string().optional().nullable(),
-    coordonnees3: z.string().optional().nullable(),
-    telephone: z.string().optional().nullable(),
-    courriel: z.string().optional().nullable(),
-    commentaire: z.string().optional().nullable(),
+    nom: tolerantString(200),
+    coordonnees1: tolerantString(200),
+    coordonnees2: tolerantString(200),
+    coordonnees3: tolerantString(200),
+    telephone: tolerantString(200),
+    courriel: tolerantString(200),
+    commentaire: tolerantString(200),
     urlRecruteur: z.string().optional().nullable(),
     urlPostulation: z.string().optional().nullable(),
   })
@@ -109,7 +127,7 @@ const franceTravailContactSchema = z
 
 const franceTravailPartenaireSchema = z
   .object({
-    nom: z.string().optional().nullable(),
+    nom: tolerantString(200),
     url: z.string().optional().nullable(),
     logo: z.string().optional().nullable(),
   })
@@ -117,7 +135,7 @@ const franceTravailPartenaireSchema = z
 
 const franceTravailOrigineOffreSchema = z
   .object({
-    origine: z.string().optional().nullable(),
+    origine: tolerantString(200),
     urlOrigine: z.string().optional().nullable(),
     partenaires: tolerantArray(franceTravailPartenaireSchema),
   })
@@ -126,39 +144,42 @@ const franceTravailOrigineOffreSchema = z
 /** Une offre France Travail — tous les champs sont optionnels (spec §4). */
 export const franceTravailOfferSchema = z
   .object({
+    // Identifiant, jamais du texte libre : aucune troncature, une valeur
+    // tronquée casserait l'égalité avec les identifiants utilisés ailleurs
+    // (dédoublonnage, `markRemoved`, purge des fixtures…).
     id: z.string().optional().nullable(),
-    intitule: z.string().optional().nullable(),
-    description: z.string().optional().nullable(),
+    intitule: tolerantString(2000),
+    description: tolerantString(20_000),
     dateCreation: z.string().optional().nullable(),
     dateActualisation: z.string().optional().nullable(),
     lieuTravail: franceTravailLieuTravailSchema.optional().nullable(),
-    romeCode: z.string().optional().nullable(),
-    romeLibelle: z.string().optional().nullable(),
-    appellationlibelle: z.string().optional().nullable(),
+    romeCode: tolerantString(200),
+    romeLibelle: tolerantString(200),
+    appellationlibelle: tolerantString(200),
     entreprise: franceTravailEntrepriseSchema.optional().nullable(),
-    typeContrat: z.string().optional().nullable(),
-    typeContratLibelle: z.string().optional().nullable(),
-    natureContrat: z.string().optional().nullable(),
-    experienceExige: z.string().optional().nullable(),
-    experienceLibelle: z.string().optional().nullable(),
+    typeContrat: tolerantString(200),
+    typeContratLibelle: tolerantString(200),
+    natureContrat: tolerantString(200),
+    experienceExige: tolerantString(200),
+    experienceLibelle: tolerantString(200),
     formations: tolerantArray(franceTravailFormationSchema),
     langues: tolerantArray(franceTravailLangueSchema),
     competences: tolerantArray(franceTravailCompetenceSchema),
     salaire: franceTravailSalaireSchema.optional().nullable(),
-    dureeTravailLibelle: z.string().optional().nullable(),
-    dureeTravailLibelleConverti: z.string().optional().nullable(),
+    dureeTravailLibelle: tolerantString(200),
+    dureeTravailLibelleConverti: tolerantString(200),
     alternance: z.boolean().optional().nullable(),
     contact: franceTravailContactSchema.optional().nullable(),
     nombrePostes: z.number().optional().nullable(),
     accessibleTH: z.boolean().optional().nullable(),
-    qualificationCode: z.string().optional().nullable(),
-    qualificationLibelle: z.string().optional().nullable(),
-    secteurActivite: z.string().optional().nullable(),
-    secteurActiviteLibelle: z.string().optional().nullable(),
+    qualificationCode: tolerantString(200),
+    qualificationLibelle: tolerantString(200),
+    secteurActivite: tolerantString(200),
+    secteurActiviteLibelle: tolerantString(200),
     origineOffre: franceTravailOrigineOffreSchema.optional().nullable(),
     // Absent sur certaines offres (mission d'intérim, apprentissage) : jamais garanti.
     tempsPlein: z.boolean().optional().nullable(),
-    deplacementLibelle: z.string().optional().nullable(),
+    deplacementLibelle: tolerantString(200),
   })
   .strip();
 

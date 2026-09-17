@@ -314,7 +314,16 @@ model Job {
   @@index([lastSeenAt])
   @@index([contractType, publishedAt])
   @@index([departmentCode, publishedAt])
-  @@index([salaryMaxAnnual, publishedAt])
+  @@index([communeCode, publishedAt])
+  // Index de tri utilisables par le moteur (revue sécurité, tâche 4) — Prisma ne sait
+  // exprimer ni le tri DESC + NULLS LAST, ni la condition partielle : la migration
+  // `job_indexes_for_sorts` ajoute, à côté des index ci-dessus, `Job_salary_sort_idx`,
+  // `Job_recent_sort_idx` et `Job_communeCode_sort_idx` (tous `WHERE "expiredAt" IS
+  // NULL`, colonnes DESC) — sous des noms distincts de tout `@@index` déclaré ici,
+  // vérifié via `prisma migrate diff` : un nom en collision avec un index déclaré (ex.
+  // le défaut `Job_communeCode_publishedAt_idx` pour `@@index([communeCode,
+  // publishedAt])` ci-dessus) fait que `migrate dev` tente de le remplacer par sa
+  // version ASC pleine, jamais souhaité pour ces trois-là.
 }
 
 model JobSource {
@@ -389,6 +398,15 @@ model Commune {
   postalCode     String?
   departmentCode String
 
+  // `nameNormalized`/`postalCode` sont interrogés par `startsWith` (CommuneService.search) :
+  // un index B-tree ordinaire ne sert ce filtre que si la collation de la base est `C`,
+  // jamais garanti. La migration `job_indexes_for_sorts` ajoute donc, en complément des
+  // deux index B-tree ci-dessous, deux index `text_pattern_ops`
+  // (`Commune_nameNormalized_pattern_idx`, `Commune_postalCode_pattern_idx`) — sous des
+  // noms distincts, inexprimables dans ce DSL (opclass). Ils ne remplacent pas les
+  // `@@index` ci-dessous : `prisma migrate dev` a été vérifié pour vouloir les supprimer
+  // (les considérant hors schéma, sans réintroduire de remplaçant) dès que ces deux
+  // `@@index` sont retirés d'ici — les garder tous les deux est le choix sûr.
   @@index([nameNormalized])
   @@index([postalCode])
 }

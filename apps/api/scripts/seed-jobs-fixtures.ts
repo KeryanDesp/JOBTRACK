@@ -4,6 +4,7 @@ import { PrismaService } from '../src/common/prisma.service';
 import { JobIngestionService } from '../src/modules/jobs/job-ingestion.service';
 import { mapFranceTravailOffer } from '../src/modules/jobs/sources/france-travail/france-travail.mapper';
 import { FakeConnector } from '../src/modules/jobs/testing/fake-connector';
+import { assertDevDatabase } from './guard-dev-database';
 
 loadDotenv({ path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')] });
 
@@ -16,6 +17,8 @@ loadDotenv({ path: [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../.
  * main (pas de conteneur Nest : `tsx` n'émet pas les métadonnées de décorateurs).
  */
 async function main(): Promise<void> {
+  assertDevDatabase();
+
   const prisma = new PrismaService();
   await prisma.$connect();
   try {

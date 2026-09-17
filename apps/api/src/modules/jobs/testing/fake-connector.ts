@@ -188,11 +188,22 @@ export class FakeConnector implements JobSourceConnector {
     );
   }
 
-  /** Applique la fraîcheur puis le préfixe (`id` et `externalId` restent cohérents entre eux). */
+  /**
+   * Applique la fraîcheur puis le préfixe (`id` et `externalId` restent cohérents entre eux).
+   * `entreprise.nom` porte lui aussi le préfixe (revue sécurité, tâche 6) : sans cela, une
+   * offre e2e (`E2E-…`) et une offre semée pour le développement (`FT-…`, sans préfixe)
+   * peuvent partager la même entreprise fictive, et donc la même empreinte de déduplication
+   * (spec §5, empreinte dérivée du couple titre/entreprise) — un nettoyage e2e scopé sur
+   * `E2E-` toucherait alors une offre de développement qu'il ne devrait jamais voir.
+   */
   private present(offer: FranceTravailOffer & { id: string }, now: Date): SourceOffer {
     const fresh = withFreshDate(offer, now);
     const externalId = `${this.externalIdPrefix}${fresh.id}`;
-    return { kind: this.kind, externalId, raw: { ...fresh, id: externalId } };
+    const entreprise =
+      this.externalIdPrefix && fresh.entreprise?.nom
+        ? { ...fresh.entreprise, nom: `${this.externalIdPrefix}${fresh.entreprise.nom}` }
+        : fresh.entreprise;
+    return { kind: this.kind, externalId, raw: { ...fresh, id: externalId, entreprise } };
   }
 
   private stripPrefix(externalId: string): string {

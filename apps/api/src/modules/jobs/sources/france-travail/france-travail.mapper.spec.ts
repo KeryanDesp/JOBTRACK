@@ -392,6 +392,88 @@ describe('mapFranceTravailOffer — url de repli et dates', () => {
   });
 });
 
+describe('mapFranceTravailOffer — contractNature et romeCode nettoyes (revue securite, tache 3)', () => {
+  it('nettoie les caracteres de controle dans natureContrat sans le vider', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({ id: 'FT-9050', intitule: 'Poste', natureContrat: 'Contrat travail ‮' }),
+    );
+    expect(draft?.contractNature).toBe('Contrat travail');
+  });
+
+  it('natureContrat reduit a des caracteres de controle une fois nettoye devient nul', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9051', intitule: 'Poste', natureContrat: '  ' }));
+    expect(draft?.contractNature).toBeNull();
+  });
+
+  it('natureContrat absent reste nul', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9052', intitule: 'Poste', natureContrat: null }));
+    expect(draft?.contractNature).toBeNull();
+  });
+
+  it('nettoie les caracteres de controle dans romeCode sans le vider', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9053', intitule: 'Poste', romeCode: 'M1805 ' }));
+    expect(draft?.romeCode).toBe('M1805');
+  });
+
+  it('romeCode reduit a des caracteres de controle une fois nettoye devient nul', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9054', intitule: 'Poste', romeCode: '‮' }));
+    expect(draft?.romeCode).toBeNull();
+  });
+
+  it('romeCode absent reste nul', () => {
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9055', intitule: 'Poste', romeCode: null }));
+    expect(draft?.romeCode).toBeNull();
+  });
+});
+
+describe('mapFranceTravailOffer — validation stricte de communeCode et postalCode (revue securite, tache 3)', () => {
+  it('conserve un code commune a cinq chiffres', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9060',
+        intitule: 'Poste',
+        lieuTravail: { libelle: null, latitude: null, longitude: null, codePostal: null, commune: '57463' },
+      }),
+    );
+    expect(draft?.communeCode).toBe('57463');
+  });
+
+  it('conserve un code commune corse (2A/2B suivi de trois chiffres)', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9061',
+        intitule: 'Poste',
+        lieuTravail: { libelle: null, latitude: null, longitude: null, codePostal: null, commune: '2B033' },
+      }),
+    );
+    expect(draft?.communeCode).toBe('2B033');
+  });
+
+  it('rejette un code commune hors format et retombe sur le code postal pour le departement', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9062',
+        intitule: 'Poste',
+        lieuTravail: { libelle: null, latitude: null, longitude: null, codePostal: '75001', commune: 'invalide' },
+      }),
+    );
+    expect(draft?.communeCode).toBeNull();
+    expect(draft?.departmentCode).toBe('75');
+  });
+
+  it('rejette un code postal hors format (ni cinq chiffres, ni 2A/2B)', () => {
+    const draft = mapFranceTravailOffer(
+      buildOffer({
+        id: 'FT-9063',
+        intitule: 'Poste',
+        lieuTravail: { libelle: null, latitude: null, longitude: null, codePostal: 'ABCDE', commune: null },
+      }),
+    );
+    expect(draft?.postalCode).toBeNull();
+    expect(draft?.departmentCode).toBeNull();
+  });
+});
+
 describe('mapFranceTravailOffer — deduplication des competences', () => {
   it('deduplique deux competences de meme nom normalise', () => {
     const draft = mapFranceTravailOffer(

@@ -18,12 +18,15 @@ export interface SourceQuery {
 
 /**
  * Une offre brute renvoyée par une source, déjà validée par le schéma Zod du
- * connecteur (jamais `unknown`) mais pas encore normalisée en `Job`.
+ * connecteur (jamais `unknown`) mais pas encore normalisée en `Job`. `TRaw`
+ * par défaut à `FranceTravailOffer` — seule source aujourd'hui — pour ne
+ * casser aucun appelant existant ; un connecteur futur (tranche 8) instancie
+ * `SourceOffer<SonPropreTypeBrut>`.
  */
-export interface SourceOffer {
+export interface SourceOffer<TRaw = FranceTravailOffer> {
   kind: JobSourceKind;
   externalId: string;
-  raw: FranceTravailOffer;
+  raw: TRaw;
 }
 
 /** Une commune du référentiel d'une source (France Travail : ~35 000 lignes). */
