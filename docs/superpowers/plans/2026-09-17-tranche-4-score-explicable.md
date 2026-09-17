@@ -105,6 +105,9 @@ Revue : contrat conforme (§4/§5/§6), `zodOutputFormat` compatible (constaté 
 Note d'exécution initiale :
 Contrat livré (28 tests `matching`, 8 tests `jobs`) ; `JobSummaryDto.match` devient obligatoire (`| null`) → le pont `9900ce7` renseigne `match: null` côté API (rempli en tâche 6) et filtre côté web les onglets/tris désormais présents dans `JOB_TABS`/`JOB_SORT_OPTIONS` mais encore rendus comme espaces réservés désactivés (valeurs alignées sur le contrat : `for_you`, `priority`, `match`, `relevance`) — la tâche 8 retire ces espaces réservés. shared 141 → 178.
 
+### Task 4 — amendement après revue sécurité (`35cd5b6` + correctif `3454c3e`)
+Port fidèle du socle d'extraction (données jamais instruction, sortie contrainte, mappage d'erreurs à parité, jetons comptés, verrou Redis avec jeton et libération Lua, aucun accès au profil, journaux sans contenu — vérifié par espion). Corrigé : document assemblé borné en cardinalité (50 compétences, 30 exigences, 30 000 caractères au total) ; une analyse `FAILED` de la version courante n'est plus rejouée à chaque page (`skipped_failed`), seul `retry()` force ; l'écriture `FAILED` efface `requirements`/`model`/jetons/`analyzedAt` (plus de charge utile d'une ancienne version sous le nouveau numéro) ; `sanitize` retire les variantes `< / offre >` ouvrantes et fermantes ; plafond dur de 20 analyses par appel ; plus de `as Error` dans les `catch` ; verrou et seuil `PENDING` portés à 5 min (> 3 × 90 s du client). Fixtures d'exigences construites sur les offres semées réelles (FT-0001 : 5 ans, pas de niveau de langue explicite). api 363 → 507 (avec le moteur).
+
 ---
 
 ## Limites assumées
