@@ -96,6 +96,12 @@
 - [ ] Recette §11 par le coordinateur (analyse réelle dès que `ANTHROPIC_API_KEY` est présente).
 - [ ] Commit : `test: score de correspondance end-to-end`.
 
+### Task 1 — amendement après exécution (`2a310ca`, approuvé)
+Conforme à la spec §3 (`relevance Int?` inclus). Migration `20260917001228_job_analysis_and_match_score`. Suites inchangées (api 363 + 115).
+
+### Task 2 — note d'exécution (`6af9a39` + pont `9900ce7`, revue en cours)
+Contrat livré (28 tests `matching`, 8 tests `jobs`) ; `JobSummaryDto.match` devient obligatoire (`| null`) → le pont `9900ce7` renseigne `match: null` côté API (rempli en tâche 6) et filtre côté web les onglets/tris désormais présents dans `JOB_TABS`/`JOB_SORT_OPTIONS` mais encore rendus comme espaces réservés désactivés (valeurs alignées sur le contrat : `for_you`, `priority`, `match`, `relevance`) — la tâche 8 retire ces espaces réservés. shared 141 → 178.
+
 ---
 
 ## Limites assumées
