@@ -81,6 +81,41 @@ describe('splitDescriptionIntoHighlights', () => {
     expect(splitDescriptionIntoHighlights('')).toEqual([]);
     expect(splitDescriptionIntoHighlights('   ')).toEqual([]);
   });
+
+  it('reconnait une numerotation (1. ou 2)) comme une puce', () => {
+    const description = '1. Premier point\n2) Deuxieme point';
+    expect(splitDescriptionIntoHighlights(description)).toEqual(['Premier point', 'Deuxieme point']);
+  });
+
+  it('garde chaque ligne comme puce distincte meme sans prefixe de puce (plusieurs lignes)', () => {
+    const description = 'Premiere realisation\nDeuxieme realisation';
+    expect(splitDescriptionIntoHighlights(description)).toEqual(['Premiere realisation', 'Deuxieme realisation']);
+  });
+
+  it('ne decoupe pas en phrases une description multi-lignes non prefixee (ne fusionne pas les lignes)', () => {
+    const description = 'A dirige une equipe\nA livre le projet';
+    const result = splitDescriptionIntoHighlights(description);
+    expect(result).toEqual(['A dirige une equipe', 'A livre le projet']);
+    expect(result).not.toEqual(['A dirige une equipe A livre le projet']);
+  });
+
+  it('ne coupe pas apres une abreviation suivie d_un point (M., etc.)', () => {
+    const description = 'A rencontre M. Dupont. A signe le contrat, etc. A livre le projet.';
+    expect(splitDescriptionIntoHighlights(description)).toEqual([
+      'A rencontre M. Dupont',
+      'A signe le contrat, etc. A livre le projet',
+    ]);
+  });
+
+  it('ne coupe pas un nombre decimal (3.5) meme suivi d_un chiffre', () => {
+    const description = 'A code depuis 3.5 ans avec Python.';
+    expect(splitDescriptionIntoHighlights(description)).toEqual(['A code depuis 3.5 ans avec Python']);
+  });
+
+  it('coupe quand le mot suivant le point commence par un chiffre', () => {
+    const description = 'Premier lot livre. 2 clients signes.';
+    expect(splitDescriptionIntoHighlights(description)).toEqual(['Premier lot livre', '2 clients signes']);
+  });
 });
 
 describe('buildBaseResume', () => {
@@ -93,12 +128,12 @@ describe('buildBaseResume', () => {
     expect(result.identity.country).toBe('France');
   });
 
-  it('omet email, telephone, ville et pays quand includeContact est false', () => {
+  it('omet email et telephone quand includeContact est false, mais garde ville et pays', () => {
     const result = buildBaseResume(baseProfile(), { includeContact: false });
     expect(result.identity).not.toHaveProperty('email');
     expect(result.identity).not.toHaveProperty('phone');
-    expect(result.identity).not.toHaveProperty('city');
-    expect(result.identity).not.toHaveProperty('country');
+    expect(result.identity.city).toBe('Paris');
+    expect(result.identity.country).toBe('France');
     expect(result.identity.firstName).toBe('Elodie');
   });
 
@@ -229,6 +264,95 @@ describe('buildBaseResume', () => {
     const result = buildBaseResume(baseProfile());
     expect(resumeContentSchema.safeParse(result).success).toBe(true);
   });
+
+  it('ordonne les formations avec celle en cours (sans endDate) en premier', () => {
+    const result = buildBaseResume(
+      baseProfile({
+        educations: [
+          {
+            id: 'finie',
+            sortOrder: 0,
+            school: 'Universite A',
+            degree: 'Licence',
+            field: null,
+            startDate: '2015-01-01',
+            endDate: '2018-01-01',
+          },
+          {
+            id: 'en-cours',
+            sortOrder: 1,
+            school: 'Universite B',
+            degree: 'Master',
+            field: null,
+            startDate: '2022-01-01',
+            endDate: null,
+          },
+        ],
+      }),
+    );
+    expect(result.educations.map((e) => e.id)).toEqual(['en-cours', 'finie']);
+  });
+
+  it('ordonne les certifications par date d_obtention decroissante', () => {
+    const result = buildBaseResume(
+      baseProfile({
+        certifications: [
+          { id: 'ancienne', sortOrder: 0, name: 'Cert A', issuer: 'X', issuedAt: '2018-01-01' },
+          { id: 'recente', sortOrder: 1, name: 'Cert B', issuer: 'Y', issuedAt: '2023-01-01' },
+        ],
+      }),
+    );
+    expect(result.certifications.map((c) => c.id)).toEqual(['recente', 'ancienne']);
+  });
+
+  it('reste deterministe : deux appels sur le meme profil produisent le meme document', () => {
+    const profile = baseProfile({
+      experiences: [
+        {
+          id: 'e1',
+          sortOrder: 0,
+          company: 'Acme',
+          role: 'Dev',
+          location: null,
+          startDate: '2020-01-01',
+          endDate: null,
+          isCurrent: true,
+          description: '- A fait X',
+        },
+      ],
+      skills: [{ id: 's1', sortOrder: 0, name: 'React', category: 'TECHNICAL', level: 'ADVANCED' }],
+    });
+    expect(buildBaseResume(profile)).toEqual(buildBaseResume(profile));
+  });
+
+  it('reste valide par resumeContentSchema meme pour un profil qui deborde toutes les bornes', () => {
+    const experiences = Array.from({ length: 31 }, (_, i) => ({
+      id: `exp${i}`,
+      sortOrder: i,
+      company: `Entreprise ${i}`,
+      role: 'Dev',
+      location: null,
+      startDate: '2020-01-01',
+      endDate: '2021-01-01',
+      isCurrent: false,
+      description: null,
+    }));
+    const skills = Array.from({ length: 61 }, (_, i) => ({
+      id: `skill${i}`,
+      sortOrder: i,
+      name: `Competence ${i}`,
+      category: 'TECHNICAL' as const,
+      level: 'ADVANCED' as const,
+    }));
+    const profile = baseProfile({ experiences, skills, summary: 'x'.repeat(2000) });
+
+    const result = buildBaseResume(profile);
+
+    expect(result.experiences).toHaveLength(30);
+    expect(result.skills).toHaveLength(60);
+    expect(result.summary).toHaveLength(1200);
+    expect(resumeContentSchema.safeParse(result).success).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -344,15 +468,44 @@ describe('resumeTailoringWireSchema / resumeTailoringSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('ecarte une ligne mal formee plutot que de faire echouer toute la liste', () => {
+  it('ecarte une ligne mal formee (id absent ou ligne non-objet) plutot que de faire echouer toute la liste', () => {
     const result = resumeTailoringSchema.parse({
       experiences: [
         { id: 'valide', keep: true, order: 0, highlights: [] },
-        { id: 'invalide', keep: true, order: -1, highlights: [] },
+        { keep: true, order: 1, highlights: [] },
         'pas-un-objet',
       ],
     });
     expect(result.experiences).toEqual([{ id: 'valide', keep: true, order: 0, highlights: [] }]);
+  });
+
+  it('tronque un order non entier plutot que de rejeter la ligne', () => {
+    const result = resumeTailoringSchema.parse({
+      experiences: [{ id: 'e1', keep: true, order: 2.7, highlights: [] }],
+    });
+    expect(result.experiences).toEqual([{ id: 'e1', keep: true, order: 2, highlights: [] }]);
+  });
+
+  it('remplace un order absent par Number.MAX_SAFE_INTEGER sans ecarter la ligne', () => {
+    const result = resumeTailoringSchema.parse({
+      experiences: [{ id: 'e1', keep: false, highlights: [] }],
+      skills: [{ id: 's1' }],
+    });
+    expect(result.experiences).toEqual([
+      { id: 'e1', keep: false, order: Number.MAX_SAFE_INTEGER, highlights: [] },
+    ]);
+    expect(result.skills).toEqual([{ id: 's1', order: Number.MAX_SAFE_INTEGER }]);
+  });
+
+  it('ecarte une puce invalide sans ecarter la ligne (tolerance puce par puce)', () => {
+    const result = resumeTailoringSchema.parse({
+      experiences: [
+        { id: 'e1', keep: true, order: 0, highlights: ['Puce valide', '', 'x'.repeat(400), 42, 'Autre puce valide'] },
+      ],
+    });
+    expect(result.experiences).toEqual([
+      { id: 'e1', keep: true, order: 0, highlights: ['Puce valide', 'Autre puce valide'] },
+    ]);
   });
 
   it('pose des defauts (keep true, listes vides, textes vides) sur une entree minimale', () => {
@@ -409,6 +562,18 @@ describe('coverLetterContentSchema / coverLetterWireSchema', () => {
     const wire = coverLetterWireSchema.parse(validLetter());
     const content = coverLetterContentSchema.parse(wire);
     expect(content).toEqual(validLetter());
+  });
+
+  it('refuse un subject, greeting, closing ou signature vide sur le schema v3', () => {
+    expect(coverLetterContentSchema.safeParse({ ...validLetter(), subject: '' }).success).toBe(false);
+    expect(coverLetterContentSchema.safeParse({ ...validLetter(), greeting: '' }).success).toBe(false);
+    expect(coverLetterContentSchema.safeParse({ ...validLetter(), closing: '' }).success).toBe(false);
+    expect(coverLetterContentSchema.safeParse({ ...validLetter(), signature: '' }).success).toBe(false);
+  });
+
+  it('accepte un tableau de paragraphes vide sur le schema fil (pas de min, contrairement au schema v3)', () => {
+    const result = coverLetterWireSchema.safeParse({ ...validLetter(), paragraphs: [] });
+    expect(result.success).toBe(true);
   });
 
   it('expose des longueurs maximales par ton coherentes avec le spec', () => {
@@ -543,6 +708,14 @@ describe('resumeFileName', () => {
   it('ne produit jamais de caractere non ASCII', () => {
     const name = resumeFileName('CV', { firstName: 'Amélie', lastName: 'Ötz' }, 'Café & Co');
     expect(/^[\x20-\x7E]*$/.test(name)).toBe(true);
+  });
+
+  it('retombe sur un segment neutre quand le nom n_a aucun equivalent ASCII', () => {
+    const cvName = resumeFileName('CV', { firstName: '田中', lastName: '太郎' }, null);
+    expect(cvName).toBe('CV-Mon-CV.pdf');
+
+    const letterName = resumeFileName('Lettre', { firstName: '田中', lastName: '太郎' }, null);
+    expect(letterName).toBe('Lettre-Ma-Lettre.pdf');
   });
 });
 

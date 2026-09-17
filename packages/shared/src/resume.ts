@@ -235,22 +235,71 @@ export interface ResumeSourceProfile extends ResumeSourceIdentity {
 
 export interface BuildBaseResumeOptions {
   /**
-   * `false` retire email/téléphone/liens du document (entrée envoyée à l'IA,
-   * spec §5/§8) ; `true` (défaut) les inclut, pour le CV principal affiché à
-   * l'utilisateur.
+   * `false` retire l'email et le téléphone du document — entrée envoyée à
+   * l'IA (spec §5/§8), qui ne doit jamais recevoir de coordonnées permettant
+   * de contacter directement la personne. `true` (défaut) les inclut, pour le
+   * CV principal affiché à l'utilisateur. Ville et pays restent présents dans
+   * les deux cas : ce ne sont pas des coordonnées de contact. `links` n'est
+   * de toute façon jamais peuplé par `buildBaseResume` aujourd'hui (aucun
+   * champ lien n'existe encore sur le profil, cf. `ResumeSourceIdentity`) ;
+   * cette option n'a donc pas encore d'effet sur lui.
    */
   includeContact?: boolean;
 }
 
-const BULLET_PREFIX_RE = /^[-•*–]\s*/;
+// Puce existante : tiret, puce, astérisque, tiret demi-cadratin/cadratin,
+// carré plein, ou une numérotation (« 1. », « 2) », deux chiffres au plus) —
+// toujours suivie d'au moins une espace (revue : un marqueur collé au texte,
+// sans espace, n'est pas traité comme une puce).
+const BULLET_PREFIX_RE = /^(?:[-•*–—▪]|\d{1,2}[.)])\s+/;
+
+// Abréviations françaises courantes suivies d'un point qui ne marquent jamais
+// une fin de phrase (revue : « M. Dupont », « cf. l'annexe », « etc. »...).
+// Comparées sans accent ni casse (`normalizeForSentenceSplit`).
+const SENTENCE_ABBREVIATIONS = new Set(['m', 'mme', 'dr', 'cf', 'ex', 'etc', 'env', 'ref', 'p', 'st']);
+
+function normalizeForSentenceSplit(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
 
 /**
- * Découpe une description libre (profil) en puces (spec §4/tâche 2) : les
- * lignes commençant par `-`, `•`, `*` ou `–` sont reconnues comme des puces
- * existantes (préfixe retiré) ; à défaut d'une seule ligne ainsi préfixée, la
- * description est découpée en phrases (séparateur `. `). Résultat tronqué à 6
- * puces, chacune bornée à 300 caractères ; les lignes/phrases vides sont
- * écartées. `null`/chaîne vide → `[]`.
+ * Découpe une phrase unique en sous-phrases sur ses points de fin de phrase
+ * (revue) : un point ne marque une coupure que s'il n'est pas précédé d'une
+ * abréviation connue (`SENTENCE_ABBREVIATIONS`) ET qu'il est suivi d'au moins
+ * une espace puis d'une majuscule ou d'un chiffre — une décimale (« 3.5 »,
+ * jamais d'espace après le point) ou une abréviation suivie d'un nom propre
+ * (« M. Dupont ») ne déclenchent donc jamais de coupure.
+ */
+function splitIntoSentences(text: string): string[] {
+  const sentences: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '.') continue;
+    const wordBefore = /([A-Za-zÀ-ÖØ-öø-ÿ]+)$/.exec(text.slice(0, i))?.[1] ?? '';
+    const isAbbreviation = SENTENCE_ABBREVIATIONS.has(normalizeForSentenceSplit(wordBefore));
+    const isSentenceBoundary = /^\s+[A-Z0-9À-ÖØ-Þ]/.test(text.slice(i + 1));
+    if (!isAbbreviation && isSentenceBoundary) {
+      sentences.push(text.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  sentences.push(text.slice(start));
+  return sentences.map((sentence) => sentence.trim().replace(/\.$/, '')).filter((sentence) => sentence.length > 0);
+}
+
+/**
+ * Découpe une description libre (profil) en puces (spec §4/tâche 2, revue) :
+ * plusieurs lignes → chaque ligne non vide devient une puce (préfixe de puce
+ * ou de numérotation retiré s'il y en a un, ligne gardée telle quelle sinon) ;
+ * une seule ligne → puce unique si elle est préfixée, sinon découpage en
+ * phrases (`splitIntoSentences`) — le découpage en phrases ne s'applique donc
+ * jamais à une description déjà multi-lignes, pour ne pas fusionner des
+ * lignes distinctes en une seule puce. Résultat tronqué à 6 puces, chacune
+ * bornée à 300 caractères (`trimEnd` après troncature, pour ne pas laisser
+ * une espace en fin de puce coupée) ; `null`/chaîne vide → `[]`.
  */
 export function splitDescriptionIntoHighlights(description: string | null | undefined): string[] {
   if (!description) return [];
@@ -261,17 +310,21 @@ export function splitDescriptionIntoHighlights(description: string | null | unde
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const hasBullets = lines.some((line) => BULLET_PREFIX_RE.test(line));
 
-  const items = hasBullets
-    ? lines.map((line) => line.replace(BULLET_PREFIX_RE, '').trim()).filter((line) => line.length > 0)
-    : lines
-        .join(' ')
-        .split(/\.\s+/)
-        .map((sentence) => sentence.trim().replace(/\.$/, ''))
-        .filter((sentence) => sentence.length > 0);
+  let items: string[];
+  if (lines.length > 1) {
+    items = lines.map((line) => line.replace(BULLET_PREFIX_RE, '').trim()).filter((line) => line.length > 0);
+  } else {
+    const singleLine = lines[0] ?? '';
+    items = BULLET_PREFIX_RE.test(singleLine)
+      ? [singleLine.replace(BULLET_PREFIX_RE, '').trim()]
+      : splitIntoSentences(singleLine);
+  }
 
-  return items.slice(0, 6).map((item) => (item.length > 300 ? item.slice(0, 300) : item));
+  return items
+    .filter((item) => item.length > 0)
+    .slice(0, 6)
+    .map((item) => item.slice(0, 300).trimEnd());
 }
 
 // Comparaison lexicale valide sur des dates AAAA-MM-JJ ou `null` (traité comme
@@ -377,10 +430,24 @@ function toResumeProject(item: ResumeSourceProject): ResumeContentProject {
   return { id: item.id, name: item.name, description, url: orNull(item.url), technologies: item.technologies };
 }
 
+// Bornes de `resumeContentSchema` (revue) : `buildBaseResume` doit toujours
+// produire un document valide par ce schéma, quelle que soit la taille du
+// profil source (aucune borne côté profil ne garantit ces plafonds).
+const MAX_EXPERIENCES = 30;
+const MAX_EDUCATIONS = 20;
+const MAX_SKILLS = 60;
+const MAX_LANGUAGES = 20;
+const MAX_CERTIFICATIONS = 20;
+const MAX_PROJECTS = 20;
+const MAX_SUMMARY_LENGTH = 1200;
+
 /**
  * Construit le document de CV (spec §4) depuis le profil de l'utilisateur —
- * fonction pure, partagée web/API. `includeContact: false` (défaut `true`)
- * retire email/téléphone/ville/pays/liens (entrée IA, spec §5/§8).
+ * fonction pure, partagée web/API, toujours valide par `resumeContentSchema`
+ * (résumé et collections bornés aux plafonds du schéma, quelle que soit la
+ * taille du profil source). `includeContact: false` (défaut `true`) retire
+ * email/téléphone (entrée IA, spec §5/§8) ; ville et pays restent dans les
+ * deux cas.
  */
 export function buildBaseResume(profile: ResumeSourceProfile, options: BuildBaseResumeOptions = {}): ResumeContent {
   const includeContact = options.includeContact ?? true;
@@ -391,20 +458,22 @@ export function buildBaseResume(profile: ResumeSourceProfile, options: BuildBase
     title: profile.title,
     ...(includeContact && { email: profile.email }),
     ...(includeContact && profile.phone !== null && { phone: profile.phone }),
-    ...(includeContact && profile.city !== null && { city: profile.city }),
-    ...(includeContact && profile.country !== null && { country: profile.country }),
+    ...(profile.city !== null && { city: profile.city }),
+    ...(profile.country !== null && { country: profile.country }),
   };
 
   return {
     schemaVersion: 1,
     identity,
-    summary: profile.summary ?? '',
-    experiences: sortExperiences(profile.experiences).map(toResumeExperience),
-    educations: sortEducations(profile.educations).map(toResumeEducation),
-    skills: [...profile.skills].sort(bySortOrder).map(toResumeSkill),
-    languages: [...profile.languages].sort(bySortOrder).map(toResumeLanguage),
-    certifications: sortCertifications(profile.certifications).map(toResumeCertification),
-    projects: [...profile.projects].sort(bySortOrder).map(toResumeProject),
+    summary: (profile.summary ?? '').slice(0, MAX_SUMMARY_LENGTH),
+    experiences: sortExperiences(profile.experiences).slice(0, MAX_EXPERIENCES).map(toResumeExperience),
+    educations: sortEducations(profile.educations).slice(0, MAX_EDUCATIONS).map(toResumeEducation),
+    skills: [...profile.skills].sort(bySortOrder).slice(0, MAX_SKILLS).map(toResumeSkill),
+    languages: [...profile.languages].sort(bySortOrder).slice(0, MAX_LANGUAGES).map(toResumeLanguage),
+    certifications: sortCertifications(profile.certifications)
+      .slice(0, MAX_CERTIFICATIONS)
+      .map(toResumeCertification),
+    projects: [...profile.projects].sort(bySortOrder).slice(0, MAX_PROJECTS).map(toResumeProject),
   };
 }
 
@@ -436,11 +505,40 @@ function filterTailoringRows<Output>(schema: z.ZodType<Output, z.ZodTypeDef, unk
     });
 }
 
+/**
+ * `order` tolérant (revue) : une valeur numérique non entière est tronquée
+ * (`Math.trunc`) plutôt que rejetée ; une valeur absente ou d'un type
+ * inexploitable devient `Number.MAX_SAFE_INTEGER` — l'élément garde son
+ * `keep` et se retrouve simplement trié en dernier, jamais écarté pour cette
+ * seule raison.
+ */
+const tolerantOrderSchema = z.unknown().transform((value): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  return Number.MAX_SAFE_INTEGER;
+});
+
+/**
+ * Puces d'une expérience adaptée, tolérantes puce par puce (revue) : un
+ * élément qui n'est pas une chaîne, vide ou trop long est écarté
+ * individuellement plutôt que d'invalider toute la ligne.
+ */
+const tolerantHighlightsSchema = z
+  .unknown()
+  .optional()
+  .transform((value) => {
+    const items = Array.isArray(value) ? value : [];
+    return items
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0 && item.length <= 300)
+      .slice(0, 6);
+  });
+
 const tailoringExperienceRowSchema = z.object({
   id: z.string().trim().min(1).max(64),
   keep: z.boolean().default(true),
-  order: z.number().int().min(0),
-  highlights: z.array(z.string().trim().min(1).max(300)).max(6).default([]),
+  order: tolerantOrderSchema,
+  highlights: tolerantHighlightsSchema,
 });
 
 const tailoringKeepRowSchema = z.object({
@@ -450,13 +548,13 @@ const tailoringKeepRowSchema = z.object({
 
 const tailoringOrderRowSchema = z.object({
   id: z.string().trim().min(1).max(64),
-  order: z.number().int().min(0),
+  order: tolerantOrderSchema,
 });
 
 const tailoringProjectRowSchema = z.object({
   id: z.string().trim().min(1).max(64),
   keep: z.boolean().default(true),
-  order: z.number().int().min(0),
+  order: tolerantOrderSchema,
 });
 
 /**
@@ -537,22 +635,25 @@ export type ResumeTailoringWire = zWire.infer<typeof resumeTailoringWireSchema>;
 export const coverLetterContentSchema = z
   .object({
     recipient: z.string().trim().max(120).nullable(),
-    subject: z.string().trim().max(160),
-    greeting: z.string().trim().max(80),
+    subject: z.string().trim().min(1, 'Ce champ est obligatoire.').max(160),
+    greeting: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
     paragraphs: z.array(z.string().trim().min(1).max(900)).min(1).max(6),
-    closing: z.string().trim().max(160),
-    signature: z.string().trim().max(80),
+    closing: z.string().trim().min(1, 'Ce champ est obligatoire.').max(160),
+    signature: z.string().trim().min(1, 'Ce champ est obligatoire.').max(80),
   })
   .strict();
 
 export type CoverLetterContent = z.output<typeof coverLetterContentSchema>;
 
+// Pas de `.min(1)` sur `paragraphs` ici (revue), contrairement au schéma v3
+// ci-dessus : `coverLetterContentSchema.parse` revalide de toute façon toute
+// sortie du modèle après ce schéma fil et impose déjà cette borne basse.
 export const coverLetterWireSchema = zWire
   .object({
     recipient: zWire.string().max(120).nullable(),
     subject: zWire.string().max(160),
     greeting: zWire.string().max(80),
-    paragraphs: zWire.array(zWire.string().max(900)).min(1).max(6),
+    paragraphs: zWire.array(zWire.string().max(900)).max(6),
     closing: zWire.string().max(160),
     signature: zWire.string().max(80),
   })
@@ -767,7 +868,7 @@ export type ResumeSection = keyof typeof RESUME_SECTION_LABELS;
 function toAsciiSlug(value: string): string {
   return value
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Za-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
@@ -775,21 +876,32 @@ function toAsciiSlug(value: string): string {
 const RESUME_FILE_NAME_MAX_LENGTH = 80;
 const PDF_EXTENSION = '.pdf';
 
+// Repli neutre (revue) quand prénom, nom et entreprise sont tous vides une
+// fois assainis (ex. un nom écrit uniquement en caractères non latins, que
+// `toAsciiSlug` réduit à une chaîne vide) : un nom de fichier générique par
+// genre de document plutôt qu'un nom réduit au seul préfixe (`CV.pdf`).
+const NEUTRAL_NAME_SEGMENT: Record<'CV' | 'Lettre', string> = {
+  CV: 'Mon-CV',
+  Lettre: 'Ma-Lettre',
+};
+
 /**
  * Nom de fichier du PDF téléchargé (spec §2 : `CV-Prénom-Nom-Entreprise.pdf` /
  * `Lettre-Prénom-Nom-Entreprise.pdf`) : ASCII, tirets, ≤ 80 caractères
  * extension comprise. `company` `null` (offre supprimée, ou lettre/CV sans
- * offre liée) omet simplement ce segment.
+ * offre liée) omet simplement ce segment ; un nom sans équivalent ASCII
+ * (caractères non latins) retombe sur `NEUTRAL_NAME_SEGMENT`.
  */
 export function resumeFileName(
   kind: 'CV' | 'Lettre',
   identity: { firstName: string; lastName: string },
   company: string | null,
 ): string {
-  const segments = [kind, identity.firstName, identity.lastName, company ?? '']
+  const nameSegments = [identity.firstName, identity.lastName, company ?? '']
     .map(toAsciiSlug)
     .filter((segment) => segment.length > 0);
-  const slug = segments.length > 0 ? segments.join('-') : kind;
+  const namePart = nameSegments.length > 0 ? nameSegments.join('-') : NEUTRAL_NAME_SEGMENT[kind];
+  const slug = `${kind}-${namePart}`;
   const maxSlugLength = RESUME_FILE_NAME_MAX_LENGTH - PDF_EXTENSION.length;
   const truncated = slug.slice(0, maxSlugLength).replace(/-+$/, '');
   return `${truncated}${PDF_EXTENSION}`;
