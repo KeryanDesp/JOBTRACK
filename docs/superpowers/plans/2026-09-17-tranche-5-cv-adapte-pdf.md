@@ -88,6 +88,12 @@
 - [ ] Recette §11 par le coordinateur (adaptation réelle dès que `ANTHROPIC_API_KEY` est présente).
 - [ ] Commit : `test: cv adapte et pdf end-to-end`.
 
+### Task 1 — amendement après exécution (`ed655c5`, approuvé)
+Conforme à la spec §3 (quatre enums, `Resume`/`ResumeVersion`/`CoverLetter`, `User.resumeTemplate`, cascades et `SetNull` vers `Job`). Migration `20260917050408_resumes_and_cover_letters`. Suites inchangées (api 566 + 137).
+
+### Task 2 — note d'exécution (`f6c83ac`, revue en cours)
+Contrat livré (48 tests). Constat : le profil ne porte aucun champ de lien (LinkedIn, site) — `identity.links` existe dans le document mais `buildBaseResume` ne le remplit jamais ; `email` vient de `User`, à fournir par l'API. shared 182 → 230.
+
 ---
 
 ## Limites assumées
