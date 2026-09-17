@@ -121,3 +121,21 @@ Serveur API de dev relancé (le watcher Nest n'avait pas rechargé le nouveau mo
 | « CV principal » non versionné (dérivé du profil) | Le CV adapté (versionné) est le chemin recommandé ; T7 pourra archiver un PDF |
 | Relances, rappels, alertes | T7 |
 | Candidature assistée / auto-apply | T8 |
+
+### Revue finale de branche (lecture seule, après les suites complètes) → correctif `a1e88e3` + docs `c11f054`
+Verdict : fusionnable. Cohérence inter-couches vérifiée (codes d'erreur, invalidations, ordre des routes, `move` client ↔ serveur retracé sur quatre cas, `appliedAt` `@db.Date` sans dérive) ; sécurité : les 26 appels Prisma du module et les trois `$executeRaw` paramétrés portent `userId`, débits sur POST/PATCH/move, aucun `@Public`/`@NoCsrf`, journaux sans notes, aucun secret dans le diff, nettoyages e2e par préfixe ; aucun reliquat (`any`, `!`, `eslint-disable`, TODO, octets de contrôle). Réserves documentaires levées : écarts ratifiés consignés, amendement du tableau complété. Mineurs corrigés : commentaire e2e auto-contradictoire, état vide du Kanban sans les deux actions de la spec §7 (test enveloppé dans un routeur). Notés sans correction : divergence théorique au-delà de 200 cartes par colonne, `stripControlChars` de l'API rognant désormais les bordures.
+
+## Recette §11 (2026-09-17)
+
+| # | Critère | Verdict | Évidence |
+|---|---|---|---|
+| 1 | `/applications` vide → deux actions ; ajout manuel (Société Générale, LinkedIn, 15/09/2026, Entretien) → ligne dans la table | OK | vérification visuelle (`POST` 201, compteurs, toast « Voir ») ; Playwright scénarios 1–2 |
+| 2 | Depuis une offre semée : « Suivre cette candidature » → candidature « À postuler » avec le CV adapté ; l'offre affiche « Candidature suivie » | OK | vérification visuelle (CV adapté présélectionné puis affiché dans la fiche) ; Playwright scénario 3 ; e2e `GET /jobs/:id.application` |
+| 3 | Table : filtres avec compteurs exacts, recherche, sélecteur de statut inline → historique | OK | visuel (Entretien → Offre, historique « Statut modifié ») ; Playwright scénario 4 ; e2e `stats` |
+| 4 | Kanban : glisser une carte (souris et clavier) → statut et ordre persistés ; `appliedAt` renseigné au premier passage | OK | glisser-déposer réel à la souris (`PATCH /move` 200, persistance après rechargement) ; menu « Déplacer vers… » (Playwright scénario 5) ; `appliedAt` auto testé en unitaire et e2e |
+| 5 | Détail : changement de CV utilisé, notes sauvegardées, historique, suppression → retour à la liste | OK | visuel (`PATCH` notes 200, « Enregistré », `DELETE` puis liste rafraîchie) ; Playwright scénario 6 |
+| 6 | Sécurité : IDOR → 404 ; doublon → 409 et ouverture de la fiche existante ; URL non `http(s)` refusée | OK | e2e (33 + additifs : lecture/modification/déplacement/suppression d'autrui → 404, 409 avec `applicationId`, `javascript:` → 400) ; Playwright scénario 8 ; deux revues de sécurité |
+| 7 | Suites vertes, lint/typecheck/build, mobile et sombre, aucune donnée inventée | OK | shared 313, api 756 unitaires + 208 e2e, web 602, Playwright 53 verts + 2 ignorés (dont `applications` 7 × 2, rejoués 2 fois en isolation : 26 verts, 0 instable) ; lint/typecheck/build verts ; mobile et sombre vérifiés |
+
+## Clôture
+Tranche 6 fusionnée dans `main` (`--no-ff`) le 2026-09-17. Reportés (voir « Limites assumées ») : machine à états, instantané figé, « CV principal » non versionné, relances/alertes (T7), candidature assistée (T8). Le dashboard (T7) consommera `GET /applications/stats`.
