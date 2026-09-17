@@ -1,18 +1,22 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type MatchBand, type MatchPriority } from '@prisma/client';
+import { z } from 'zod';
 import type {
   JobDetailDto,
   JobListResponseDto,
   JobSearchQuery,
-  JobSort,
   JobSummaryDto,
+  JobSyncInfoDto,
   JobTab,
   JobsCapabilitiesDto,
+  MatchScoreSummaryDto,
 } from '@jobtrack/shared';
+import { ANTHROPIC_CLIENT, type AnthropicClient } from '../../common/anthropic.provider';
 import { PrismaService } from '../../common/prisma.service';
 import { RateLimiterService } from '../../common/rate-limiter.service';
 import { rateLimitKey } from '../../common/rate-limit.guard';
 import { RedisService } from '../../common/redis.service';
+import { ProfileInputsService } from '../matching/profile-inputs.service';
 import { JobSyncService } from './job-sync.service';
 import { JOB_SOURCE_CONNECTORS, isConfigured, type JobSourceConnector } from './sources/job-source.connector';
 
@@ -36,6 +40,69 @@ const DETAIL_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 // offre donnée serait rappelée à chaque détail consulté dans l'heure.
 const DETAIL_CHECK_MARKER_PREFIX = 'jobs:detail-check:';
 const DETAIL_CHECK_MARKER_TTL_SECONDS = 60 * 60;
+
+// Onglet « Pour vous » (spec §2, §6) : seuil de score, partagé avec le moteur de score
+// (`FACTOR_WEIGHTS`/`PRIORITY_THRESHOLDS` de `@jobtrack/shared` ne portent pas ce seuil-ci,
+// propre à l'onglet plutôt qu'à une bande ou une priorité).
+const FOR_YOU_MIN_SCORE = 60;
+// Onglet « Forte priorité » (spec §2, §6) : les deux priorités hautes du moteur de score.
+const PRIORITY_TAB_VALUES: MatchPriority[] = ['VERY_HIGH', 'HIGH'];
+
+// Tri « Meilleur match »/« Pertinence » (spec §6, tâche 6) : Prisma ne sait pas ordonner par un
+// champ d'une relation filtrée par une valeur dynamique (`MatchScore` d'un seul profil parmi
+// plusieurs par offre) — le classement se fait donc en deux temps ci-dessous (`rankByScore`) sur,
+// au plus, les `RELEVANCE_CANDIDATE_CAP` offres les plus récentes correspondant aux filtres : les
+// offres au-delà de ce plafond restent trouvables par les autres tris/onglets, mais jamais
+// classées par « Meilleur match »/« Pertinence » — les 500 offres les plus récentes sont classées.
+const RELEVANCE_CANDIDATE_CAP = 500;
+
+/** Reflet minimal de `MatchScore.factors` (Json) utile à la liste : seule l'explication du
+ * classement est nécessaire ici (`MatchScoreSummaryDto`), jamais le détail par facteur — validée
+ * pour ne jamais faire confiance aveuglément à une colonne `Json` (revue sécurité). */
+const storedMatchExplanationSchema = z.object({
+  explanation: z.object({ top: z.array(z.string()), weak: z.array(z.string()) }),
+});
+
+/** Champs de `MatchScore` nécessaires à `toMatchSummary` ci-dessous — un sous-ensemble minimal
+ * plutôt que le type Prisma complet, pour que les deux points d'appel (tri normal, tri par score)
+ * puissent construire cette valeur à partir de sélections différentes. */
+interface StoredMatchScoreRow {
+  jobId: string;
+  score: number | null;
+  band: MatchBand | null;
+  priority: MatchPriority | null;
+  factors: Prisma.JsonValue;
+}
+
+/**
+ * Identité de profil utilisée pour lire/filtrer `MatchScore` (spec §6, tâche 6 — amendement
+ * revue tâche 5) : `profileId` seul ne suffit pas — une ligne `MatchScore` dont
+ * `profileFingerprint` diverge de l'empreinte courante du profil a été calculée pour une
+ * version antérieure (compétences/expériences depuis modifiées) et doit être traitée comme
+ * « non évaluée » (spec §3 : « recalculé... quand `profileFingerprint`... diffère de la valeur
+ * stockée, au moment où il est demandé ») plutôt qu'affichée/triée/filtrée comme à jour —
+ * seul `POST /jobs/analyses`/`GET /jobs/:id/match` (module `matching`) la recalcule
+ * effectivement. `fingerprint: null` (pas de profil, ou profil incomplet) désactive toute
+ * jointure, comme `profileId: null`.
+ */
+interface ProfileScoreContext {
+  profileId: string | null;
+  fingerprint: string | null;
+}
+
+/** Traduit une ligne `MatchScore` (ou son absence) en `MatchScoreSummaryDto` pour `JobSummaryDto.match`
+ * (spec §6) : l'explication du classement est relue depuis `factors` (colonne `Json`, jamais écrite
+ * que par `MatchService`) et validée — un contenu inattendu retombe sur `null` plutôt que de faire
+ * échouer toute la liste (même précaution que `MatchService.fromStoredPayload`, dupliquée ici :
+ * `JobsService` lit `MatchScore` directement via Prisma plutôt que d'appeler `MatchService`, pour
+ * ne jamais recalculer de score sur une simple lecture de liste).
+ */
+function toMatchSummary(row: StoredMatchScoreRow | undefined): MatchScoreSummaryDto | null {
+  if (!row) return null;
+  const parsed = storedMatchExplanationSchema.safeParse(row.factors);
+  if (!parsed.success) return null;
+  return { score: row.score, band: row.band, priority: row.priority, explanation: parsed.data.explanation };
+}
 
 /**
  * Champs de `Job` communs à la liste et aux favoris (spec §8 : jamais la
@@ -96,7 +163,9 @@ export function toSummaryDto(job: JobSummaryRow): JobSummaryDto {
     skills: job.skills.map((skill) => skill.name),
     sources: [...new Set(job.sources.map((source) => source.source))],
     saved: job.savedBy.length > 0,
-    // Score de correspondance : renseigné par le module `matching` (tranche 4, tâche 6).
+    // Repli par défaut : `search()` (tâche 6) écrase ce champ avec le score de l'utilisateur
+    // lu sur `MatchScore` ; les autres appelants (`GET /jobs/saved`) n'ont pas encore ce
+    // besoin et gardent `null`, jamais un score d'un autre contexte par erreur.
     match: null,
   };
 }
@@ -156,7 +225,8 @@ function toDetailDto(job: JobDetailRow): JobDetailDto {
     publishedAt: job.publishedAt.toISOString(),
     expiredAt: job.expiredAt ? job.expiredAt.toISOString() : null,
     saved: job.savedBy.length > 0,
-    // Score de correspondance : renseigné par le module `matching` (tranche 4, tâche 6).
+    // Toujours `null` ici : le détail d'une offre expose son score via la route dédiée
+    // (`GET /jobs/:id/match`, module `matching`), qui recalcule au besoin — jamais ce DTO.
     match: null,
     description: job.description,
     companyDescription: job.companyDescription,
@@ -236,6 +306,15 @@ export class JobsService {
     private readonly rateLimiter: RateLimiterService,
     private readonly syncService: JobSyncService,
     @Inject(JOB_SOURCE_CONNECTORS) private readonly connectors: JobSourceConnector[],
+    // `MatchService`/`JobAnalysisService` (calcul des scores) restent dans le module `matching` :
+    // `JobsService` lit `MatchScore` directement via Prisma (spec §6, tâche 6) plutôt que
+    // d'appeler `MatchService`, pour ne jamais déclencher de recalcul sur une simple recherche —
+    // `ProfileInputsService` (empreinte courante du profil, amendement tâche 5) est en revanche
+    // nécessaire ici pour ne jamais afficher/trier/filtrer un score périmé (`ProfileScoreContext`
+    // ci-dessus). `ANTHROPIC_CLIENT` (fourni globalement par `CommonModule`) ne sert qu'à savoir
+    // si le service IA est configuré (`sync.analysis.notConfigured`) — jamais pour analyser une offre.
+    private readonly profileInputsService: ProfileInputsService,
+    @Inject(ANTHROPIC_CLIENT) private readonly anthropicClient: AnthropicClient,
   ) {}
 
   async search(userId: string, query: JobSearchQuery): Promise<JobListResponseDto> {
@@ -250,22 +329,46 @@ export class JobsService {
       allowSync: () => this.allowImplicitSync(userId),
     });
 
-    const where = this.buildWhere(query);
-    const orderBy = this.buildOrderBy(query.sort);
+    // Résolu une seule fois par requête (spec §6) : un utilisateur sans profil, ou dont le
+    // profil est incomplet, n'a jamais d'empreinte — `fingerprint: null` désactive silencieusement
+    // la jointure et les onglets/tris dépendants plutôt que d'échouer. Une ligne `MatchScore`
+    // dont l'empreinte stockée diverge de celle-ci est traitée comme non évaluée (§3) : jamais
+    // affichée, triée ou comptée dans les onglets « Pour vous »/« Forte priorité ».
+    const built = await this.profileInputsService.build(userId);
+    const context: ProfileScoreContext = { profileId: built?.profileId ?? null, fingerprint: built?.fingerprint ?? null };
+
+    const where = this.buildWhere(query, context);
     const skip = (query.page - 1) * PAGE_SIZE;
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.job.findMany({ where, orderBy, skip, take: PAGE_SIZE, select: buildSummarySelect(userId) }),
-      this.prisma.job.count({ where }),
-    ]);
+    const { jobIds, total } =
+      query.sort === 'match' || query.sort === 'relevance'
+        ? await this.rankByScore(where, query.sort, context, skip)
+        : await this.rankByColumn(where, query.sort, skip);
 
-    return {
-      items: rows.map(toSummaryDto),
-      total,
-      page: query.page,
-      pageSize: PAGE_SIZE,
-      sync,
+    const [summaryRows, matchRows] = await Promise.all([
+      this.prisma.job.findMany({ where: { id: { in: jobIds } }, select: buildSummarySelect(userId) }),
+      this.matchRowsFor(context, jobIds),
+    ]);
+    const summaryById = new Map(summaryRows.map((row) => [row.id, row]));
+    const matchByJobId = new Map(matchRows.map((row) => [row.jobId, row]));
+
+    // `jobIds` fixe l'ordre déjà calculé (tri SQL ou classement en mémoire ci-dessus) : jamais
+    // l'ordre de retour de `findMany({ where: { id: { in: … } } })`, non garanti par Prisma.
+    const items = jobIds.flatMap((id) => {
+      const row = summaryById.get(id);
+      if (!row) return []; // filet défensif : une offre supprimée entre les deux requêtes ci-dessus.
+      const dto = toSummaryDto(row);
+      dto.match = toMatchSummary(matchByJobId.get(id));
+      return [dto];
+    });
+
+    const analyzed = items.filter((item) => item.match !== null).length;
+    const syncWithAnalysis: JobSyncInfoDto = {
+      ...sync,
+      analysis: { analyzed, total: items.length, notConfigured: !this.aiConfigured() },
     };
+
+    return { items, total, page: query.page, pageSize: PAGE_SIZE, sync: syncWithAnalysis };
   }
 
   async getDetail(userId: string, id: string): Promise<JobDetailDto> {
@@ -280,7 +383,7 @@ export class JobsService {
     return { sources: { franceTravail: isConfigured(this.connectors, 'FRANCE_TRAVAIL') } };
   }
 
-  private buildWhere(query: JobSearchQuery): Prisma.JobWhereInput {
+  private buildWhere(query: JobSearchQuery, context: ProfileScoreContext): Prisma.JobWhereInput {
     const and: Prisma.JobWhereInput[] = [{ expiredAt: null }];
 
     const q = query.q.trim();
@@ -323,7 +426,7 @@ export class JobsService {
 
     if (query.sources.length > 0) and.push({ sources: { some: { source: { in: query.sources } } } });
 
-    this.applyTabFilter(and, query.tab);
+    this.applyTabFilter(and, query.tab, context);
 
     return { AND: and };
   }
@@ -333,7 +436,7 @@ export class JobsService {
    * oubliée ici est une erreur de compilation (`never`), pas un onglet qui se
    * comporterait par erreur comme « Toutes ».
    */
-  private applyTabFilter(and: Prisma.JobWhereInput[], tab: JobTab): void {
+  private applyTabFilter(and: Prisma.JobWhereInput[], tab: JobTab, context: ProfileScoreContext): void {
     switch (tab) {
       case 'all':
         return;
@@ -342,10 +445,30 @@ export class JobsService {
         and.push({ publishedAt: { gte: hoursAgo(24) } });
         return;
       case 'for_you':
+        // Onglet « Pour vous » (spec §2, §6) : offres dont le score de CE profil, à l'empreinte
+        // courante, atteint le seuil. Sans profil (ou empreinte périmée), le filtre écarte tout
+        // plutôt que de risquer un `where` Prisma sur un `profileId` `null` (colonne non nullable).
+        and.push(
+          context.profileId && context.fingerprint
+            ? {
+                matches: {
+                  some: { profileId: context.profileId, profileFingerprint: context.fingerprint, score: { gte: FOR_YOU_MIN_SCORE } },
+                },
+              }
+            : { id: { in: [] } },
+        );
+        return;
       case 'priority':
-        // Tranche 4, tâche 6 : remplacé par le tri/filtre de score. En attendant que le
-        // module `matching` fournisse le score de l'utilisateur, ces onglets se comportent
-        // explicitement comme « Toutes » plutôt que d'être ignorés en silence.
+        // Onglet « Forte priorité » (spec §2, §6) : même principe, sur la priorité du profil.
+        and.push(
+          context.profileId && context.fingerprint
+            ? {
+                matches: {
+                  some: { profileId: context.profileId, profileFingerprint: context.fingerprint, priority: { in: PRIORITY_TAB_VALUES } },
+                },
+              }
+            : { id: { in: [] } },
+        );
         return;
       default: {
         const exhaustive: never = tab;
@@ -354,29 +477,95 @@ export class JobsService {
     }
   }
 
-  /**
-   * `switch` exhaustif (jamais de `default` silencieux) : une valeur de `JobSort`
-   * oubliée ici est une erreur de compilation (`never`), pas un tri qui se
-   * comporterait par erreur comme « Plus récentes ».
-   */
-  private buildOrderBy(sort: JobSort): Prisma.JobOrderByWithRelationInput[] {
-    switch (sort) {
-      case 'salary':
+  /** Tri « Plus récentes »/« Salaire » (spec §6) : classement SQL direct, comme avant la tâche 6. */
+  private async rankByColumn(
+    where: Prisma.JobWhereInput,
+    sort: 'recent' | 'salary',
+    skip: number,
+  ): Promise<{ jobIds: string[]; total: number }> {
+    const orderBy: Prisma.JobOrderByWithRelationInput[] =
+      sort === 'salary'
         // Dernier critère `id` : sans lui, deux offres de même salaire et même date de
         // publication n'ont aucun ordre stable entre deux pages successives.
-        return [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { id: 'asc' }];
-      case 'recent':
-      case 'match':
-      case 'relevance':
-        // Tranche 4, tâche 6 : remplacé par le tri/filtre de score. En attendant que le
-        // module `matching` fournisse un score et une pertinence, `match` et `relevance`
-        // se comportent explicitement comme « Plus récentes » plutôt que d'être ignorés en silence.
-        return [{ publishedAt: 'desc' }, { id: 'asc' }];
-      default: {
-        const exhaustive: never = sort;
-        throw new Error(`Tri inconnu : ${String(exhaustive)}`);
-      }
-    }
+        ? [{ salaryMaxAnnual: { sort: 'desc', nulls: 'last' } }, { publishedAt: 'desc' }, { id: 'asc' }]
+        : [{ publishedAt: 'desc' }, { id: 'asc' }];
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.job.findMany({ where, orderBy, skip, take: PAGE_SIZE, select: { id: true } }),
+      this.prisma.job.count({ where }),
+    ]);
+    return { jobIds: rows.map((row) => row.id), total };
+  }
+
+  /**
+   * Tri « Meilleur match »/« Pertinence » (spec §5, §6) : Prisma ne sait pas ordonner par un
+   * champ d'une relation filtrée par une valeur dynamique (`MatchScore` d'un seul profil parmi
+   * plusieurs par offre). Classement en deux temps : les `RELEVANCE_CANDIDATE_CAP` offres les
+   * plus récentes correspondant aux filtres (identifiants seuls), puis un tri en mémoire par
+   * score/pertinence décroissant (non évaluées en dernier), fraîcheur puis identifiant en
+   * égalité — enfin la page demandée. Sans profil, aucune offre n'a de score : l'ordre retombe
+   * sur la fraîcheur seule (même ordre que « Plus récentes »), jamais une erreur.
+   */
+  private async rankByScore(
+    where: Prisma.JobWhereInput,
+    sort: 'match' | 'relevance',
+    context: ProfileScoreContext,
+    skip: number,
+  ): Promise<{ jobIds: string[]; total: number }> {
+    const candidates = await this.prisma.job.findMany({
+      where,
+      orderBy: [{ publishedAt: 'desc' }, { id: 'asc' }],
+      take: RELEVANCE_CANDIDATE_CAP,
+      select: { id: true, publishedAt: true },
+    });
+
+    const scoreByJobId =
+      context.profileId && context.fingerprint
+        ? new Map(
+            (
+              await this.prisma.matchScore.findMany({
+                where: {
+                  profileId: context.profileId,
+                  profileFingerprint: context.fingerprint,
+                  jobId: { in: candidates.map((candidate) => candidate.id) },
+                },
+                select: { jobId: true, score: true, relevance: true },
+              })
+            ).map((row): [string, number | null] => [row.jobId, sort === 'match' ? row.score : row.relevance]),
+          )
+        : new Map<string, number | null>();
+
+    const ranked = [...candidates].sort((a, b) => {
+      const scoreA = scoreByJobId.get(a.id) ?? null;
+      const scoreB = scoreByJobId.get(b.id) ?? null;
+      if (scoreA === null && scoreB === null) return this.compareByFreshness(a, b);
+      if (scoreA === null) return 1; // non évaluées en dernier (spec §5).
+      if (scoreB === null) return -1;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return this.compareByFreshness(a, b);
+    });
+
+    return { jobIds: ranked.slice(skip, skip + PAGE_SIZE).map((row) => row.id), total: ranked.length };
+  }
+
+  private compareByFreshness(a: { id: string; publishedAt: Date }, b: { id: string; publishedAt: Date }): number {
+    const byDate = b.publishedAt.getTime() - a.publishedAt.getTime();
+    if (byDate !== 0) return byDate;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+
+  /** `MatchScore` de la page pour CE profil, à l'empreinte courante — jamais celui d'un autre
+   * utilisateur, jamais une ligne calculée pour une version périmée du profil (spec §6). */
+  private matchRowsFor(context: ProfileScoreContext, jobIds: string[]): Promise<StoredMatchScoreRow[]> {
+    if (!context.profileId || !context.fingerprint || jobIds.length === 0) return Promise.resolve([]);
+    return this.prisma.matchScore.findMany({
+      where: { profileId: context.profileId, profileFingerprint: context.fingerprint, jobId: { in: jobIds } },
+      select: { jobId: true, score: true, band: true, priority: true, factors: true },
+    });
+  }
+
+  private aiConfigured(): boolean {
+    return this.anthropicClient !== null;
   }
 
   /**
