@@ -62,6 +62,9 @@ function needsAnalysis(info: JobAnalysisStatusInfo | null): boolean {
  * Le contrôleur orchestre `JobAnalysisService`/`MatchService` — ni l'un ni l'autre ne connaît
  * Nest ni les codes HTTP, cette traduction se fait ici (même principe que `CvImportController`).
  */
+/** Analyses lancées au plus par appel HTTP (le reste est signalé « en attente », voir le sondage web). */
+const MAX_ANALYSES_PER_REQUEST = 5;
+
 @Controller('jobs')
 export class MatchingController {
   constructor(
@@ -98,14 +101,17 @@ export class MatchingController {
       if (launched.length === 0) throw this.rateLimited();
 
       try {
-        const outcome = await this.jobAnalysis.analyzeMany(launched);
+        // Au plus `MAX_ANALYSES_PER_REQUEST` appels au modèle par requête HTTP (revue finale : 20 appels
+        // séquentiels pouvaient tenir une requête plusieurs minutes) ; le reste est renvoyé en
+        // `pending` et repris par le sondage du client (toutes les 2 s, 60 s au plus).
+        const outcome = await this.jobAnalysis.analyzeMany(launched, { limit: MAX_ANALYSES_PER_REQUEST });
         analyzed = outcome.done;
         failed = outcome.failed;
         // `outcome.skipped` (déjà `DONE`/`FAILED` à la version courante) ne peut pas survenir
         // ici (`needed` les exclut déjà) : seul `outcome.pending` (verrou tenu ailleurs,
         // `PENDING` frais) s'ajoute aux offres jamais lancées faute de budget, toutes deux
         // « en attente » du point de vue de l'appelant.
-        pending = outcome.pending + (needed.length - launched.length);
+        pending = outcome.pending + (launched.length - outcome.done - outcome.failed - outcome.pending) + (needed.length - launched.length);
       } catch (error) {
         if (error instanceof AiUnavailableError) throw this.aiUnavailable();
         // Le service devient indisponible en cours d'appel (ex. clé révoquée entre le contrôle

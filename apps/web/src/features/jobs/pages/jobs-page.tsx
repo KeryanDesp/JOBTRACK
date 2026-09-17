@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { Alert, AlertTitle } from '@/components/ui/alert';
+import { ApiError } from '@/services/api/client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AnalysisProgress } from '@/features/matching/components/analysis-progress';
 import { IncompleteProfileNotice } from '@/features/matching/components/incomplete-profile-notice';
@@ -341,7 +342,9 @@ export function JobsPage() {
       <div className="mx-auto max-w-5xl">
         <PageHeader title="Offres d'emploi" description={subtitleFor(searchResult.isPending, total, analyzedCount)} />
 
-        {showAnalysisProgress && <AnalysisProgress count={idsToAnalyze.length} className="-mt-4 mb-4" />}
+        {showAnalysisProgress && (
+          <AnalysisProgress count={polling.pending > 0 ? polling.pending : idsToAnalyze.length} className="-mt-4 mb-4" />
+        )}
 
         <div className="space-y-4">
           <JobSearchBar
@@ -377,6 +380,14 @@ export function JobsPage() {
             </Alert>
           )}
           {profileComplete === false && <IncompleteProfileNotice />}
+          {polling.error !== null && (
+            <Alert variant="destructive">
+              <AlertCircle aria-hidden="true" />
+              <AlertTitle>
+                {polling.error instanceof ApiError ? polling.error.message : "L'analyse des offres a échoué. Réessayez plus tard."}
+              </AlertTitle>
+            </Alert>
+          )}
 
           <JobList
             data={searchResult.data}

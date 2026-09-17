@@ -13,6 +13,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { JobAnalysisService } from './job-analysis.service';
 import { ProfileInputsService } from './profile-inputs.service';
 import { scoreJob, type JobInputs, type MatchResult } from './scoring';
+import { JOB_ANALYSIS_VERSION } from './job-analysis.prompt';
 
 /** Sélection minimale d'une offre pour le moteur de score (`JobInputs` + l'analyse, spec §5). */
 const JOB_SELECT = {
@@ -251,6 +252,14 @@ export class MatchService {
         // Une ligne déjà calculée pour une version d'analyse antérieure (redevenue `PENDING`/
         // `FAILED` depuis) n'a plus aucune raison d'être servie : elle est supprimée, jamais
         // laissée périmée (revue tâche 5 — `GET /jobs` ne doit jamais trier dessus).
+        if (existingByJobId.has(job.id)) toDelete.push(job.id);
+        continue;
+      }
+
+      if (analysis.version !== JOB_ANALYSIS_VERSION) {
+        // Analyse d'une version antérieure (le service IA n'a pas pu la refaire) : traitée comme
+        // absente, pour rester cohérent avec les jointures de `GET /jobs` filtrées sur la version
+        // courante (revue finale) — la ligne de score éventuelle est supprimée.
         if (existingByJobId.has(job.id)) toDelete.push(job.id);
         continue;
       }
