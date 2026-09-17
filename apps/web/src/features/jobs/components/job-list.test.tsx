@@ -64,9 +64,10 @@ interface RenderOverrides {
   error?: unknown;
   onRetry?: () => void;
   onPageChange?: (page: number) => void;
+  query?: typeof QUERY;
 }
 
-function renderList({ data, isError = false, error, onRetry = vi.fn(), onPageChange = vi.fn() }: RenderOverrides) {
+function renderList({ data, isError = false, error, onRetry = vi.fn(), onPageChange = vi.fn(), query = QUERY }: RenderOverrides) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -74,7 +75,7 @@ function renderList({ data, isError = false, error, onRetry = vi.fn(), onPageCha
         <TooltipProvider>
           <JobList
             data={data}
-            query={QUERY}
+            query={query}
             isPending={false}
             isError={isError}
             error={error}
@@ -139,5 +140,12 @@ describe('JobList', () => {
 
     fireEvent.click(pageTwo);
     expect(onPageChange).toHaveBeenCalledWith(2);
+  });
+
+  it('affiche un etat vide dedie sur Pour vous quand aucune offre n_est encore evaluee', () => {
+    renderList({ data: makeList({ items: [], total: 0 }), query: { ...QUERY, tab: 'for_you' } });
+
+    expect(screen.getByText('Aucune offre ne correspond encore à votre profil.')).toBeInTheDocument();
+    expect(screen.getByText("Lancez l'analyse ou élargissez la recherche.")).toBeInTheDocument();
   });
 });

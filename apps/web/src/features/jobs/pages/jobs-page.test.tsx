@@ -1,8 +1,8 @@
-import type { JobListResponseDto, JobSummaryDto } from '@jobtrack/shared';
+import type { AnalyzeJobsResponseDto, JobListResponseDto, JobSummaryDto } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as JobsApi from '@/services/api/jobs';
 import type * as ProfileApi from '@/services/api/profile';
@@ -33,18 +33,39 @@ vi.mock('@/services/api/profile', async () => {
   return { ...actual, fetchPreferences };
 });
 
+const analyzeJobsApi = vi.hoisted(() => vi.fn());
+const fetchJobMatch = vi.hoisted(() => vi.fn());
+const retryJobAnalysis = vi.hoisted(() => vi.fn());
+
+vi.mock('@/services/api/matching', () => ({
+  analyzeJobs: analyzeJobsApi,
+  fetchJobMatch,
+  retryJobAnalysis,
+}));
+
+function makeAnalyzeResponse(overrides: Partial<AnalyzeJobsResponseDto> = {}): AnalyzeJobsResponseDto {
+  return { analyzed: 0, pending: 0, failed: 0, notConfigured: false, profileComplete: true, scores: {}, ...overrides };
+}
+
 // jsdom n'implémente pas `window.scrollTo` (spec §7 : retour en haut de page au
 // changement de pagination) : sans ce stub, chaque appel logge une erreur « not
-// implemented » bruyante mais inoffensive.
+// implemented » bruyante mais inoffensive. Idem `scrollIntoView` (Radix Select,
+// `JobSortSelect`), appelé à l'ouverture du menu pour faire défiler l'option active en vue.
 beforeAll(() => {
   window.scrollTo = vi.fn();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 // Résolu par défaut à `true` : la plupart des tests ne portent pas sur le bandeau
 // « connecteur non configuré » et ne doivent pas avoir à s'en soucier ; ceux qui le
 // testent explicitement (`franceTravail: false`) l'écrasent avant `renderPage`.
+// `analyzeJobsApi` : réponse par défaut « tout va bien » (rien à analyser côté
+// serveur, IA configurée, profil complet) — les tests dédiés au score
+// (analyse déclenchée, bandeau IA non configurée, profil incomplet...)
+// l'écrasent explicitement.
 beforeEach(() => {
   fetchJobsCapabilities.mockResolvedValue({ sources: { franceTravail: true } });
+  analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse());
 });
 
 afterEach(() => {
@@ -52,6 +73,9 @@ afterEach(() => {
   searchCommunes.mockReset();
   fetchPreferences.mockReset();
   fetchJobsCapabilities.mockReset();
+  analyzeJobsApi.mockReset();
+  fetchJobMatch.mockReset();
+  retryJobAnalysis.mockReset();
 });
 
 const EMPTY_PREFS: PreferencesDto = {
@@ -107,11 +131,19 @@ function makeList(overrides: Partial<JobListResponseDto> = {}): JobListResponseD
   };
 }
 
+/** Sonde de l'URL courante (spec §6/§8 : onglet/tri encodés dans l'URL), `MemoryRouter` ne
+ * synchronisant jamais `window.location` — seul `useLocation` reflète fidèlement son état. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
+}
+
 function renderPage(initialEntry: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
+        <LocationProbe />
         <Routes>
           <Route path="/jobs" element={<JobsPage />} />
         </Routes>
@@ -210,7 +242,7 @@ describe('JobsPage', () => {
     searchJobs.mockResolvedValue(makeList({ items: [makeSummary()], total: 45, page: 1 }));
 
     renderPage('/jobs');
-    await screen.findByText('45 offres trouvées dans votre zone de recherche.');
+    await screen.findByText('45 offres trouvées · 0 analysées');
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('link', { name: '2' }));
@@ -246,5 +278,112 @@ describe('JobsPage', () => {
     renderPage('/jobs?lieu=57463');
 
     expect(await screen.findByText('Code INSEE 57463')).toBeInTheDocument();
+  });
+
+  it('active les onglets/tris et met a jour l_URL (onglet=pour-vous, tri=match)', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList());
+    const user = userEvent.setup();
+
+    renderPage('/jobs');
+    await waitFor(() => expect(searchJobs).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('tab', { name: 'Pour vous' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('onglet=pour-vous'));
+
+    await user.click(screen.getByRole('combobox', { name: 'Trier par' }));
+    await user.click(screen.getByRole('option', { name: 'Meilleur match' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tri=match'));
+  });
+
+  it('declenche analyze une fois avec les ids sans match, jamais a nouveau sur les memes donnees', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    // Deux objets distincts (spec §7 : la garde doit porter sur le jeu d'ids, pas sur une
+    // simple égalité de référence) mais aux mêmes offres, toujours sans score.
+    searchJobs
+      .mockResolvedValueOnce(makeList({ items: [makeSummary({ id: 'job-1' }), makeSummary({ id: 'job-2' })], total: 2 }))
+      .mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' }), makeSummary({ id: 'job-2' })], total: 2 }));
+    // Profil incomplet : neutralise la bascule « Pertinence par défaut » (hors sujet ici),
+    // qui provoquerait sinon une recherche supplémentaire (changement de tri) confondue avec
+    // la réactualisation manuelle ci-dessous.
+    analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse({ profileComplete: false }));
+
+    renderPage('/jobs');
+
+    await waitFor(() => expect(analyzeJobsApi).toHaveBeenCalledWith(['job-1', 'job-2']));
+    expect(analyzeJobsApi).toHaveBeenCalledTimes(1);
+
+    // Reactualisation manuelle (spec §7 : « pas en boucle ») : mêmes offres, toujours sans
+    // score (réponse par défaut du `beforeEach`, `scores: {}`) — l'analyse ne doit pas repartir.
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Actualiser' }));
+    await waitFor(() => expect(searchJobs).toHaveBeenCalledTimes(2));
+
+    expect(analyzeJobsApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('affiche la progression tant que des offres restent en cours d_analyse', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(
+      makeList({ items: [makeSummary({ id: 'job-1' }), makeSummary({ id: 'job-2' })], total: 2 }),
+    );
+    analyzeJobsApi.mockResolvedValue(
+      makeAnalyzeResponse({
+        analyzed: 1,
+        pending: 1,
+        scores: { 'job-1': { score: 80, band: 'GOOD', priority: 'GOOD', explanation: { top: [], weak: [] } } },
+      }),
+    );
+
+    renderPage('/jobs');
+
+    expect(await screen.findByText(/Analyse de 1 offre…/)).toBeInTheDocument();
+  });
+
+  it('affiche une seule fois le bandeau IA non configuree, sous la banniere de synchro', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(
+      makeList({ items: [makeSummary({ id: 'job-1' }), makeSummary({ id: 'job-2' })], total: 2 }),
+    );
+    analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse({ notConfigured: true }));
+
+    renderPage('/jobs');
+
+    expect(
+      await screen.findAllByText("L'analyse des offres nécessite le service IA (non configuré)."),
+    ).toHaveLength(1);
+  });
+
+  it('affiche le bandeau profil incomplet quand le profil n_est pas complet', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+    analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse({ profileComplete: false }));
+
+    renderPage('/jobs');
+
+    expect(
+      await screen.findByText('Complétez vos compétences et expériences pour obtenir un score fiable.'),
+    ).toBeInTheDocument();
+  });
+
+  it('bascule le tri par defaut sur Pertinence quand l_IA est configuree et le profil complet', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+    // Réponse par défaut du `beforeEach` : IA configurée, profil complet.
+
+    renderPage('/jobs');
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tri=pertinence'));
+  });
+
+  it('garde Plus recentes par defaut quand l_IA n_est pas configuree', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+    analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse({ notConfigured: true }));
+
+    renderPage('/jobs');
+
+    await screen.findByText("L'analyse des offres nécessite le service IA (non configuré).");
+    expect(screen.getByTestId('location')).not.toHaveTextContent('tri=');
   });
 });

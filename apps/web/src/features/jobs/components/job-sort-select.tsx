@@ -7,12 +7,12 @@ interface JobSortSelectProps {
   onChange: (value: JobSort) => void;
 }
 
-/** Options futures désactivées (score, tranche 4), avec leur explication portée par l'option elle-même. */
-const DISABLED_OPTIONS = [
-  { value: 'match', label: 'Meilleur match' },
-  { value: 'relevance', label: 'Pertinence' },
-] as const;
-
+/**
+ * Les quatre tris (spec §2/§7) sont désormais tous actifs : « Meilleur match »
+ * (score décroissant, non évaluées en dernier) et « Pertinence » (score
+ * pondéré par la fraîcheur, §5) s'appuient sur le score de correspondance
+ * calculé côté serveur (tranche 4).
+ */
 export function JobSortSelect({ value, onChange }: JobSortSelectProps) {
   return (
     <Select value={value} onValueChange={(next) => onChange(next as JobSort)}>
@@ -20,17 +20,9 @@ export function JobSortSelect({ value, onChange }: JobSortSelectProps) {
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {JOB_SORT_OPTIONS.filter((option) => !DISABLED_OPTIONS.some((d) => d.value === option.value)).map((option) => (
+        {JOB_SORT_OPTIONS.map((option) => (
           <SelectItem key={option.value} value={option.value}>
             {option.label}
-          </SelectItem>
-        ))}
-        {DISABLED_OPTIONS.map((option) => (
-          <SelectItem key={option.value} value={option.value} disabled>
-            <span className="flex flex-col">
-              <span>{option.label}</span>
-              <span className="text-xs text-muted-foreground">Disponible avec le score (tranche 4)</span>
-            </span>
           </SelectItem>
         ))}
       </SelectContent>

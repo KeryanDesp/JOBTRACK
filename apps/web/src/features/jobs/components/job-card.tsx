@@ -6,6 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { MatchBadge } from '@/features/matching/components/match-badge';
+import { MatchExplanation } from '@/features/matching/components/match-explanation';
+import { PriorityChip } from '@/features/matching/components/priority-chip';
 import { formatLocation, formatSalaryRange } from '../lib/format';
 import { JobFreshness } from './job-freshness';
 import { SaveJobButton } from './save-job-button';
@@ -43,6 +46,16 @@ function JobCardComponent({ job }: JobCardProps) {
         <SaveJobButton jobId={job.id} saved={job.saved} className="shrink-0" />
       </div>
 
+      {/* Pastille de score + priorité (spec §2/§7) : visuellement secondaire, sous le titre
+          plutôt qu'à côté — jamais rien de simulé quand l'offre n'est pas encore évaluée
+          (`job.match === null`), pas même un état « Non évalué ». */}
+      {job.match && (
+        <div className="flex flex-wrap items-center gap-2">
+          <MatchBadge score={job.match.score} band={job.match.band} size="sm" />
+          <PriorityChip priority={job.match.priority} />
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         {job.expiredAt && <Badge variant="secondary">Plus publiée</Badge>}
         {job.contractLabel && <Badge variant="outline">{job.contractLabel}</Badge>}
@@ -75,6 +88,9 @@ function JobCardComponent({ job }: JobCardProps) {
           ))}
         </div>
       )}
+
+      {/* `MatchExplanation` se masque déjà seule quand les deux listes sont vides. */}
+      {job.match && <MatchExplanation explanation={job.match.explanation} />}
 
       <div>
         <Button asChild variant="outline" size="sm">

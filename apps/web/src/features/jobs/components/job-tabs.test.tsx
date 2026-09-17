@@ -1,42 +1,44 @@
+import { JOB_TABS } from '@jobtrack/shared';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { TooltipProvider } from '@/components/ui/tooltip';
 import { JobTabs } from './job-tabs';
 
 function renderTabs(onChange = vi.fn()) {
-  render(
-    <TooltipProvider>
-      <JobTabs value="all" onChange={onChange} />
-    </TooltipProvider>,
-  );
+  render(<JobTabs value="all" onChange={onChange} />);
   return onChange;
 }
 
 describe('JobTabs', () => {
-  it('affiche une info-bulle sur les onglets desactives et ne declenche jamais onChange', async () => {
+  it('affiche chaque onglet une seule fois, tous actifs (score, tranche 4)', () => {
+    renderTabs();
+
+    for (const tab of JOB_TABS) {
+      const trigger = screen.getByRole('tab', { name: tab.label });
+      expect(trigger).not.toHaveAttribute('aria-disabled', 'true');
+      expect(trigger).not.toBeDisabled();
+    }
+  });
+
+  it('declenche onChange("for_you") en cliquant sur Pour vous', async () => {
     const user = userEvent.setup();
     const onChange = renderTabs();
 
-    const forYouTab = screen.getByRole('tab', { name: /Pour vous/ });
-    // `aria-disabled`, jamais l'attribut natif `disabled` : l'onglet reste
-    // focusable (et donc atteignable au clavier) pour que l'info-bulle
-    // explicative puisse recevoir le focus, contrairement à un onglet
-    // réellement désactivé qui sortirait de l'ordre de tabulation.
-    expect(forYouTab).toHaveAttribute('aria-disabled', 'true');
-    expect(forYouTab).not.toBeDisabled();
+    await user.click(screen.getByRole('tab', { name: 'Pour vous' }));
 
-    await user.hover(forYouTab);
-    expect(await screen.findByText('Disponible avec le score (tranche 4)')).toBeInTheDocument();
-
-    await user.click(forYouTab);
-    expect(onChange).not.toHaveBeenCalled();
-
-    forYouTab.focus();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith('for_you');
   });
 
-  it('declenche onChange en cliquant sur un onglet actif', async () => {
+  it('declenche onChange("priority") en cliquant sur Forte priorite', async () => {
+    const user = userEvent.setup();
+    const onChange = renderTabs();
+
+    await user.click(screen.getByRole('tab', { name: 'Forte priorité' }));
+
+    expect(onChange).toHaveBeenCalledWith('priority');
+  });
+
+  it('declenche onChange("new") en cliquant sur Nouvelles', async () => {
     const user = userEvent.setup();
     const onChange = renderTabs();
 
