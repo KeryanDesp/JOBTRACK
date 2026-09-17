@@ -1,9 +1,10 @@
 import type { JobDetailDto } from '@jobtrack/shared';
-import { AlertCircle, FileQuestion } from 'lucide-react';
+import { AlertCircle, FileQuestion, Mail, Sparkles } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { ErrorState } from '@/components/shared/error-state';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -62,6 +63,35 @@ function NotFoundBlock() {
       <Link to="/jobs" className="mt-6 text-sm font-medium text-primary underline-offset-4 hover:underline">
         Retour aux offres
       </Link>
+    </div>
+  );
+}
+
+/**
+ * Actions secondaires vers le CV adapté et la lettre de motivation (spec §2,
+ * tâche 7) : deux boutons-liens juste sous l'en-tête (qui porte déjà
+ * « Sauvegarder », `JobDetailHeader`/`ActionsRow`, non modifié par cette
+ * tâche) — visibles sans condition de largeur d'écran, donc déjà présents
+ * sur mobile comme sur desktop, contrairement à la barre d'actions collante
+ * de l'en-tête (dupliquée, elle, en CSS) que cette page ne modifie pas.
+ * `/resume/letter/:jobId` n'a pas encore de route (tâche 8) : le lien existe
+ * déjà (spec §7) et renverra vers « Page introuvable » jusque là.
+ */
+function ResumeActionsRow({ jobId }: { jobId: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button asChild variant="outline" size="sm">
+        <Link to={`/resume/create/${jobId}`}>
+          <Sparkles />
+          Adapter mon CV
+        </Link>
+      </Button>
+      <Button asChild variant="outline" size="sm">
+        <Link to={`/resume/letter/${jobId}`}>
+          <Mail />
+          Générer une lettre
+        </Link>
+      </Button>
     </div>
   );
 }
@@ -177,6 +207,8 @@ export function JobDetailPage() {
         )}
 
         <JobDetailHeader job={job} />
+
+        <ResumeActionsRow jobId={job.id} />
 
         <Card>
           <CardHeader>

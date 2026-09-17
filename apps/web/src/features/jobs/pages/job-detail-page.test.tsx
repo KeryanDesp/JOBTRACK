@@ -265,6 +265,16 @@ describe('JobDetailPage', () => {
     expect(await screen.findByText('Bonne correspondance · 80')).toBeInTheDocument();
   });
 
+  it('affiche les liens vers l_adaptation du CV et la generation d_une lettre', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    renderPage();
+
+    await screen.findByRole('heading', { name: 'Développeuse full-stack' });
+
+    expect(screen.getByRole('link', { name: 'Adapter mon CV' })).toHaveAttribute('href', '/resume/create/job-1');
+    expect(screen.getByRole('link', { name: 'Générer une lettre' })).toHaveAttribute('href', '/resume/letter/job-1');
+  });
+
   it('affiche une alerte avec le message serveur quand Analyser cette offre echoue (429)', async () => {
     fetchJob.mockResolvedValue(makeDetail());
     analyzeJobs.mockRejectedValue(new ApiError('Trop de requêtes.', 429, 'RATE_LIMITED'));
