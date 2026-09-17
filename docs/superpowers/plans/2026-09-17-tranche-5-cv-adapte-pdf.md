@@ -91,7 +91,10 @@
 ### Task 1 — amendement après exécution (`ed655c5`, approuvé)
 Conforme à la spec §3 (quatre enums, `Resume`/`ResumeVersion`/`CoverLetter`, `User.resumeTemplate`, cascades et `SetNull` vers `Job`). Migration `20260917050408_resumes_and_cover_letters`. Suites inchangées (api 566 + 137).
 
-### Task 2 — note d'exécution (`f6c83ac`, revue en cours)
+### Task 2 — amendement après revue (`f6c83ac` + correctif `fd72586`)
+Revue : schémas conformes (§4), sondes adversariales rejetées, schémas fil compatibles `zodOutputFormat`. Critique corrigé : `buildBaseResume` pouvait produire un document **invalide au regard de son propre schéma** (résumé de 2000 caractères, collections non bornées) → bornes appliquées à la construction (1200 / 30 / 20 / 60), test sur profil débordant. Importants : puces découpées **par ligne d'abord** (le saut de ligne fusionnait tout), découpage en phrases protégé des abréviations (M., Dr, etc., cf.) et exigeant une majuscule/chiffre après la coupure, listes numérotées reconnues, tolérance **par puce** (une puce invalide ne jette plus l'expérience ; `order` non entier tronqué, manquant → fin). Mineurs : pas de `minItems` dans le schéma fil de la lettre ; champs de lettre non vides ; `includeContact` ne retire que email/téléphone (ville/pays gardés pour le raisonnement du modèle) ; nom de fichier neutre pour un nom non latin. Piège d'outillage : les échappements `\u0300-\u036f` avaient été décodés en caractères combinants invisibles par la chaîne d'écriture — réparé au niveau des octets. shared 230 → 246.
+
+Note d'exécution initiale :
 Contrat livré (48 tests). Constat : le profil ne porte aucun champ de lien (LinkedIn, site) — `identity.links` existe dans le document mais `buildBaseResume` ne le remplit jamais ; `email` vient de `User`, à fournir par l'API. shared 182 → 230.
 
 ---
