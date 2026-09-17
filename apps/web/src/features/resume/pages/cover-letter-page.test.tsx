@@ -87,6 +87,7 @@ function makeJob(overrides: Partial<JobDetailDto> = {}): JobDetailDto {
     requirements: [],
     saved: false,
     match: null,
+    application: null,
     ...overrides,
   };
 }
