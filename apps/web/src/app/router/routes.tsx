@@ -13,6 +13,7 @@ import { ComingSoonPage } from '@/features/misc/coming-soon-page';
 import { NotFoundPage } from '@/features/misc/not-found-page';
 import { OnboardingPage } from '@/features/onboarding/pages/onboarding-page';
 import { ProfilePage } from '@/features/profile/pages/profile-page';
+import { CoverLetterPage } from '@/features/resume/pages/cover-letter-page';
 import { ResumeCreatePage } from '@/features/resume/pages/resume-create-page';
 import { ResumeDetailPage } from '@/features/resume/pages/resume-detail-page';
 import { ResumePage } from '@/features/resume/pages/resume-page';
@@ -47,8 +48,9 @@ export const router = createBrowserRouter([
           { path: '/jobs/:id', element: <JobDetailPage /> },
           // Sous `AppLayout` comme `/resume`, mais absentes de `NAV_ITEMS` (pas d'entrée de
           // navigation propre : on y accède depuis « Mon CV » ou depuis une offre, spec
-          // tâche 7). Chemins statiques avant `/resume/:id` (tranche 5, tâche 7).
+          // tâche 7). Chemins statiques avant `/resume/:id` (tranche 5, tâches 7 et 8).
           { path: '/resume/create/:jobId', element: <ResumeCreatePage /> },
+          { path: '/resume/letter/:jobId', element: <CoverLetterPage /> },
           { path: '/resume/:id', element: <ResumeDetailPage /> },
           ...NAV_ITEMS.map((item) => {
             if (item.to === '/profile') return { path: item.to, element: <ProfilePage /> };
