@@ -1,10 +1,10 @@
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ApplicationDto, ApplicationStatus } from '@jobtrack/shared';
-import { APPLICATION_STATUS_LABELS } from '@jobtrack/shared';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { SortableApplicationCard } from './application-card';
+import { ApplicationStatusBadge } from './application-status-badge';
 
 interface BoardColumnProps {
   status: ApplicationStatus;
@@ -26,8 +26,11 @@ export function BoardColumn({ status, items, onOpen, emptyHint }: BoardColumnPro
   return (
     <section aria-labelledby={headingId} className="w-[280px] shrink-0 snap-start md:w-auto md:flex-1">
       <div className="flex items-center justify-between gap-2 px-1 pb-2">
+        {/* La pastille porte le titre de la colonne : même couleur de statut que
+            dans la table et le panneau de détail, sans perdre le niveau de titre
+            qui structure la page pour un lecteur d'écran. */}
         <h3 id={headingId} className="text-sm font-semibold">
-          {APPLICATION_STATUS_LABELS[status]}
+          <ApplicationStatusBadge status={status} />
         </h3>
         <Badge variant="secondary" aria-label={countLabel}>
           {items.length}

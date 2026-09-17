@@ -63,7 +63,7 @@ describe('ApplicationCard', () => {
     expect(screen.getByText('Acme')).toBeInTheDocument();
     expect(screen.getByText('Developpeur React')).toBeInTheDocument();
     expect(screen.getByText('45–55 k€')).toBeInTheDocument();
-    expect(screen.getByText('15/09/2026')).toBeInTheDocument();
+    expect(screen.getByText('15 sept. 2026')).toBeInTheDocument();
     expect(screen.getByText('LinkedIn')).toBeInTheDocument();
   });
 

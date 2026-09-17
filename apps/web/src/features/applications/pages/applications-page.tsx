@@ -2,6 +2,8 @@ import type { ApplicationListQueryInput } from '@jobtrack/shared';
 import { useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { ApplicationFormDialog } from '../components/application-form-dialog';
+import { ApplicationSheet } from '../components/application-sheet';
+import { ApplicationsBoard } from '../components/applications-board';
 import { ApplicationsFilters } from '../components/applications-filters';
 import { ApplicationsTable } from '../components/applications-table';
 import { useApplications } from '../hooks/use-applications';
@@ -28,6 +30,15 @@ export function ApplicationsPage() {
     setState({ page });
   }
 
+  /**
+   * Ouvrir ou refermer le panneau de détail ne touche pas à la pagination
+   * (`resetPage: false`) : consulter une candidature depuis la page 3 de la
+   * table doit laisser la table sur la page 3 en refermant.
+   */
+  function setApplicationId(applicationId: string | null): void {
+    setState({ applicationId }, { resetPage: false });
+  }
+
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader title="Mes candidatures" description="Chaque candidature, son statut, sa source et le CV utilisé." />
@@ -52,21 +63,19 @@ export function ApplicationsPage() {
             hasFilters={hasFilters}
             onRetry={() => void applications.refetch()}
             onPageChange={handlePageChange}
-            onOpen={(id) => setState({ applicationId: id })}
+            onOpen={setApplicationId}
             onAdd={() => setState({ adding: true })}
             onClearFilters={() => setState({ tab: 'all', q: '' })}
             hrefForPage={(page) => `?${writeApplicationsUrlState({ ...state, page }).toString()}`}
           />
         ) : (
-          // Emplacement du Kanban — remplacé par ApplicationsBoard (tâche 6).
-          <div data-slot="applications-board-slot" className="text-muted-foreground py-16 text-center text-sm">
-            Vue Kanban
-          </div>
+          <ApplicationsBoard onOpen={setApplicationId} />
         )}
 
-        {/* Emplacement du panneau de détail `?candidature=<id>` — remplacé par
-            ApplicationSheet (tâche 6). L'identifiant est déjà lu dans l'URL
-            (`state.applicationId`) et écrit par la table. */}
+        {/* Panneau de détail piloté par `?candidature=<id>`, ouvert aussi bien
+            depuis la table que depuis le Kanban ou le formulaire de création.
+            Une suppression appelle le même `onClose`, qui retire le paramètre. */}
+        <ApplicationSheet id={state.applicationId} onClose={() => setApplicationId(null)} />
       </div>
 
       <ApplicationFormDialog
@@ -75,7 +84,7 @@ export function ApplicationsPage() {
         // Une candidature vient d'être créée : elle est en tête du tri par
         // défaut (mise à jour la plus récente), donc sur la première page.
         onCreated={() => setState({ page: 1 })}
-        onOpenApplication={(applicationId) => setState({ applicationId, adding: false })}
+        onOpenApplication={(applicationId) => setState({ applicationId, adding: false }, { resetPage: false })}
       />
     </div>
   );

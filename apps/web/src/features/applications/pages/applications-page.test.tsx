@@ -1,4 +1,10 @@
-import type { ApplicationListResponseDto, ApplicationStatsDto } from '@jobtrack/shared';
+import type {
+  ApplicationBoardDto,
+  ApplicationDetailDto,
+  ApplicationDto,
+  ApplicationListResponseDto,
+  ApplicationStatsDto,
+} from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -8,16 +14,19 @@ import { ApplicationsPage } from './applications-page';
 
 const fetchApplications = vi.hoisted(() => vi.fn());
 const fetchApplicationStats = vi.hoisted(() => vi.fn());
+const fetchApplicationBoard = vi.hoisted(() => vi.fn());
+const fetchApplication = vi.hoisted(() => vi.fn());
+const deleteApplication = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/api/applications', () => ({
   fetchApplications,
   fetchApplicationStats,
-  fetchApplicationBoard: vi.fn(),
-  fetchApplication: vi.fn(),
+  fetchApplicationBoard,
+  fetchApplication,
+  deleteApplication,
   createApplication: vi.fn(),
   updateApplication: vi.fn(),
   moveApplication: vi.fn(),
-  deleteApplication: vi.fn(),
 }));
 
 vi.mock('@/services/api/resume', () => ({
@@ -49,14 +58,55 @@ const STATS: ApplicationStatsDto = {
   interviewRate: 0.5,
 };
 
+const APPLICATION: ApplicationDto = {
+  id: 'app_1',
+  jobId: null,
+  status: 'APPLIED',
+  position: 0,
+  jobTitle: 'Business Analyst',
+  company: 'Societe Generale',
+  locationLabel: null,
+  salaryLabel: null,
+  contractLabel: null,
+  source: 'LINKEDIN',
+  sourceUrl: null,
+  appliedAt: '2026-09-15',
+  usedBaseResume: false,
+  resumeId: null,
+  coverLetterId: null,
+  notes: null,
+  createdAt: '2026-09-15T08:00:00.000Z',
+  updatedAt: '2026-09-15T08:00:00.000Z',
+  job: null,
+  resume: null,
+  coverLetter: null,
+};
+
+const DETAIL: ApplicationDetailDto = {
+  ...APPLICATION,
+  events: [
+    { id: 'evt_1', type: 'CREATED', fromStatus: null, toStatus: null, note: null, createdAt: '2026-09-15T08:00:00.000Z' },
+  ],
+};
+
+const BOARD: ApplicationBoardDto = {
+  columns: { TO_APPLY: [], APPLIED: [APPLICATION], INTERVIEW: [], OFFER: [], REJECTED: [] },
+};
+
 beforeEach(() => {
   fetchApplications.mockResolvedValue(EMPTY_LIST);
   fetchApplicationStats.mockResolvedValue(STATS);
+  fetchApplicationBoard.mockResolvedValue(BOARD);
+  fetchApplication.mockResolvedValue(DETAIL);
+  deleteApplication.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   fetchApplications.mockReset();
   fetchApplicationStats.mockReset();
+  fetchApplicationBoard.mockReset();
+  fetchApplication.mockReset();
+  deleteApplication.mockReset();
 });
 
 function Search() {
@@ -109,7 +159,7 @@ describe('ApplicationsPage', () => {
 
     expect(screen.getByTestId('search').textContent).toBe('?vue=kanban');
     expect(screen.getByRole('button', { name: 'Vue Kanban' })).toHaveAttribute('aria-pressed', 'true');
-    expect(document.querySelector('[data-slot="applications-board-slot"]')).toBeInTheDocument();
+    expect(await screen.findByText('Societe Generale')).toBeInTheDocument();
   });
 
   it('revient a la vue table, qui n_ecrit rien dans l_URL', async () => {
@@ -119,7 +169,7 @@ describe('ApplicationsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Vue table' }));
 
     expect(screen.getByTestId('search').textContent).toBe('');
-    expect(document.querySelector('[data-slot="applications-board-slot"]')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Societe Generale')).not.toBeInTheDocument());
   });
 
   it('filtre par onglet et transmet l_onglet a l_API', async () => {
@@ -202,5 +252,62 @@ describe('ApplicationsPage', () => {
     await user.click(open as HTMLElement);
 
     expect(screen.getByTestId('search').textContent).toBe('?candidature=app_1');
+  });
+
+  it('vue Kanban : rend les cinq colonnes du contrat et leurs cartes', async () => {
+    renderPage('/applications?vue=kanban');
+
+    expect(await screen.findByText('Societe Generale')).toBeInTheDocument();
+    const columns = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
+    expect(columns).toEqual(['À postuler', 'Candidature envoyée', 'Entretien', 'Offre', 'Refusée']);
+  });
+
+  it('ouvre la fiche depuis une carte du Kanban', async () => {
+    const user = userEvent.setup();
+    renderPage('/applications?vue=kanban');
+
+    await user.click(await screen.findByRole('button', { name: 'Ouvrir la candidature Business Analyst' }));
+
+    expect(screen.getByTestId('search').textContent).toBe('?vue=kanban&candidature=app_1');
+  });
+
+  it('ouvre le panneau de detail depuis ?candidature=', async () => {
+    renderPage('/applications?candidature=app_1');
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Business Analyst' })).toBeInTheDocument();
+    expect(fetchApplication).toHaveBeenCalledWith('app_1');
+    expect(screen.getByText('Candidature créée')).toBeInTheDocument();
+  });
+
+  it('refermer le panneau retire ?candidature de l_URL', async () => {
+    const user = userEvent.setup();
+    renderPage('/applications?candidature=app_1');
+
+    await screen.findByRole('heading', { level: 2, name: 'Business Analyst' });
+    await user.click(screen.getByRole('button', { name: 'Fermer' }));
+
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe(''));
+  });
+
+  it('supprimer depuis le panneau retire aussi ?candidature de l_URL', async () => {
+    const user = userEvent.setup();
+    renderPage('/applications?candidature=app_1');
+
+    await screen.findByRole('heading', { level: 2, name: 'Business Analyst' });
+    await user.click(screen.getByRole('button', { name: 'Supprimer' }));
+    await user.click(screen.getByRole('button', { name: 'Supprimer définitivement' }));
+
+    await waitFor(() => expect(deleteApplication).toHaveBeenCalledWith('app_1'));
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe(''));
+  });
+
+  it('la page consultee est conservee en refermant le panneau de detail', async () => {
+    const user = userEvent.setup();
+    renderPage('/applications?page=3&candidature=app_1');
+
+    await screen.findByRole('heading', { level: 2, name: 'Business Analyst' });
+    await user.click(screen.getByRole('button', { name: 'Fermer' }));
+
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe('?page=3'));
   });
 });

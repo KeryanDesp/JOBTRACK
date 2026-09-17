@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import type { ApplicationDetailDto, ApplicationStatus, UpdateApplicationInput } from '@jobtrack/shared';
-import { APPLICATION_SOURCE_LABELS, APPLICATION_STATUSES, APPLICATION_STATUS_LABELS } from '@jobtrack/shared';
+import type { ApplicationDetailDto, UpdateApplicationInput } from '@jobtrack/shared';
 import { ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ErrorState } from '@/components/shared/error-state';
@@ -16,17 +15,15 @@ import { isHttpUrl } from '@/features/jobs/lib/format';
 import { useLetters, useResumes } from '@/features/resume/hooks/use-resume';
 import { ApiError } from '@/services/api/client';
 import { useApplication, useUpdateApplication } from '../hooks/use-applications';
+import { sourceLabel } from '../lib/format';
 import { ApplicationEvents } from './application-events';
+import { ApplicationStatusSelect } from './application-status-select';
 import { DeleteApplicationButton } from './delete-application-button';
 
 // Valeurs réservées du sélecteur « CV utilisé » : aucun identifiant de CV ne
 // peut les prendre (ce sont des `cuid`), elles restent donc distinguables.
 const NO_RESUME = 'aucun';
 const BASE_RESUME = 'principal';
-
-function isApplicationStatus(value: string): value is ApplicationStatus {
-  return (APPLICATION_STATUSES as readonly string[]).includes(value);
-}
 
 interface ApplicationSheetProps {
   id: string | null;
@@ -161,23 +158,12 @@ function ApplicationSheetContent({
       <div className="space-y-5 px-4 pb-6">
         <div className="space-y-2">
           <Label htmlFor="candidature-statut">Statut</Label>
-          <Select
+          <ApplicationStatusSelect
+            id="candidature-statut"
+            ariaLabel="Statut"
             value={application.status}
-            onValueChange={(value) => {
-              if (isApplicationStatus(value)) save({ status: value });
-            }}
-          >
-            <SelectTrigger id="candidature-statut" aria-label="Statut" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {APPLICATION_STATUSES.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {APPLICATION_STATUS_LABELS[status]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(status) => save({ status })}
+          />
         </div>
 
         <div className="space-y-2">
@@ -233,7 +219,7 @@ function ApplicationSheetContent({
           <div className="flex items-baseline justify-between gap-4">
             <dt className="text-muted-foreground">Source</dt>
             <dd className="flex items-center gap-2">
-              <span>{APPLICATION_SOURCE_LABELS[application.source]}</span>
+              <span>{sourceLabel(application)}</span>
               {isHttpUrl(application.sourceUrl) && (
                 <a
                   href={application.sourceUrl}

@@ -4,33 +4,11 @@ import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { ApplicationDto } from '@jobtrack/shared';
-import { APPLICATION_SOURCE_LABELS } from '@jobtrack/shared';
 import { GripVertical } from 'lucide-react';
 import { MatchBadge } from '@/features/matching/components/match-badge';
 import { cn } from '@/lib/utils';
+import { formatApplicationDate, sourceLabel } from '../lib/format';
 import { MoveToMenu } from './move-to-menu';
-
-// `timeZone: 'UTC'` : `appliedAt` est une date calendaire (AAAA-MM-JJ, colonne
-// `@db.Date`) que `new Date()` interprète à minuit UTC — sans ce fuseau, un
-// client à l'ouest de Greenwich afficherait la veille.
-const APPLIED_AT_FORMAT = new Intl.DateTimeFormat('fr-FR', {
-  timeZone: 'UTC',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
-
-/**
- * Provisoire (tâche 6, phase 1) : `formatApplicationDate` de
- * `../lib/format.ts` est écrit en parallèle par une autre tâche et n'est pas
- * encore importable. Ce helper local sera remplacé par le partagé en phase 2.
- */
-function formatAppliedAt(value: string | null): string {
-  if (value === null || value === '') return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return APPLIED_AT_FORMAT.format(date);
-}
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
@@ -91,8 +69,8 @@ export function ApplicationCard({ application, onOpen, dragHandleProps }: Applic
           {application.salaryLabel !== null && (
             <span className="text-foreground/80 font-medium">{application.salaryLabel}</span>
           )}
-          <span className="text-muted-foreground">{formatAppliedAt(application.appliedAt)}</span>
-          <span className="text-muted-foreground">{APPLICATION_SOURCE_LABELS[application.source]}</span>
+          <span className="text-muted-foreground">{formatApplicationDate(application.appliedAt)}</span>
+          <span className="text-muted-foreground">{sourceLabel(application)}</span>
           {match !== null && match.score !== null && <MatchBadge score={match.score} band={match.band} size="sm" />}
         </span>
       </button>
