@@ -395,13 +395,13 @@ describe('mapFranceTravailOffer — url de repli et dates', () => {
 describe('mapFranceTravailOffer — contractNature et romeCode nettoyes (revue securite, tache 3)', () => {
   it('nettoie les caracteres de controle dans natureContrat sans le vider', () => {
     const draft = mapFranceTravailOffer(
-      buildOffer({ id: 'FT-9050', intitule: 'Poste', natureContrat: 'Contrat travail ‮' }),
+      buildOffer({ id: 'FT-9050', intitule: 'Poste', natureContrat: 'Contrat travail\u0000‮' }),
     );
     expect(draft?.contractNature).toBe('Contrat travail');
   });
 
   it('natureContrat reduit a des caracteres de controle une fois nettoye devient nul', () => {
-    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9051', intitule: 'Poste', natureContrat: '  ' }));
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9051', intitule: 'Poste', natureContrat: '\u0000\u0000' }));
     expect(draft?.contractNature).toBeNull();
   });
 
@@ -411,7 +411,7 @@ describe('mapFranceTravailOffer — contractNature et romeCode nettoyes (revue s
   });
 
   it('nettoie les caracteres de controle dans romeCode sans le vider', () => {
-    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9053', intitule: 'Poste', romeCode: 'M1805 ' }));
+    const draft = mapFranceTravailOffer(buildOffer({ id: 'FT-9053', intitule: 'Poste', romeCode: 'M1805\u0000' }));
     expect(draft?.romeCode).toBe('M1805');
   });
 

@@ -1,14 +1,16 @@
-import type { JobDetailDto } from '@jobtrack/shared';
-import { AlertCircle, FileQuestion } from 'lucide-react';
+import type { CoverLetterSummaryDto, JobDetailDto, ResumeSummaryDto } from '@jobtrack/shared';
+import { AlertCircle, FileQuestion, FileText, Mail, Sparkles } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { ErrorState } from '@/components/shared/error-state';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { MatchPanel } from '@/features/matching/components/match-panel';
 import { useAnalyzeJobs, useJobMatch, useRetryJobAnalysis } from '@/features/matching/hooks/use-match';
+import { useLetters, useResumes } from '@/features/resume/hooks/use-resume';
 import { ApiError } from '@/services/api/client';
 import { JobDescription } from '../components/job-description';
 import { JobDetailHeader } from '../components/job-detail-header';
@@ -62,6 +64,70 @@ function NotFoundBlock() {
       <Link to="/jobs" className="mt-6 text-sm font-medium text-primary underline-offset-4 hover:underline">
         Retour aux offres
       </Link>
+    </div>
+  );
+}
+
+/**
+ * Actions vers le CV adapté et la lettre de motivation (spec §2, §7) : deux
+ * boutons-liens juste sous l'en-tête (qui porte déjà « Sauvegarder »,
+ * `JobDetailHeader`/`ActionsRow`, non modifié ici) — visibles sans condition
+ * de largeur d'écran, donc déjà présents sur mobile comme sur desktop,
+ * contrairement à la barre d'actions collante de l'en-tête (dupliquée, elle,
+ * en CSS) que cette page ne modifie pas.
+ *
+ * Revue finale (spec §2 : « réapparaît sur l'offre ») : si un CV adapté existe
+ * déjà pour cette offre (`tailoredResume`, le plus récent — `GET /resume` est
+ * déjà trié par date de mise à jour décroissante côté API, revue
+ * `resume.service.ts`), l'action primaire « Adapter mon CV » devient la
+ * secondaire « Adapter à nouveau », complétée par un lien « CV adapté
+ * disponible » vers ce CV. Même principe pour la lettre (`existingLetter`,
+ * `GET /resume/letters`) : le bouton « Générer une lettre » reste toujours
+ * affiché, complété par un lien « Lettre disponible ». Chargement de ces deux
+ * listes : rien de plus affiché ; erreur : ignorée en silence — la page de
+ * l'offre ne doit jamais échouer à cause de la liste des CV/lettres.
+ */
+function ResumeActionsRow({
+  jobId,
+  tailoredResume,
+  existingLetter,
+}: {
+  jobId: string;
+  tailoredResume: ResumeSummaryDto | undefined;
+  existingLetter: CoverLetterSummaryDto | undefined;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <Button asChild variant={tailoredResume ? 'ghost' : 'outline'} size="sm">
+        <Link to={`/resume/create/${jobId}`}>
+          <Sparkles />
+          {tailoredResume ? 'Adapter à nouveau' : 'Adapter mon CV'}
+        </Link>
+      </Button>
+      {tailoredResume && (
+        <Link
+          to={`/resume/${tailoredResume.id}`}
+          className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+        >
+          <FileText className="size-3.5" aria-hidden="true" />
+          CV adapté disponible
+        </Link>
+      )}
+      <Button asChild variant="outline" size="sm">
+        <Link to={`/resume/letter/${jobId}`}>
+          <Mail />
+          Générer une lettre
+        </Link>
+      </Button>
+      {existingLetter && (
+        <Link
+          to={`/resume/letter/${jobId}?lettre=${existingLetter.id}`}
+          className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+        >
+          <Mail className="size-3.5" aria-hidden="true" />
+          Lettre disponible
+        </Link>
+      )}
     </div>
   );
 }
@@ -127,6 +193,12 @@ export function JobDetailPage() {
   const matchQuery = useJobMatch(jobId, { enabled: jobId !== '' });
   const analyzeJobs = useAnalyzeJobs();
   const retryAnalysis = useRetryJobAnalysis(jobId);
+  // CV adapté/lettre déjà existants pour cette offre (spec §2, revue finale) — appelés avant tout
+  // retour anticipé (règle des hooks), comme les quatre hooks ci-dessus. Chargement/erreur ignorés
+  // ici (`ResumeActionsRow` ne reçoit qu'un résultat trouvé ou non) : la page de l'offre ne doit
+  // jamais échouer à cause de la liste des CV/lettres.
+  const resumesQuery = useResumes();
+  const lettersQuery = useLetters();
 
   // `useAnalyzeJobs` invalide déjà `matchKeys.detail(id)` à la réussite (fixup
   // f6959f9, `applyAnalyzeScores`) : `matchQuery` se relit donc tout seul,
@@ -157,6 +229,9 @@ export function JobDetailPage() {
   const optionalSkills = job.skills.filter((skill) => !skill.required);
   const hasCompanySection = Boolean(job.company || job.companyDescription || job.companyUrl);
   const conditionRows = buildConditionRows(job);
+  // Le plus récent d'abord (déjà trié ainsi côté API) : `find` s'arrête donc sur la bonne entrée.
+  const tailoredResume = resumesQuery.data?.find((resume) => resume.jobId === job.id);
+  const existingLetter = lettersQuery.data?.find((letter) => letter.jobId === job.id);
 
   return (
     <TooltipProvider>
@@ -177,6 +252,8 @@ export function JobDetailPage() {
         )}
 
         <JobDetailHeader job={job} />
+
+        <ResumeActionsRow jobId={job.id} tailoredResume={tailoredResume} existingLetter={existingLetter} />
 
         <Card>
           <CardHeader>

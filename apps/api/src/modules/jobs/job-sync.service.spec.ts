@@ -24,7 +24,10 @@ const EXTERNAL_ID_PREFIX = 'FT-SYNC-';
  */
 async function cleanup(): Promise<void> {
   await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: EXTERNAL_ID_PREFIX } } });
-  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
+  // Orphelines **de cette suite seulement** (entreprise `Sync Test …`) : le filtre `sources: { none: {} }`
+  // seul effaçait aussi les offres sans source créées par les specs unitaires du module CV
+  // (`resume-tailoring.service.spec.ts`, `cover-letter.service.spec.ts`) en cours d'exécution.
+  await prisma.job.deleteMany({ where: { sources: { none: {} }, company: { startsWith: 'Sync Test ' } } });
   await prisma.jobSearchSync.deleteMany({ where: { queryJson: { path: ['q'], string_contains: 'sync-test' } } });
 }
 

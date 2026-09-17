@@ -1,0 +1,32 @@
+{
+  "title": "Ingénieur logiciel senior — Solaris Ingénierie",
+  "summary": "Ingénieure logicielle expérimentée, spécialisée dans la conception de services backend et l'encadrement d'équipes de développement, prête à rejoindre Solaris Ingénierie.",
+  "experiences": [
+    {
+      "id": "E2E-EXP-1",
+      "keep": true,
+      "order": 0,
+      "highlights": [
+        "A dirigé une équipe de développeurs chez Solaris Ingénierie.",
+        "A augmenté la performance des services de 30 %."
+      ]
+    },
+    {
+      "id": "E2E-EXP-2",
+      "keep": true,
+      "order": 1,
+      "highlights": []
+    },
+    {
+      "id": "E2E-EXP-INCONNU",
+      "keep": true,
+      "order": 2,
+      "highlights": ["Ligne ignorée car identifiant inconnu du profil."]
+    }
+  ],
+  "educations": [],
+  "skills": [],
+  "certifications": [],
+  "projects": [],
+  "notes": "Mise en avant de l'encadrement d'équipe et de l'expérience backend, en phase avec le poste senior chez Solaris Ingénierie."
+}

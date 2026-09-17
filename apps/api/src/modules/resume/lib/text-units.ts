@@ -1,0 +1,311 @@
+import { canonicalSkill } from '../../matching/scoring/normalize';
+
+/**
+ * Extraction de « unités de texte » pures (nombres, noms propres, phrases)
+ * utilisées par l'ancrage des reformulations (spec §5, `grounding.ts`) : ces
+ * fonctions ne dépendent que du texte en entrée, jamais du profil ni d'un
+ * appel réseau — elles sont testées isolément et réutilisées à la fois pour
+ * le CV adapté et pour la lettre de motivation.
+ *
+ * `extractNumbers`/`extractProperNouns` renvoient une forme canonique (pour
+ * la comparaison) ; les variantes `*Detailed` renvoient en plus la forme de
+ * surface d'origine (pour les messages destinés à l'utilisateur — revue :
+ * un motif rejeté doit être montré tel qu'il a été écrit, jamais sous sa
+ * clé canonique).
+ */
+
+// ---------------------------------------------------------------------------
+// extractNumbers
+// ---------------------------------------------------------------------------
+
+// Un nombre isolé (jamais collé à une lettre ou un chiffre d'un autre mot, ce
+// qui exclurait par exemple le « 6 » de « ES6 » — reconnu comme nom propre
+// technique par `extractProperNouns`) : entier ou décimal (séparateur `,` ou
+// `.`), suivi éventuellement d'une unité usuelle (pourcentage, montant en
+// euros abrégé). Les unités les plus longues sont listées en premier dans
+// l'alternative pour que `M€`/`Md€` ne soient jamais coupées après le seul `M`.
+const NUMBER_PATTERN = /(?<![\p{L}\d])\d+(?:[.,]\d+)?(?:\s?(?:Md€|M€|k€|K€|Md|M|k|K|€|%))?(?![\p{L}\d])/gu;
+
+export interface ExtractedNumber {
+  /** Forme telle qu'écrite dans le texte d'origine (pour les messages). */
+  raw: string;
+  /** Forme normalisée, comparable entre deux écritures équivalentes. */
+  canonical: string;
+}
+
+/**
+ * Normalise un nombre extrait pour la comparaison : espaces internes retirés
+ * (« 2 M€ » ≡ « 2M€ »), virgule décimale ramenée au point (« 2,5 » ≡ « 2.5 »),
+ * casse uniformisée (« 30K€ » ≡ « 30k€ »).
+ */
+function normalizeNumberToken(raw: string): string {
+  const withoutSpaces = raw.replace(/\s+/g, '');
+  const withDotDecimal = withoutSpaces.replace(/(\d),(\d)/g, '$1.$2');
+  return withDotDecimal.toLowerCase();
+}
+
+/** Variante détaillée d'`extractNumbers` : conserve la forme de surface d'origine. */
+export function extractNumbersDetailed(text: string): ExtractedNumber[] {
+  const matches = text.match(NUMBER_PATTERN) ?? [];
+  return matches.map((raw) => ({ raw, canonical: normalizeNumberToken(raw) }));
+}
+
+/**
+ * Tous les nombres d'un texte (entiers, décimaux, pourcentages, montants
+ * abrégés « 2 M€ »/« 12k », années), sous une forme normalisée qui rend
+ * équivalentes deux écritures du même nombre (spec §5, tâche 3).
+ */
+export function extractNumbers(text: string): string[] {
+  return extractNumbersDetailed(text).map((number) => number.canonical);
+}
+
+// ---------------------------------------------------------------------------
+// sentences
+// ---------------------------------------------------------------------------
+
+// Abréviations françaises courantes dont le point ne doit jamais être compris
+// comme une fin de phrase (spec tâche 3). `n°` ne comporte pas de point et ne
+// modifie donc jamais la césure ; listée par cohérence avec l'énoncé.
+const PROTECTED_ABBREVIATIONS = /\b(?:M|Mme|Mlle|etc|ex|cf)\.(?=\s|$)/g;
+
+// Une fin de phrase n'est reconnue que si la ponctuation est suivie d'un
+// espace ou de la fin du texte : un point interne à un mot (« Node.js »,
+// « 2.5 ») n'est jamais une frontière de phrase.
+const SENTENCE_END_PATTERN = /[.!?]+(?=\s|$)/g;
+
+/**
+ * Plages `[début, fin)` des abréviations protégées dans `text` — repérées
+ * par position plutôt que par substitution de caractère : aucun octet n'est
+ * ajouté ou modifié dans le texte, ce qui exclut par construction tout
+ * caractère de contrôle indésirable dans le fichier source.
+ */
+function findProtectedRanges(text: string): Array<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  for (const match of text.matchAll(PROTECTED_ABBREVIATIONS)) {
+    ranges.push([match.index, match.index + match[0].length]);
+  }
+  return ranges;
+}
+
+function isWithinRanges(position: number, ranges: readonly (readonly [number, number])[]): boolean {
+  return ranges.some(([start, end]) => position >= start && position < end);
+}
+
+/** Positions de fin de chaque phrase, en ignorant la ponctuation des abréviations protégées. */
+function findSentenceBoundaries(text: string): number[] {
+  const protectedRanges = findProtectedRanges(text);
+  const boundaries: number[] = [];
+  for (const match of text.matchAll(SENTENCE_END_PATTERN)) {
+    if (isWithinRanges(match.index, protectedRanges)) continue;
+    boundaries.push(match.index + match[0].length);
+  }
+  return boundaries;
+}
+
+/**
+ * Découpe un texte en phrases (séparateurs `.`, `!`, `?`, uniquement lorsque
+ * suivis d'un espace ou de la fin du texte — jamais à l'intérieur d'un mot
+ * comme « Node.js »), en protégeant les abréviations françaises courantes
+ * (« M. », « Mme », « etc. », « ex. », « cf. », « n° ») pour qu'elles ne
+ * provoquent pas de césure incorrecte. Une chaîne vide renvoie un tableau
+ * vide ; un texte sans ponctuation finale est traité comme une seule phrase.
+ */
+export function sentences(text: string): string[] {
+  const trimmed = text.trim();
+  if (trimmed === '') return [];
+
+  const boundaries = findSentenceBoundaries(trimmed);
+  const segments: string[] = [];
+  let start = 0;
+  for (const boundary of boundaries) {
+    segments.push(trimmed.slice(start, boundary));
+    start = boundary;
+  }
+  segments.push(trimmed.slice(start));
+
+  return segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// extractProperNouns
+// ---------------------------------------------------------------------------
+
+// Un « mot » : suite de lettres/chiffres pouvant se prolonger par `+`, `#`,
+// `.`, `'` ou `-` (couvre « C++ », « C# », « Node.js », « Jean-Pierre »),
+// débutant obligatoirement par une lettre ou un chiffre.
+const WORD_PATTERN = /[\p{L}\p{N}][\p{L}\p{N}+#.'-]*/gu;
+// Ponctuation de bord à retirer après capture (ex. « React. » en fin de
+// phrase) — jamais retirée à l'intérieur du mot (« Node.js » garde son point).
+const EDGE_PUNCTUATION_PATTERN = /^[.,;:!?()"'«»…-]+|[.,;:!?()"'«»…-]+$/g;
+
+const ACRONYM_PATTERN = /^\p{Lu}{2,}$/u;
+
+// Terminaisons typiques d'un nom déverbal français (« Conception »,
+// « Pilotage », « Développement », « Gestion »…), utilisées uniquement pour
+// exempter le PREMIER mot d'une phrase (voir `isOrdinaryFrenchWord`) — un même
+// mot capitalisé en milieu de phrase reste un candidat nom propre (limite
+// heuristique assumée, cf. tests).
+const ORDINARY_FRENCH_WORD_SUFFIX_PATTERN = /(?:tion|ment|age|ance|ence|isme|ité|ée|ure|eur|ie|é)$/;
+
+// Mots-outils français courants : jamais des noms propres, quelle que soit
+// leur position. Inclut quelques noms déverbaux très courants en tête de
+// puce de CV qui n'entrent pas dans le motif de suffixe ci-dessus
+// (« Mise » — « Mise en place… », « Mise en œuvre… »). Liste non exhaustive
+// (heuristique), suffisante pour écarter les faux positifs les plus fréquents.
+const FRENCH_STOP_WORDS = new Set([
+  'le', 'la', 'les', 'un', 'une', 'des', 'du', 'au', 'aux',
+  'et', 'ou', 'mais', 'donc', 'or', 'ni', 'car',
+  'que', 'qui', 'quoi', 'dont', 'où',
+  'ce', 'cet', 'cette', 'ces', 'ceci', 'cela', 'celui', 'celle', 'ceux', 'celles',
+  'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'son', 'sa', 'ses',
+  'notre', 'nos', 'votre', 'vos', 'leur', 'leurs',
+  'je', 'tu', 'il', 'elle', 'on', 'nous', 'vous', 'ils', 'elles',
+  'pour', 'avec', 'sans', 'dans', 'sur', 'sous', 'entre', 'chez', 'vers', 'par',
+  'en', 'y', 'ne', 'pas', 'depuis', 'dès', 'après', 'avant', 'durant', 'pendant',
+  'lors', 'selon', 'via', 'grâce', 'afin', 'malgré', 'sauf',
+  'comme', 'plus', 'moins', 'très', 'tres', 'bien', 'ainsi', 'alors', 'aussi',
+  'encore', 'enfin', 'ici', 'là', 'aujourd’hui', 'hier', 'demain',
+  'quand', 'si', 'non', 'oui', 'tout', 'toute', 'tous', 'toutes',
+  'chaque', 'chacun', 'chacune', 'aucun', 'aucune', 'plusieurs', 'quelques',
+  'être', 'avoir', 'faire', 'également', 'egalement',
+  'mise',
+]);
+
+function tokenizeSentence(sentence: string): string[] {
+  const matches = sentence.match(WORD_PATTERN) ?? [];
+  return matches.map((token) => token.replace(EDGE_PUNCTUATION_PATTERN, '')).filter((token) => token.length > 0);
+}
+
+/**
+ * Un « token technique » — nom de technologie contenant un chiffre ou un
+ * symbole distinctif (`C++`, `C#`, `ES6`, `Node.js`) — toujours retenu comme
+ * nom propre, quelle que soit sa position dans la phrase : ces formes ne sont
+ * jamais des mots français ordinaires. Un nombre pur (« 2020 », sans lettre)
+ * est explicitement exclu : il relève de `extractNumbers`, pas des entités.
+ */
+function isTechnicalToken(token: string): boolean {
+  if (!/\p{L}/u.test(token)) return false;
+  return /[\d+#]/.test(token) || token.includes('.');
+}
+
+/**
+ * Mot capitalisé candidat à un nom propre (hors sigle, géré séparément) :
+ * commence par une majuscule, comporte au moins une minuscule (ce qui exclut
+ * les sigles tout en majuscules, déjà couverts par `ACRONYM_PATTERN`) — cette
+ * condition large couvre aussi bien la casse de titre (« Kubernetes ») que la
+ * casse mixte des marques technologiques (« ReactJS », « JavaScript »,
+ * « GitHub »). Un mot-outil français est toujours exclu, quelle que soit sa
+ * position dans la phrase.
+ */
+function isCapitalizedCandidate(token: string): boolean {
+  if (token.length < 2) return false;
+  if (!/^\p{Lu}/u.test(token)) return false;
+  if (!/\p{Ll}/u.test(token)) return false;
+  return !FRENCH_STOP_WORDS.has(token.toLowerCase());
+}
+
+/**
+ * Mot français ordinaire par sa terminaison (« Conception… », « Pilotage… »,
+ * « Développement… ») : casse de titre stricte (une seule majuscule initiale,
+ * jamais une casse mixte comme « ReactJS ») et terminaison typique d'un nom
+ * déverbal français. Ne couvre pas les mots-outils (`FRENCH_STOP_WORDS`,
+ * vérifiés séparément) : contrairement à un mot-outil, ce test seul ne suffit
+ * pas à exempter un mot en tête de phrase — voir `extractSentenceProperNouns`,
+ * qui ne l'applique que si le mot suivant n'est pas lui-même un candidat
+ * capitalisé (sinon « Université Paris » perdrait son premier mot).
+ */
+function isOrdinaryFrenchWordBySuffix(token: string): boolean {
+  if (!/^\p{Lu}\p{Ll}*$/u.test(token)) return false;
+  return ORDINARY_FRENCH_WORD_SUFFIX_PATTERN.test(token.toLowerCase());
+}
+
+export interface ExtractedProperNoun {
+  /** Forme telle qu'écrite dans le texte d'origine (pour les messages). */
+  raw: string;
+  /** Clé canonique (`canonicalSkill`), comparable entre deux formes équivalentes. */
+  canonical: string;
+}
+
+/**
+ * Noms propres d'une phrase déjà découpée en mots : sigles (toujours
+ * retenus), tokens techniques (toujours retenus), le premier mot exempté
+ * seulement s'il est ordinaire (`isOrdinaryFrenchWord`), puis tout mot
+ * capitalisé restant — fusionné en une seule entité quand plusieurs se
+ * suivent (« Société Générale »).
+ */
+function extractSentenceProperNouns(tokens: readonly string[]): ExtractedProperNoun[] {
+  const results: ExtractedProperNoun[] = [];
+  let index = 0;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === undefined) break;
+
+    if (isTechnicalToken(token)) {
+      results.push({ raw: token, canonical: canonicalSkill(token) });
+      index += 1;
+      continue;
+    }
+
+    if (ACRONYM_PATTERN.test(token)) {
+      results.push({ raw: token, canonical: canonicalSkill(token) });
+      index += 1;
+      continue;
+    }
+
+    const isSentenceInitial = index === 0;
+    if (isSentenceInitial) {
+      const isStopWord = FRENCH_STOP_WORDS.has(token.toLowerCase());
+      // Un mot-outil est toujours exempté. Un mot ordinaire par sa terminaison
+      // (« Conception… ») ne l'est que si le mot suivant n'est pas lui-même un
+      // candidat capitalisé — sinon un nom composé comme « Université Paris »
+      // perdrait son premier mot (revue).
+      const nextToken = tokens[index + 1];
+      const nextIsCapitalized = nextToken !== undefined && isCapitalizedCandidate(nextToken);
+      if (isStopWord || (isOrdinaryFrenchWordBySuffix(token) && !nextIsCapitalized)) {
+        index += 1;
+        continue;
+      }
+    }
+
+    if (isCapitalizedCandidate(token)) {
+      const words = [token];
+      let lookahead = index + 1;
+      for (;;) {
+        const next = tokens[lookahead];
+        if (next === undefined || !isCapitalizedCandidate(next)) break;
+        words.push(next);
+        lookahead += 1;
+      }
+      const raw = words.join(' ');
+      results.push({ raw, canonical: canonicalSkill(raw) });
+      index = lookahead;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return results;
+}
+
+/** Variante détaillée d'`extractProperNouns` : conserve la forme de surface d'origine. */
+export function extractProperNounsDetailed(text: string): ExtractedProperNoun[] {
+  const results: ExtractedProperNoun[] = [];
+  for (const sentence of sentences(text)) {
+    results.push(...extractSentenceProperNouns(tokenizeSentence(sentence)));
+  }
+  return results;
+}
+
+/**
+ * Noms propres d'un texte (spec §5, tâche 3) : mots capitalisés (y compris en
+ * tête de phrase, sauf mot ordinaire — revue), sigles (≥ 2 lettres), tokens
+ * technologiques (« C++ », « ES6 », « Node.js ») et séquences multi-mots
+ * capitalisées (« Société Générale »). Chaque résultat est une clé canonique
+ * (`canonicalSkill`, qui applique `normalizeForKey`), pour que deux formes
+ * équivalentes d'une même entité (« React »/« ReactJS ») se comparent égales.
+ */
+export function extractProperNouns(text: string): string[] {
+  return extractProperNounsDetailed(text).map((noun) => noun.canonical);
+}

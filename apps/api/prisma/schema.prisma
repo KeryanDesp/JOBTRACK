@@ -8,18 +8,21 @@ datasource db {
 }
 
 model User {
-  id                    String    @id @default(cuid())
-  email                 String    @unique
+  id                    String         @id @default(cuid())
+  email                 String         @unique
   passwordHash          String?
   emailVerifiedAt       DateTime?
   onboardingCompletedAt DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  resumeTemplate        ResumeTemplate @default(CLASSIC)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
   profile       Profile?
   oauthAccounts OAuthAccount[]
   cvImports     CvImport[]
   savedJobs     SavedJob[]
+  resumes       Resume[]
+  coverLetters  CoverLetter[]
 }
 
 enum OAuthProvider {
@@ -312,6 +315,8 @@ model Job {
   savedBy      SavedJob[]
   analysis     JobAnalysis?
   matches      MatchScore[]
+  resumes      Resume[]
+  coverLetters CoverLetter[]
   // Index de tri utilisables par le moteur (revue sécurité, tâche 4) — Prisma ne sait
   // exprimer ni le tri DESC + NULLS LAST, ni la condition partielle : la migration
   // `job_indexes_for_sorts` ajoute, à côté des index ci-dessus, `Job_salary_sort_idx`,
@@ -476,4 +481,84 @@ model MatchScore {
   @@index([profileId, score])
   @@index([profileId, relevance])
   @@index([profileId, priority])
+}
+
+enum ResumeKind {
+  TAILORED
+}
+
+enum ResumeTemplate {
+  CLASSIC
+  MODERN
+}
+
+enum ResumeVersionSource {
+  AI
+  USER
+}
+
+enum CoverLetterTone {
+  SHORT
+  PROFESSIONAL
+  PERSONAL
+}
+
+model Resume {
+  id             String         @id @default(cuid())
+  userId         String
+  kind           ResumeKind     @default(TAILORED)
+  title          String
+  jobId          String?
+  template       ResumeTemplate @default(CLASSIC)
+  currentVersion Int            @default(1)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job          Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  versions     ResumeVersion[]
+  coverLetters CoverLetter[]
+
+  @@index([userId, updatedAt])
+  @@index([jobId])
+}
+
+model ResumeVersion {
+  id            String              @id @default(cuid())
+  resumeId      String
+  version       Int
+  content       Json
+  changes       Json?
+  source        ResumeVersionSource
+  model         String?
+  promptVersion Int?
+  inputTokens   Int?
+  outputTokens  Int?
+  createdAt     DateTime            @default(now())
+
+  resume Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  @@unique([resumeId, version])
+}
+
+model CoverLetter {
+  id            String          @id @default(cuid())
+  userId        String
+  jobId         String?
+  resumeId      String?
+  tone          CoverLetterTone
+  content       Json
+  model         String?
+  promptVersion Int?
+  inputTokens   Int?
+  outputTokens  Int?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job    Job?    @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  resume Resume? @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt])
+  @@index([jobId])
 }
