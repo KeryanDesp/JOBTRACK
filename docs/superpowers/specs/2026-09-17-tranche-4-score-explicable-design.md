@@ -104,10 +104,10 @@ Le modèle ne reçoit aucune donnée de l'utilisateur ; l'analyse est **indépen
 
 | Route | Rôle | Codes |
 |---|---|---|
-| `POST /jobs/analyses` `{ jobIds }` | analyse les offres manquantes (Claude), calcule/rafraîchit les scores de l'utilisateur, renvoie l'état par offre | 200 ; 400 ; 429 (seau `job-analysis` 60/h) ; 503 `AI_NOT_CONFIGURED` **seulement** si une analyse était nécessaire |
+| `POST /jobs/analyses` `{ jobIds }` | analyse les offres manquantes (Claude), calcule/rafraîchit les scores de l'utilisateur, renvoie l'état par offre | 200 ; 400 ; 429 (seau `job-analysis` 60/h) ; sans service IA : **200** avec `notConfigured: true` et les scores des offres déjà analysées (jamais 503, pour ne pas cacher les scores existants — amendement de la tâche 6) |
 | `GET /jobs/:id/match` | score détaillé (facteurs, explications) ; recalcul si empreinte/version périmée | 200 (score `null` + `analysis.status` si non analysée) ; 404 |
 | `POST /jobs/:id/analyses/retry` | relance une analyse `FAILED` | 202 ; 409 si `DONE`/`PENDING` ; 429 |
-| `GET /jobs` | inchangée + `match` sur chaque `item` (score sommaire ou `null`), tri `match`/`relevance`, onglets `for_you`/`priority` (filtres sur `MatchScore` de l'utilisateur, jointure) ; `sync` gagne `analysis: { analyzed, total }` pour la page | 200 |
+| `GET /jobs` | inchangée + `match` sur chaque `item` (score sommaire ou `null`), tri `match`/`relevance`, onglets `for_you`/`priority` (filtres sur `MatchScore` de l'utilisateur, jointure par `profileId` + empreinte courante + version d'analyse courante) ; `sync` gagne `analysis: { analyzed, total, notConfigured }` pour la page. **Classement** : Prisma ne sait pas trier sur une relation filtrée par utilisateur ; `match` et `relevance` classent donc **en mémoire les 500 offres les plus récentes** du filtre, non évaluées en dernier ; `total` = candidates considérées (≤ 500), les pages au-delà sont vides — amendement de la tâche 6 | 200 |
 
 Les scores sont **personnels** (jointure `MatchScore.profileId`), les analyses partagées ; aucune donnée d'un autre utilisateur ne transite (404 jamais 403 sur les routes par id).
 
