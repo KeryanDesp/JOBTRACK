@@ -12,7 +12,8 @@
     "lint": "eslint src prisma scripts",
     "e2e:cleanup": "tsx scripts/cleanup-e2e-users.ts",
     "jobs:seed": "tsx scripts/seed-jobs-fixtures.ts",
-    "jobs:unseed": "tsx scripts/unseed-jobs-fixtures.ts"
+    "jobs:unseed": "tsx scripts/unseed-jobs-fixtures.ts",
+    "jobs:seed-analyses": "tsx scripts/seed-job-analyses-fixtures.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.126.0",
