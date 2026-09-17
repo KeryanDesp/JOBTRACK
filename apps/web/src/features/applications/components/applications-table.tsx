@@ -218,16 +218,19 @@ export function ApplicationsTable({
           du libellé de la colonne Source sous `lg`, elle tient désormais dans
           les ~720 px disponibles à côté du menu latéral. */}
       <div className="hidden md:block [&_[data-slot=table-cell]]:px-1.5 [&_[data-slot=table-head]]:px-1.5">
-        <Table>
+        {/* `table-fixed` : les largeurs ci-dessous sont respectées et les cellules texte
+            tronquent (`truncate`) au lieu d'élargir le tableau au-delà de son conteneur
+            (vérification visuelle : 755 px pour 720 disponibles, colonne Actions coupée). */}
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
               <TableHead>Poste</TableHead>
-              <TableHead>Entreprise</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>CV utilisé</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Statut</TableHead>
-              <TableHead>
+              <TableHead className="w-[24%]">Entreprise</TableHead>
+              <TableHead className="w-24">Date</TableHead>
+              <TableHead className="hidden lg:table-cell lg:w-[16%]">CV utilisé</TableHead>
+              <TableHead className="w-12 lg:w-28">Source</TableHead>
+              <TableHead className="w-32">Statut</TableHead>
+              <TableHead className="w-16">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
@@ -235,7 +238,7 @@ export function ApplicationsTable({
           <TableBody>
             {items.map((application) => (
               <TableRow key={application.id}>
-                <TableCell className="max-w-[12rem] font-medium">
+                <TableCell className="font-medium">
                   <button
                     type="button"
                     onClick={() => onOpen(application.id)}
@@ -245,9 +248,13 @@ export function ApplicationsTable({
                     {application.jobTitle}
                   </button>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{application.company ?? EMPTY_VALUE}</TableCell>
+                <TableCell className="text-muted-foreground truncate" title={application.company ?? undefined}>
+                  {application.company ?? EMPTY_VALUE}
+                </TableCell>
                 <TableCell className="text-muted-foreground tabular-nums">{formatApplicationDate(application.appliedAt)}</TableCell>
-                <TableCell>
+                {/* Le CV utilisé reste visible dans la fiche et sur les cartes mobiles ; sous `lg`
+                    (≈ 720 px de contenu avec le menu latéral) la colonne ne tient pas. */}
+                <TableCell className="hidden truncate lg:table-cell">
                   <ResumeCell application={application} />
                 </TableCell>
                 <TableCell className="text-muted-foreground">
@@ -259,7 +266,7 @@ export function ApplicationsTable({
                     size="sm"
                     ariaLabel={`Statut de ${application.jobTitle}`}
                     onChange={(status) => handleStatusChange(application, status)}
-                    className="w-36 min-w-0"
+                    className="w-full min-w-0"
                   />
                 </TableCell>
                 <TableCell className="text-right">
