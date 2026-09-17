@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { ErrorState } from '@/components/shared/error-state';
 import { cn } from '@/lib/utils';
 import { ApiError } from '@/services/api/client';
-import { bandTone, formatScore, recommendationFor } from '../lib/format';
+import { analysisStatusMessage, bandTone, formatScore, recommendationFor } from '../lib/format';
 import { IncompleteProfileNotice } from './incomplete-profile-notice';
 import { PriorityChip } from './priority-chip';
 
@@ -119,7 +119,7 @@ export function MatchPanel({ match, isPending, error, onAnalyze, onRetry, isAnal
     return (
       <Alert>
         <AlertCircle aria-hidden="true" />
-        <AlertTitle>L&apos;analyse des offres nécessite le service IA (non configuré).</AlertTitle>
+        <AlertTitle>{analysisStatusMessage('ai_not_configured')}</AlertTitle>
       </Alert>
     );
   }

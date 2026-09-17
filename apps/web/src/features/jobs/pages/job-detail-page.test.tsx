@@ -264,4 +264,15 @@ describe('JobDetailPage', () => {
     await waitFor(() => expect(fetchJobMatch).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Bonne correspondance · 80')).toBeInTheDocument();
   });
+
+  it('affiche une alerte avec le message serveur quand Analyser cette offre echoue (429)', async () => {
+    fetchJob.mockResolvedValue(makeDetail());
+    analyzeJobs.mockRejectedValue(new ApiError('Trop de requêtes.', 429, 'RATE_LIMITED'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Analyser cette offre' }));
+
+    expect(await screen.findByText('Trop de requêtes.')).toBeInTheDocument();
+  });
 });

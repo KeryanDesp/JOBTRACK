@@ -386,4 +386,108 @@ describe('JobsPage', () => {
     await screen.findByText("L'analyse des offres nécessite le service IA (non configuré).");
     expect(screen.getByTestId('location')).not.toHaveTextContent('tri=');
   });
+
+  it('bascule le tri par defaut sans attendre l_analyse quand toutes les offres sont deja notees (chemin rapide)', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(
+      makeList({
+        items: [
+          makeSummary({
+            id: 'job-1',
+            match: { score: 80, band: 'GOOD', priority: 'GOOD', explanation: { top: [], weak: [] } },
+          }),
+        ],
+        total: 1,
+      }),
+    );
+
+    renderPage('/jobs');
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tri=pertinence'));
+    // Aucune offre à analyser (toutes déjà notées) : le chemin rapide n'a pas eu besoin
+    // d'attendre une réponse de `POST /jobs/analyses` pour connaître le profil/l'IA.
+    expect(analyzeJobsApi).not.toHaveBeenCalled();
+  });
+
+  it('applique la reprise des preferences et la bascule Pertinence toutes les deux', async () => {
+    fetchPreferences.mockResolvedValue({ ...EMPTY_PREFS, desiredRoles: ['Développeuse'], locations: ['Metz'] });
+    searchCommunes.mockResolvedValue([{ code: '57463', name: 'Metz', postalCode: '57000', departmentCode: '57' }]);
+    searchJobs.mockResolvedValue(
+      makeList({
+        items: [
+          makeSummary({
+            id: 'job-1',
+            match: { score: 80, band: 'GOOD', priority: 'GOOD', explanation: { top: [], weak: [] } },
+          }),
+        ],
+        total: 1,
+      }),
+    );
+
+    renderPage('/jobs');
+
+    await waitFor(() => expect(searchJobs).toHaveBeenCalledWith(expect.objectContaining({ q: 'Développeuse' })));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tri=pertinence'));
+  });
+
+  it('conserve un tri explicite (tri=match) meme quand l_IA est configuree et le profil complet', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    searchJobs.mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+    // Réponse par défaut du `beforeEach` : IA configurée, profil complet — les conditions de la
+    // bascule automatique sont réunies, mais un tri déjà choisi explicitement dans l'URL au
+    // chargement (mémorisé une fois pour toutes au montage) ne doit jamais être écrasé.
+
+    renderPage('/jobs?tri=match');
+
+    await waitFor(() => expect(analyzeJobsApi).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId('location')).toHaveTextContent('tri=match');
+  });
+
+  it(
+    'la barre de progression disparait une fois toutes les offres analysees',
+    async () => {
+      fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+      searchJobs.mockResolvedValue(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+      // Le premier sondage revient encore `pending`, le second confirme l'offre analysée
+      // (`useAnalysisPolling` : spec §2/§7, revue point 1 — re-sonde toutes les 2 s).
+      analyzeJobsApi
+        .mockResolvedValueOnce(makeAnalyzeResponse({ pending: 1 }))
+        .mockResolvedValueOnce(
+          makeAnalyzeResponse({
+            analyzed: 1,
+            pending: 0,
+            scores: { 'job-1': { score: 80, band: 'GOOD', priority: 'GOOD', explanation: { top: [], weak: [] } } },
+          }),
+        );
+
+      renderPage('/jobs');
+
+      expect(await screen.findByText(/Analyse de 1 offre…/)).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByText(/Analyse de 1 offre…/)).not.toBeInTheDocument(), {
+        timeout: 5_000,
+      });
+    },
+    8_000,
+  );
+
+  it('garde les bandeaux IA/profil visibles sur Forte priorite meme a 0 resultat', async () => {
+    fetchPreferences.mockResolvedValue(EMPTY_PREFS);
+    // Premier chargement (onglet « Toutes ») : apprend « IA non configurée » via l'analyse.
+    searchJobs.mockResolvedValueOnce(makeList({ items: [makeSummary({ id: 'job-1' })], total: 1 }));
+    analyzeJobsApi.mockResolvedValue(makeAnalyzeResponse({ notConfigured: true }));
+
+    renderPage('/jobs');
+
+    await screen.findByText("L'analyse des offres nécessite le service IA (non configuré).");
+
+    // Bascule vers « Forte priorité » : 0 résultat, donc aucune nouvelle analyse déclenchée —
+    // mais le bandeau déjà appris doit rester visible (état hissé au niveau page, revue point 4).
+    searchJobs.mockResolvedValue(makeList({ items: [], total: 0 }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Forte priorité' }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('onglet=priorite'));
+    expect(screen.getByText("L'analyse des offres nécessite le service IA (non configuré).")).toBeInTheDocument();
+  });
 });
