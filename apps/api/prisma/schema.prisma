@@ -62,6 +62,7 @@ model Profile {
   languages      Language[]
   certifications Certification[]
   projects       Project[]
+  matches        MatchScore[]
 }
 
 model Experience {
@@ -309,12 +310,8 @@ model Job {
   skills       JobSkill[]
   requirements JobRequirement[]
   savedBy      SavedJob[]
-
-  @@index([publishedAt])
-  @@index([lastSeenAt])
-  @@index([contractType, publishedAt])
-  @@index([departmentCode, publishedAt])
-  @@index([communeCode, publishedAt])
+  analysis     JobAnalysis?
+  matches      MatchScore[]
   // Index de tri utilisables par le moteur (revue sécurité, tâche 4) — Prisma ne sait
   // exprimer ni le tri DESC + NULLS LAST, ni la condition partielle : la migration
   // `job_indexes_for_sorts` ajoute, à côté des index ci-dessus, `Job_salary_sort_idx`,
@@ -324,6 +321,12 @@ model Job {
   // le défaut `Job_communeCode_publishedAt_idx` pour `@@index([communeCode,
   // publishedAt])` ci-dessus) fait que `migrate dev` tente de le remplacer par sa
   // version ASC pleine, jamais souhaité pour ces trois-là.
+
+  @@index([publishedAt])
+  @@index([lastSeenAt])
+  @@index([contractType, publishedAt])
+  @@index([departmentCode, publishedAt])
+  @@index([communeCode, publishedAt])
 }
 
 model JobSource {
@@ -409,4 +412,68 @@ model Commune {
   // `@@index` sont retirés d'ici — les garder tous les deux est le choix sûr.
   @@index([nameNormalized])
   @@index([postalCode])
+}
+
+enum JobAnalysisStatus {
+  PENDING
+  DONE
+  FAILED
+}
+
+enum MatchBand {
+  EXCELLENT
+  GOOD
+  PARTIAL
+  WEAK
+}
+
+enum MatchPriority {
+  VERY_HIGH
+  HIGH
+  GOOD
+  CONSIDER
+  LOW
+}
+
+model JobAnalysis {
+  id           String            @id @default(cuid())
+  jobId        String            @unique
+  status       JobAnalysisStatus @default(PENDING)
+  version      Int
+  requirements Json?
+  model        String?
+  inputTokens  Int?
+  outputTokens Int?
+  error        String?
+  analyzedAt   DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+model MatchScore {
+  id                 String         @id @default(cuid())
+  profileId          String
+  jobId              String
+  score              Int?
+  relevance          Int?
+  band               MatchBand?
+  priority           MatchPriority?
+  factors            Json
+  profileFingerprint String
+  analysisVersion    Int
+  computedAt         DateTime
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job     Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, jobId])
+  @@index([profileId, score])
+  @@index([profileId, relevance])
+  @@index([profileId, priority])
 }
