@@ -136,3 +136,21 @@ Exercé dans le navigateur intégré, sans clé IA : `/resume` (CV de base Class
 | `subject`/`greeting`/`closing` de la lettre assainis et bornés mais non ancrés (seuls les paragraphes le sont) | L'utilisateur relit la lettre avant envoi ; ancrage étendu si abus constaté en recette |
 | Ancrage : un nom commun capitalisé en milieu de phrase (« Pilotage ») est rejeté ; « Azure » en début de phrase est exempté par le suffixe « -ure » | À surveiller en recette réelle ; liste d'exceptions si nécessaire |
 | `projects[].url` transmis au modèle dans le profil (spec §8 « liens » visait les liens de contact ; `identity.links` n'est jamais renseigné) | Retiré du profil envoyé si la recette réelle montre un usage indésirable |
+
+### Revue finale de branche (lecture seule, après les suites complètes) → correctifs `3fe8264`, `56eef11`, `6d5137f`
+Verdict : fusionnable après correctifs. Importants : octets NUL bruts réapparus dans deux specs (et un troisième hérité de la tranche 3) → échappements ` ` écrits au niveau des octets ; cache de détail conservé 60 s après suppression d'un CV ou d'une lettre → `removeQueries` ; dernier `.parse` sur données du modèle hors `parseAiOutputOrThrow` (500 théorique, inatteignable aujourd'hui) → protégé ; « CV adapté disponible » sur l'offre (spec §2) non implémenté → indicateur et liens vers le CV et la lettre existants ; table des limites complétée. Mineurs : `updateMany` filtré par propriétaire dans le dépôt des lettres, commentaires périmés, code mort, `?etape=` invalide réécrit dans l'URL, relance différée sur `TAILORING_IN_PROGRESS`, sélecteur de modèle empilé sur mobile.
+
+## Recette §11 (2026-09-17, sans clé Anthropic)
+
+| # | Critère | Verdict | Évidence |
+|---|---|---|---|
+| 1 | `/resume` : CV principal, PDF = aperçu, pages A4 | OK | parité HTML/PDF testée ; Playwright télécharge `CV-….pdf` non vide (`%PDF`) ; vérification visuelle Classique/Moderne |
+| 2 | Avec clé : sélection par id, ancrage, avant/après, rétablissable | Bloqué sans clé (doublure vérifiée) | e2e à faux client Anthropic (38 tests), ancrage 587 lignes de specs, diff et « Rétablir » exercés avec une version IA semée |
+| 3 | Traçabilité + versioning | OK | `changes`/`model`/`promptVersion`/jetons persistés ; version `USER` transactionnelle (v2 vérifiée visuellement), P2002 → 409 |
+| 4 | Lettre 3 tons, longueurs, rien d'inventé, aperçu + PDF | Bloqué sans clé (bornes et ancrage vérifiés) | 900/1800/2600 appliqués ; paragraphes ancrés ; réserve : objet et formules non ancrés (limites) |
+| 5 | Sans clé / profil vide : état expliqué, CV principal exportable, jamais de 500 | OK | 503 `AI_NOT_CONFIGURED` sur `tailor` et `letters` (Playwright + visuel) ; 400 sur champs vidés par le nettoyage ; 502 sur sortie IA invalide |
+| 6 | Isolation, coordonnées jamais envoyées, budgets, journaux sans contenu | OK | deux revues de sécurité ; `aiContent` sans e-mail ni téléphone (e2e) ; budget compté juste avant l'appel au modèle |
+| 7 | Suites vertes, aucun `any`, états, aperçu toujours clair | OK | shared 249, api 712 unitaires + 175 e2e, web 406, Playwright 45 (1 ignoré : connecteur FT sans identifiants), lint/typecheck/build verts |
+
+## Clôture
+Tranche 5 fusionnée dans `main` (`--no-ff`, tête de branche `6d5137f` + cette note) le 2026-09-17. Reportés (voir « Limites assumées ») : aperçu A4 à l'échelle sur mobile, libellé d'expérience FT brut, ancrage de l'objet et des formules de lettre, `projects[].url` dans le profil envoyé. Recette réelle (critères 2 et 4) à rejouer dès que `ANTHROPIC_API_KEY` est présente dans `.env`.
