@@ -501,11 +501,13 @@ describe('GET /jobs — filtres et tri', () => {
 
   it('la pagination renvoie une page 2 vide avec le total correct quand il y a moins de 20 offres', async () => {
     const session = await registerUser();
-    const firstPage = await search(session);
+    // Restreint aux offres de cette suite (entreprises préfixées `E2E-`) : la base de
+    // développement peut aussi contenir les offres fictives semées (`pnpm jobs:seed`).
+    const firstPage = await search(session, `q=${E2E_EXTERNAL_ID_PREFIX}`);
     const total = firstPage.body.total;
     expect(total).toBeLessThanOrEqual(20);
 
-    const secondPage = await search(session, 'page=2');
+    const secondPage = await search(session, `q=${E2E_EXTERNAL_ID_PREFIX}&page=2`);
     expect(secondPage.body.items).toEqual([]);
     expect(secondPage.body.total).toBe(total);
     expect(secondPage.body.page).toBe(2);
