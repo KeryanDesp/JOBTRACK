@@ -57,7 +57,12 @@ test('offres — etat du connecteur et navigation', async ({ page, isMobile }) =
   if (capabilitiesBody.sources.franceTravail) {
     await expect(page.getByText('Connecteur non configuré')).toHaveCount(0);
   } else {
-    await expect(page.getByRole('alert')).toContainText('Connecteur non configuré');
+    // `getByRole('alert')` seul (jusqu'ici unique sur cette page) ne suffit plus depuis le
+    // score de correspondance (tranche 4) : sans IA configurée sur cette machine, l'alerte
+    // « L'analyse des offres nécessite le service IA… » (`jobs-page.tsx`) peut coexister avec
+    // celle-ci — `hasText` cible précisément le bandeau du connecteur, sans dépendre de l'ordre
+    // ni du nombre total d'alertes affichées.
+    await expect(page.getByRole('alert').filter({ hasText: 'Connecteur non configuré' })).toBeVisible();
   }
 
   // Navigation (spec tâche 10) : « Offres » est une entrée primaire (bottom nav mobile
