@@ -1,0 +1,12 @@
+{
+  "recipient": null,
+  "subject": "Candidature au poste d'ingénieur logiciel senior chez Solaris Ingénierie",
+  "greeting": "Madame, Monsieur,",
+  "paragraphs": [
+    "Je vous adresse ma candidature pour le poste d'ingénieur logiciel senior au sein de Solaris Ingénierie.",
+    "Mon parcours m'a permis de concevoir des services backend et d'encadrer des équipes de développement, des compétences en phase avec les exigences de ce poste.",
+    "Je serais heureuse d'échanger avec vous sur ma candidature et sur les besoins de votre équipe."
+  ],
+  "closing": "Je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.",
+  "signature": "Camille Martin"
+}
