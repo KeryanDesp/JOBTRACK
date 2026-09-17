@@ -87,7 +87,9 @@ async function buildApp(connectors: JobSourceConnector[]): Promise<NestFastifyAp
 /** Supprime les sources `E2E-…` puis les offres devenues orphelines (mêmes pattern que `scripts/unseed-jobs-fixtures.ts`, jamais les offres `FT-…` semées pour le développement). */
 async function clearJobs(): Promise<void> {
   await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: E2E_EXTERNAL_ID_PREFIX } } });
-  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
+  // Orphelines de cette suite seulement (entreprise `E2E-…`) : jamais les offres sans source des
+  // specs unitaires du module CV exécutées en parallèle sur la même base.
+  await prisma.job.deleteMany({ where: { sources: { none: {} }, company: { startsWith: E2E_EXTERNAL_ID_PREFIX } } });
 }
 
 /** Ne supprime que les empreintes de recherche que cette suite a effectivement créées. */

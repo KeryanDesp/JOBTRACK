@@ -55,7 +55,9 @@ async function buildApp(client: FakeAnthropicClient | null): Promise<NestFastify
  * `FT-…` semées pour le développement. */
 async function clearJobs(): Promise<void> {
   await prisma.jobSource.deleteMany({ where: { externalId: { startsWith: EXTERNAL_ID_PREFIX } } });
-  await prisma.job.deleteMany({ where: { sources: { none: {} } } });
+  // Orphelines de cette suite seulement (entreprise `E2E-MATCH-…`) : jamais les offres sans source
+  // des specs unitaires du module CV exécutées en parallèle sur la même base.
+  await prisma.job.deleteMany({ where: { sources: { none: {} }, company: { startsWith: EXTERNAL_ID_PREFIX } } });
 }
 
 /** Supprime les comptes de cette suite : `Profile` (et donc `MatchScore`, skills, expériences…)
