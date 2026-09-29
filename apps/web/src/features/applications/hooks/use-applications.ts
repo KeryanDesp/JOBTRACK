@@ -17,6 +17,7 @@ import {
   createApplication,
   deleteApplication,
   fetchApplication,
+  fetchApplicationAnalytics,
   fetchApplicationBoard,
   fetchApplicationStats,
   fetchApplications,
@@ -36,6 +37,11 @@ export function useApplications(query: ApplicationListQueryInput) {
 
 export function useApplicationStats() {
   return useQuery({ queryKey: applicationKeys.stats, queryFn: fetchApplicationStats });
+}
+
+/** Séries de l'écran « Statistiques » (`GET /applications/analytics`). */
+export function useApplicationAnalytics() {
+  return useQuery({ queryKey: applicationKeys.analytics, queryFn: fetchApplicationAnalytics });
 }
 
 export function useApplicationsBoard() {
@@ -68,6 +74,7 @@ export function useCreateApplication() {
       queryClient.setQueryData(applicationKeys.detail(application.id), application);
       void queryClient.invalidateQueries({ queryKey: applicationKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: applicationKeys.stats });
+      void queryClient.invalidateQueries({ queryKey: applicationKeys.analytics });
       void queryClient.invalidateQueries({ queryKey: applicationKeys.board });
       if (isCreateFromJob(input)) {
         void queryClient.invalidateQueries({ queryKey: jobKeys.detail(input.jobId) });

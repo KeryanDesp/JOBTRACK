@@ -559,3 +559,48 @@ export interface JobApplicationRefDto {
   id: string;
   status: ApplicationStatus;
 }
+
+// --- Statistiques détaillées (`GET /applications/analytics`) ---
+
+/** Nombre de semaines d'historique renvoyées par `GET /applications/analytics`. */
+export const ANALYTICS_WEEKS = 12;
+
+/** Nombre maximal d'entreprises listées dans `ApplicationAnalyticsDto.topCompanies`. */
+export const ANALYTICS_TOP_COMPANIES = 5;
+
+export interface ApplicationWeeklyPointDto {
+  /** Lundi de la semaine, `AAAA-MM-JJ` — même convention de jour que `appliedAt`. */
+  weekStart: string;
+  /** Candidatures dont `appliedAt` tombe dans cette semaine. */
+  applied: number;
+}
+
+export interface ApplicationSourceCountDto {
+  source: ApplicationSource;
+  count: number;
+}
+
+export interface ApplicationCompanyCountDto {
+  company: string;
+  count: number;
+}
+
+/**
+ * Écran « Statistiques ». Reprend les compteurs de `ApplicationStatsDto` (le tableau de bord
+ * et les statistiques affichent les mêmes chiffres, jamais deux calculs parallèles) et y
+ * ajoute les séries que seule cette page consomme.
+ */
+export interface ApplicationAnalyticsDto extends ApplicationStatsDto {
+  /** `ANALYTICS_WEEKS` semaines, de la plus ancienne à la plus récente ; les semaines sans
+   * candidature valent 0 plutôt que d'être absentes, pour que l'axe reste régulier. */
+  weekly: ApplicationWeeklyPointDto[];
+  /** Sources représentées, de la plus fréquente à la moins fréquente ; les sources jamais
+   * utilisées sont omises. */
+  bySource: ApplicationSourceCountDto[];
+  /** Entreprises les plus sollicitées, `ANALYTICS_TOP_COMPANIES` au plus. Les candidatures
+   * sans entreprise renseignée n'y figurent pas. */
+  topCompanies: ApplicationCompanyCountDto[];
+  /** Jours médians entre l'envoi (`appliedAt`) et le premier passage en entretien.
+   * `null` tant qu'aucune candidature datée n'a atteint l'entretien. */
+  medianDaysToInterview: number | null;
+}

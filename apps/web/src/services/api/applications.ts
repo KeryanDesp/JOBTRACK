@@ -1,4 +1,5 @@
 import type {
+  ApplicationAnalyticsDto,
   ApplicationBoardDto,
   ApplicationDetailDto,
   ApplicationListQueryInput,
@@ -55,6 +56,8 @@ export function fetchApplications(query: ApplicationListQueryInput): Promise<App
 }
 
 export const fetchApplicationStats = () => apiRequest<ApplicationStatsDto>('/applications/stats');
+
+export const fetchApplicationAnalytics = () => apiRequest<ApplicationAnalyticsDto>('/applications/analytics');
 
 export const fetchApplicationBoard = () => apiRequest<ApplicationBoardDto>('/applications/board');
 

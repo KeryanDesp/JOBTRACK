@@ -1,11 +1,13 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { NAV_ITEMS } from '@/constants/navigation';
+import { AnalyticsPage } from '@/features/analytics/pages/analytics-page';
 import { ApplicationsPage } from '@/features/applications/pages/applications-page';
 import { ForgotPasswordPage } from '@/features/auth/pages/forgot-password-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { ResetPasswordPage } from '@/features/auth/pages/reset-password-page';
 import { ImportCvPage } from '@/features/cv-import/pages/import-cv-page';
+import { DashboardPage } from '@/features/dashboard/pages/dashboard-page';
 import { FavoritesPage } from '@/features/jobs/pages/favorites-page';
 import { JobDetailPage } from '@/features/jobs/pages/job-detail-page';
 import { JobsPage } from '@/features/jobs/pages/jobs-page';
@@ -37,9 +39,8 @@ export const router = createBrowserRouter([
       { path: '/onboarding/:step', element: <OnboardingPage /> },
       {
         element: <AppLayout />,
-        // Les autres écrans n'ont pas encore leur implémentation : ils restent sur
-        // « Bientôt disponible ». Profil (tâche 15) et Paramètres (tâche 16) sont
-        // livrés et remplacent le leur.
+        // Les écrans encore à livrer (Automatisation, Alertes) restent sur
+        // « Bientôt disponible » ; chaque écran livré remplace le sien ci-dessous.
         children: [
           // Sous `AppLayout` comme `/profile`, mais absente de `NAV_ITEMS` (pas d'entrée de
           // navigation propre : on y accède depuis le bouton « Importer un CV » du profil).
@@ -60,6 +61,8 @@ export const router = createBrowserRouter([
             if (item.to === '/favorites') return { path: item.to, element: <FavoritesPage /> };
             if (item.to === '/resume') return { path: item.to, element: <ResumePage /> };
             if (item.to === '/applications') return { path: item.to, element: <ApplicationsPage /> };
+            if (item.to === '/dashboard') return { path: item.to, element: <DashboardPage /> };
+            if (item.to === '/analytics') return { path: item.to, element: <AnalyticsPage /> };
             return { path: item.to, element: <ComingSoonPage label={item.label} /> };
           }),
         ],

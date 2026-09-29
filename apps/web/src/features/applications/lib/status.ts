@@ -14,3 +14,19 @@ import { APPLICATION_STATUSES } from '@jobtrack/shared';
 export function isApplicationStatus(value: string): value is ApplicationStatus {
   return (APPLICATION_STATUSES as readonly string[]).includes(value);
 }
+
+/**
+ * Aplat de couleur d'un statut, pour les graphiques du tableau de bord et des statistiques.
+ * Mêmes jetons de thème que `ApplicationStatusBadge` (`--muted-foreground`, `--primary`,
+ * `--warning`, `--success`, `--destructive`) : un segment de barre et la pastille de la même
+ * candidature ne doivent jamais être de deux couleurs différentes. Teinte pleine ici (et non
+ * diluée comme sur la pastille) parce qu'un segment de quelques pixels de haut disparaîtrait
+ * à 10 % d'opacité.
+ */
+export const STATUS_FILL_CLASSES: Record<ApplicationStatus, string> = {
+  TO_APPLY: 'bg-muted-foreground/40',
+  APPLIED: 'bg-primary',
+  INTERVIEW: 'bg-warning',
+  OFFER: 'bg-success',
+  REJECTED: 'bg-destructive/70',
+};

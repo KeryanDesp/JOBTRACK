@@ -4,7 +4,7 @@ import { NAV_ITEMS } from './navigation';
 describe('NAV_ITEMS', () => {
   it('déclare les dix sections du cahier des charges', () => {
     expect(NAV_ITEMS.map((item) => item.label)).toEqual([
-      'Dashboard',
+      'Tableau de bord',
       'Offres',
       'Mes candidatures',
       'Mon CV',
