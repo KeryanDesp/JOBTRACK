@@ -29,7 +29,7 @@
       "root": ".",
       "entrypoint": "apps/api/dist/main.js",
       "installCommand": "pnpm install --frozen-lockfile",
-      "buildCommand": "pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy",
+      "buildCommand": "pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && for i in 1 2 3; do DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy && break; echo \"migrate deploy: tentative $i echouee (reveil Neon ?), nouvel essai dans 10 s\" && sleep 10; [ \"$i\" = 3 ] && exit 1; done",
       "outputDirectory": "apps/api/dist"
     }
   },
