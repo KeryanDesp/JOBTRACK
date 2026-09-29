@@ -29,7 +29,8 @@
       "root": ".",
       "entrypoint": "apps/api/dist/main.js",
       "installCommand": "pnpm install --frozen-lockfile",
-      "buildCommand": "pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy"
+      "buildCommand": "pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy",
+      "outputDirectory": "apps/api/dist"
     }
   },
   "rewrites": [
