@@ -1,1 +1,3 @@
-dist-vercel
+dist/
+dist-vercel/*
+!dist-vercel/main.js

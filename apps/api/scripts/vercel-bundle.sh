@@ -5,7 +5,7 @@
 # externes avec @vercel/nft ; dans un monorepo pnpm cette chaîne a laissé successivement
 # `reflect-metadata` puis `dotenv` introuvables à l'exécution (voir jobtrack-deploiement).
 # On lui livre donc un dossier `dist-vercel/` qui se suffit à lui-même :
-#   - `main.js` : l'API compilée par `nest build` puis bundlée par esbuild en un seul fichier
+#   - `bundle.js` (chargé par l'amorce versionnée `main.js`) : l'API compilée par `nest build` puis bundlée par esbuild en un seul fichier
 #     CommonJS (toutes les dépendances JavaScript incluses, `@jobtrack/shared` compris) ;
 #   - `node_modules/` : uniquement les deux paquets qui ne se bundlent pas (binaires natifs) —
 #     `argon2` et `@prisma/client` — installés par npm avec leurs dépendances, plus le client
@@ -16,7 +16,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT=dist-vercel
-rm -rf "$OUT"
+# `main.js` (amorce versionnée) reste en place ; tout le reste est régénéré.
+rm -rf "$OUT/bundle.js" "$OUT/node_modules" "$OUT/package.json"
 mkdir -p "$OUT"
 
 # 1. Bundle : `nest build` a déjà produit dist/main.js (décorateurs et métadonnées émis par tsc).
@@ -24,7 +25,7 @@ mkdir -p "$OUT"
 #    restent externes (ils ne sont jamais atteints à l'exécution).
 pnpm exec esbuild dist/main.js \
   --bundle --platform=node --target=node24 --format=cjs \
-  --outfile="$OUT/main.js" \
+  --outfile="$OUT/bundle.js" \
   --external:argon2 --external:@prisma/client --external:.prisma/client \
   --external:@nestjs/microservices --external:@nestjs/websockets --external:@nestjs/websockets/socket-module \
   --external:@nestjs/platform-express --external:class-validator --external:class-transformer \
