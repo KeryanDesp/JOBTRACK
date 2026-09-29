@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { resetRateLimits } from './reset-rate-limits';
 
 // `@playwright.local` : filtré et supprimé par `pnpm --filter @jobtrack/api e2e:cleanup`
 // (voir apps/api/scripts/cleanup-e2e-users.ts), jamais un vrai domaine.
@@ -7,6 +8,12 @@ function uniqueEmail(): string {
 }
 
 const PASSWORD = 'MotDePasseSolide-2026-e2e';
+
+// Budget d'inscription relâché avant ce fichier, AVANT tout autre `beforeAll` : celui de
+// certains fichiers crée déjà un compte partagé, et serait refusé en 429 sans cela. Toute
+// la suite part d'une seule IP, et `/auth/register` n'en autorise que 20 par heure
+// (voir `reset-rate-limits.ts`).
+test.beforeAll(resetRateLimits);
 
 test('inscription, saisie du profil, deconnexion et reconnexion', async ({ page }) => {
   const email = uniqueEmail();

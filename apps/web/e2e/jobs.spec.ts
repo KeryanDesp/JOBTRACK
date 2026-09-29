@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { resetRateLimits } from './reset-rate-limits';
 
 // Même suffixe et même nettoyage que `auth.spec.ts`/`onboarding.spec.ts`
 // (`apps/api/scripts/cleanup-e2e-users.ts`) : jamais un vrai domaine.
@@ -39,6 +40,12 @@ async function registerAndSkipOnboarding(page: Page, firstName: string, lastName
 
   await expect(page).toHaveURL('/profile');
 }
+
+// Budget d'inscription relâché avant ce fichier, AVANT tout autre `beforeAll` : celui de
+// certains fichiers crée déjà un compte partagé, et serait refusé en 429 sans cela. Toute
+// la suite part d'une seule IP, et `/auth/register` n'en autorise que 20 par heure
+// (voir `reset-rate-limits.ts`).
+test.beforeAll(resetRateLimits);
 
 test('offres — etat du connecteur et navigation', async ({ page, isMobile }) => {
   await registerAndSkipOnboarding(page, 'Nadia', 'Offres');
