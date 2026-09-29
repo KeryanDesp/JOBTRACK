@@ -46,6 +46,12 @@ nouveau port dans le `DATABASE_URL` de votre `.env`.
 | `pnpm db:migrate` | Applique les migrations Prisma |
 | `pnpm --filter @jobtrack/web test:e2e` | Tests Playwright (après `pnpm --filter @jobtrack/web exec playwright install chromium`) |
 
+## Déploiement
+
+SPA sur Vercel (`vercel.json`), API sur Render (`render.yaml`,
+`apps/api/Dockerfile`) avec Postgres, Redis et un disque persistant.
+La marche à suivre est dans [`docs/deploiement.md`](docs/deploiement.md).
+
 ## Documentation
 
 Les spécifications et les plans d'implémentation sont dans `docs/superpowers/`.

@@ -1,0 +1,41 @@
+# Le contexte de build est la racine du dépôt : sans cette liste, chaque `docker build`
+# enverrait les node_modules et les artefacts de build de la machine locale au démon, et
+# `COPY` les réinstallerait par-dessus ceux de l'image — compilés pour une autre plateforme.
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+.turbo
+**/.turbo
+coverage
+**/coverage
+
+.git
+.github
+.vercel
+.claude
+
+# Secrets : jamais dans une image.
+.env
+.env.*
+!.env.example
+
+# Fichiers importés par les utilisateurs en local (CV) : un volume les porte en production.
+storage
+apps/api/storage
+apps/api/fixtures
+
+# Tests et documentation : l'image d'exécution n'en a pas l'usage.
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+apps/web/e2e
+playwright-report
+test-results
+docs
+
+*.log
+*.tsbuildinfo
+.DS_Store

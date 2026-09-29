@@ -42,6 +42,23 @@ export const serverEnvSchema = z.object({
   DATABASE_URL: z.string().trim().min(1),
   REDIS_URL: z.string().trim().min(1),
 
+  /**
+   * `SameSite` des cookies de session et du jeton CSRF.
+   *
+   * `lax` (défaut) suppose que l'API et le SPA partagent le même domaine enregistrable
+   * (`localhost` ↔ `localhost`, `app.jobtrack.fr` ↔ `api.jobtrack.fr`). Sur deux domaines
+   * distincts — le cas d'un premier déploiement, SPA chez un hébergeur statique et API chez
+   * un autre — le navigateur n'envoie plus le cookie sur les appels `fetch`, et la connexion
+   * échoue sans message : il faut alors `none`.
+   *
+   * Passer à `none` n'ouvre pas de faille CSRF ici : la protection ne repose pas sur
+   * `SameSite` mais sur un jeton dérivé de la session (`CsrfGuard`), attendu dans un en-tête
+   * qu'un site tiers ne peut ni lire (CORS limité à `WEB_ORIGIN`) ni forger. `none` force
+   * `Secure` côté code — un cookie `SameSite=None` sans `Secure` est rejeté par les
+   * navigateurs.
+   */
+  COOKIE_SAMESITE: z.enum(['lax', 'none']).default('lax'),
+
   // 32 caractères minimum : un secret plus court affaiblit la signature de session.
   // `.trim()` avant `.min()` : un secret composé uniquement d'espaces ne doit pas passer.
   SESSION_SECRET: z.string().trim().min(32),

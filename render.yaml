@@ -1,0 +1,100 @@
+# Blueprint Render : l'API JobTrack, sa base Postgres et son Key Value (Redis).
+#
+# Le SPA n'est PAS ici : il est publié sur Vercel, que `vercel.json` configure déjà à la
+# racine du dépôt. Voir `docs/deploiement.md` pour l'enchaînement des deux.
+#
+# Les noms de plans (`starter`, `basic-256mb`…) évoluent avec la grille tarifaire de
+# l'hébergeur : les vérifier au moment de créer le blueprint plutôt que de supposer que
+# ceux-ci sont encore les bons.
+
+databases:
+  - name: jobtrack-postgres
+    databaseName: jobtrack
+    user: jobtrack
+    plan: basic-256mb
+
+services:
+  # -------------------------------------------------------------------------
+  # Sessions : les identifiants de session vivent ici, pas en base.
+  # -------------------------------------------------------------------------
+  - type: keyvalue
+    name: jobtrack-keyvalue
+    plan: starter
+    # Aucune IP extérieure : seuls les services du même compte y accèdent.
+    ipAllowList: []
+
+  # -------------------------------------------------------------------------
+  # API (NestJS sur Fastify), construite depuis `apps/api/Dockerfile`.
+  # -------------------------------------------------------------------------
+  - type: web
+    name: jobtrack-api
+    runtime: docker
+    # Le contexte est la racine du dépôt : l'API dépend de `packages/shared` et du lockfile.
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/v1/health
+
+    # Les migrations tournent après le build et avant que la nouvelle version prenne le
+    # trafic — jamais au démarrage du serveur, où deux instances les lanceraient en même
+    # temps. Demande un plan payant ; sur plan gratuit, lancer la commande à la main depuis
+    # le shell du service après chaque déploiement qui ajoute une migration.
+    preDeployCommand: pnpm --filter @jobtrack/api exec prisma migrate deploy
+
+    # Les CV importés sont écrits sur disque (`DiskFileStorage`) : sans volume, ils
+    # disparaissent à chaque redéploiement. `STORAGE_DIR` pointe dans ce montage.
+    disk:
+      name: jobtrack-storage
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: 3001
+
+      # Origine EXACTE du SPA (protocole + hôte, sans barre finale) : elle borne le CORS.
+      # À renseigner après le premier déploiement Vercel, qui donne l'URL définitive.
+      - key: WEB_ORIGIN
+        sync: false
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: jobtrack-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: jobtrack-keyvalue
+          type: keyvalue
+          property: connectionString
+
+      # Généré une fois par l'hébergeur et conservé : le régénérer invaliderait toutes les
+      # sessions en cours et tous les jetons CSRF.
+      - key: SESSION_SECRET
+        generateValue: true
+
+      # SPA et API sont sur deux domaines enregistrables différents (`*.vercel.app` et
+      # `*.onrender.com`) : en `lax`, le navigateur n'enverrait pas le cookie de session et
+      # la connexion échouerait sans message. À repasser à `lax` le jour où les deux
+      # partagent un domaine (`app.` et `api.` du même nom).
+      - key: COOKIE_SAMESITE
+        value: none
+
+      - key: STORAGE_DIR
+        value: /var/data/storage
+
+      # Facultatifs — sans eux le service correspondant est simplement désactivé, l'API
+      # démarre quand même. À renseigner dans l'interface, jamais dans ce fichier versionné.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FRANCE_TRAVAIL_CLIENT_ID
+        sync: false
+      - key: FRANCE_TRAVAIL_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
