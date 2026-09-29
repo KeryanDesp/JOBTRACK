@@ -7,32 +7,61 @@
       "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
       "buildCommand": "cd ../.. && pnpm turbo run build --filter=@jobtrack/web...",
       "outputDirectory": "dist",
-      "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+      "rewrites": [
+        {
+          "source": "/(.*)",
+          "destination": "/index.html"
+        }
+      ],
       "headers": [
         {
           "source": "/assets/(.*)",
-          "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=31536000, immutable"
+            }
+          ]
         }
       ]
     },
     "api": {
-      "root": "apps/api",
-      "framework": "nestjs",
-      "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-      "buildCommand": "cd ../.. && pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy"
+      "root": ".",
+      "entrypoint": "apps/api/dist/main.js",
+      "installCommand": "pnpm install --frozen-lockfile",
+      "buildCommand": "pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy"
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": { "service": "api" } },
-    { "source": "/(.*)", "destination": { "service": "web" } }
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
       ]
     }
   ]
