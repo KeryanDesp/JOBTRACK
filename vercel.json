@@ -19,8 +19,7 @@
       "root": "apps/api",
       "framework": "nestjs",
       "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-      "buildCommand": "cd ../.. && pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy",
-      "outputDirectory": "dist"
+      "buildCommand": "cd ../.. && pnpm turbo run build --filter=@jobtrack/api... && cd apps/api && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" pnpm exec prisma migrate deploy"
     }
   },
   "rewrites": [
