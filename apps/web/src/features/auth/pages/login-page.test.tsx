@@ -21,6 +21,7 @@ function renderPage(initialEntry: string | { pathname: string; state?: unknown }
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding" element={<RouteProbe />} />
+          <Route path="/dashboard" element={<RouteProbe />} />
           <Route path="/profile" element={<RouteProbe />} />
           <Route path="/settings" element={<RouteProbe />} />
         </Routes>
@@ -70,6 +71,24 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(login.mock.calls[0]?.[0]).toEqual({ email: 'ada@example.com', password: 'un-mot-de-passe-valide' });
     });
+  });
+
+  it('redirige vers le tableau de bord quand l_onboarding est termine et qu_il n_y a pas d_origine', async () => {
+    const user = userEvent.setup();
+    login.mockResolvedValue({
+      id: '1',
+      email: 'ada@example.com',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      onboardingCompleted: true,
+    });
+    renderPage();
+
+    await user.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await user.type(screen.getByLabelText('Mot de passe'), 'un-mot-de-passe-valide');
+    await user.click(screen.getByRole('button', { name: 'Se connecter' }));
+
+    expect(await screen.findByText('Route actuelle : /dashboard')).toBeInTheDocument();
   });
 
   it('redirige vers l_onboarding quand il n_est pas termine et qu_il n_y a pas d_origine', async () => {

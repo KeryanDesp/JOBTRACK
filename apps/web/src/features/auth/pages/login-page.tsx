@@ -55,7 +55,11 @@ export function LoginPage() {
       // Un compte existant n'est jamais forcé vers l'accueil : seul un compte
       // qui n'a pas encore terminé sa configuration y est envoyé, et
       // uniquement s'il n'y avait pas de page précise à reprendre.
-      navigate(from ?? (user.onboardingCompleted ? '/profile' : '/onboarding'), { replace: true });
+      //
+      // Sinon le tableau de bord, page d'entrée de l'application : il donne l'avancement de
+      // la recherche et mène aux autres écrans. `/profile` tenait lieu de destination tant
+      // qu'il n'existait pas.
+      navigate(from ?? (user.onboardingCompleted ? '/dashboard' : '/onboarding'), { replace: true });
     },
     onError: (error: unknown) => {
       setFieldErrorsApplied(applyFieldErrors<LoginFormInput>(error, setError, ['email', 'password']));
