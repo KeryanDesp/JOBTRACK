@@ -42,14 +42,19 @@ describe('cleanText', () => {
     expect(cleanText('mot1\tmot2', 1000)).toBe('mot1 mot2');
   });
 
-  it('reste sous 20 ms sur une ligne a tres nombreux espaces suivie d_un caractere non blanc', () => {
+  it('ne part pas en retour arriere catastrophique sur une ligne a tres nombreux espaces', () => {
     const input = `a${' '.repeat(20000)}b`;
     const start = performance.now();
     const result = cleanText(input, 100_000);
     const duration = performance.now() - start;
 
     expect(result).toBe(input);
-    expect(duration).toBeLessThan(20);
+    // Une seconde, et non quelques millisecondes : ce test garde contre un retour arriere
+    // catastrophique, dont le cout sur 20 000 espaces se compte en minutes — pas contre une
+    // lenteur de quelques pour cent. Un budget serre ne rendrait pas la regression plus
+    // detectable, il ferait seulement echouer le test sur un executeur charge (mesure a
+    // 24,6 ms en CI pour un seuil a 20, sur une implementation pourtant lineaire).
+    expect(duration).toBeLessThan(1000);
   });
 });
 
