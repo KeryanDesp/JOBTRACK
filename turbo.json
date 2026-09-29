@@ -1,8 +1,20 @@
 {
   "$schema": "https://turbo.build/schema.json",
+
+  // Turbo 2 exécute chaque tâche en mode d'environnement STRICT : une variable non déclarée
+  // ici n'atteint pas le processus fils, même si elle est présente dans le shell appelant.
+  // Ce que la tâche lit doit donc être déclaré, sans quoi elle voit un environnement vide —
+  // en silence, car rien dans la sortie de turbo ne le signale.
+  "globalEnv": ["NODE_ENV"],
+
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      // Vite fige `VITE_API_URL` dans le bundle au moment du build. Sans cette déclaration,
+      // le build de production retombe sur le défaut de `services/api/client.ts`
+      // (`http://localhost:3001/api/v1`) : le site déployé appelle alors la machine de son
+      // visiteur, et chaque requête échoue sans que la cause soit visible.
+      "env": ["VITE_API_URL"],
       "outputs": ["dist/**"]
     },
     "dev": {
@@ -11,10 +23,40 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      // Le contrat d'environnement du serveur (`serverEnvSchema`, packages/shared/src/env.ts) :
+      // `apps/api` le valide à l'import, donc un fichier de test qui touche `config/env` échoue
+      // au chargement si une de ces variables manque. À tenir à jour avec ce schéma.
+      "env": [
+        "API_PORT",
+        "WEB_ORIGIN",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "SESSION_SECRET",
+        "COOKIE_SAMESITE",
+        "STORAGE_DIR",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "FRANCE_TRAVAIL_*",
+        "GOOGLE_*"
+      ],
       "outputs": []
     },
     "test:e2e": {
       "dependsOn": ["^build"],
+      "env": [
+        "API_PORT",
+        "WEB_ORIGIN",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "SESSION_SECRET",
+        "COOKIE_SAMESITE",
+        "STORAGE_DIR",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "FRANCE_TRAVAIL_*",
+        "GOOGLE_*",
+        "VITE_API_URL"
+      ],
       "cache": false,
       "outputs": []
     },
