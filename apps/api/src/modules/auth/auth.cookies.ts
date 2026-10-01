@@ -8,19 +8,10 @@ import { SESSION_TTL_SECONDS } from './session.service';
 // depuis ce module pour renouveler les cookies, et cookies → guard créerait un cycle.
 export const SESSION_COOKIE = 'jt_session';
 
-// `SameSite=Lax` (défaut) exige que l'API et le SPA partagent le même domaine enregistrable
-// (localhost ↔ localhost, app.jobtrack.fr ↔ api.jobtrack.fr). Sur deux domaines distincts, le
-// navigateur laisserait tomber le cookie de session silencieusement : `COOKIE_SAMESITE=none`
-// est là pour ce cas (voir la documentation du champ dans `@jobtrack/shared`, env.ts).
-//
-// `Secure` dès que `SameSite=None`, et pas seulement en production : un cookie `SameSite=None`
-// sans `Secure` est rejeté par les navigateurs, et la panne serait la même que celle qu'on
-// cherche à corriger.
-const BASE = {
-  sameSite: env.COOKIE_SAMESITE,
-  secure: env.COOKIE_SAMESITE === 'none' || env.NODE_ENV === 'production',
-  path: '/',
-} as const;
+// SameSite=Lax exige que l'API et le SPA partagent le même domaine enregistrable
+// (localhost ↔ localhost, app.jobtrack.fr ↔ api.jobtrack.fr). Sur un autre domaine,
+// le navigateur laisserait tomber le cookie de session silencieusement.
+const BASE = { sameSite: 'lax', secure: env.NODE_ENV === 'production', path: '/' } as const;
 
 /** Pose le cookie de session (signé, httpOnly) et le jeton CSRF (lisible en JavaScript). */
 export function setAuthCookies(reply: FastifyReply, sessionId: string): void {

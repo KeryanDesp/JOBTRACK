@@ -17,17 +17,6 @@ describe('serverEnvSchema', () => {
     expect(parsed.NODE_ENV).toBe('development');
   });
 
-  it('pose SameSite=Lax par defaut et accepte none pour un deploiement cross-domaine', () => {
-    expect(serverEnvSchema.parse(valid).COOKIE_SAMESITE).toBe('lax');
-    expect(serverEnvSchema.parse({ ...valid, COOKIE_SAMESITE: 'none' }).COOKIE_SAMESITE).toBe('none');
-  });
-
-  it('rejette un COOKIE_SAMESITE inconnu', () => {
-    // `strict` casserait le retour du callback OAuth Google (navigation depuis un autre site) :
-    // la valeur est volontairement absente de l'enumeration.
-    expect(serverEnvSchema.safeParse({ ...valid, COOKIE_SAMESITE: 'strict' }).success).toBe(false);
-  });
-
   it('rejette un SESSION_SECRET trop court', () => {
     const result = serverEnvSchema.safeParse({ ...valid, SESSION_SECRET: 'trop-court' });
     expect(result.success).toBe(false);

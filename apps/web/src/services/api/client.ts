@@ -2,9 +2,19 @@
 // L'API doit partager le site (domaine enregistrable) du SPA : le cookie `jt_csrf`
 // lisible ici est posé par l'API — sur un autre domaine, l'en-tête CSRF ne serait
 // jamais envoyé.
+// Sans `VITE_API_URL`, un build de production vise `/api/v1` sur son propre domaine — c'est
+// la disposition de l'hébergement Vercel, où `vercel.json` route `/api/*` vers le service API —
+// et le serveur de développement vise l'API locale. Le défaut ne dépend ainsi d'aucune
+// variable à recopier dans l'hébergeur ; `VITE_API_URL` sert à une API sur un autre
+// sous-domaine du même site (`api.jobtrack.fr` pour `app.jobtrack.fr`).
+export function resolveBaseUrl(env: { VITE_API_URL?: string; DEV: boolean }): string {
+  const defaultUrl = env.DEV ? 'http://localhost:3001/api/v1' : '/api/v1';
+  return (env.VITE_API_URL ?? defaultUrl).replace(/\/+$/, '');
+}
+
 // Exportée : `services/api/cv-import.ts` construit sa propre URL pour l'upload
 // en `XMLHttpRequest` (progression), qui ne passe pas par `apiRequest`.
-export const BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api/v1').replace(/\/+$/, '');
+export const BASE_URL = resolveBaseUrl(import.meta.env);
 
 const GENERIC_MESSAGE = 'Une erreur est survenue. Veuillez réessayer.';
 const NETWORK_MESSAGE = 'Connexion au serveur impossible. Vérifiez votre connexion internet.';
