@@ -1,6 +1,6 @@
 import type { JobPreferencesFormInput } from '@jobtrack/shared';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as ProfileApi from '@/services/api/profile';
@@ -72,5 +72,43 @@ describe('PreferencesCard', () => {
     // pour laisser un champ omis inchangé côté serveur.
     expect(body.experienceLevel).toBeUndefined();
     expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('experienceLevel');
+  });
+
+  it('suggere des postes a partir d_un domaine et enchaine les choix', async () => {
+    const user = userEvent.setup();
+    fetchPreferences.mockResolvedValue({ ...PREFERENCES, desiredRoles: [], desiredCategories: [] });
+    updatePreferences.mockResolvedValue(PREFERENCES);
+    renderCard();
+
+    const roles = await screen.findByLabelText('Postes recherchés');
+    expect(screen.queryByRole('group', { name: 'Suggestions de postes' })).not.toBeInTheDocument();
+
+    await user.type(roles, 'informatique');
+    const group = screen.getByRole('group', { name: 'Suggestions de postes' });
+    await user.click(within(group).getByRole('button', { name: 'Développeur mobile' }));
+
+    expect(roles).toHaveValue('Développeur mobile, ');
+    expect(roles).toHaveFocus();
+    // Le champ vide après la virgule : la suite de la même catégorie, sans le poste choisi.
+    const next = screen.getByRole('group', { name: 'Suggestions de postes' });
+    expect(within(next).queryByRole('button', { name: 'Développeur mobile' })).not.toBeInTheDocument();
+    await user.click(within(next).getByRole('button', { name: 'Développeur iOS' }));
+
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(updatePreferences).toHaveBeenCalled());
+    const body = updatePreferences.mock.calls[0]?.[0] as JobPreferencesFormInput;
+    expect(body.desiredRoles).toEqual(['Développeur mobile', 'Développeur iOS']);
+  });
+
+  it('suggere des categories a la frappe', async () => {
+    const user = userEvent.setup();
+    fetchPreferences.mockResolvedValue({ ...PREFERENCES, desiredCategories: [] });
+    renderCard();
+
+    await user.type(await screen.findByLabelText('Catégories recherchées'), 'info');
+    const group = screen.getByRole('group', { name: 'Suggestions de catégories' });
+    await user.click(within(group).getByRole('button', { name: 'Informatique' }));
+
+    expect(screen.getByLabelText('Catégories recherchées')).toHaveValue('Informatique, ');
   });
 });
