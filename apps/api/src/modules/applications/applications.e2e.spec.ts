@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import type {
+  ApplicationAnalyticsDto,
   ApplicationBoardDto,
   ApplicationDetailDto,
   ApplicationListResponseDto,
@@ -9,6 +10,7 @@ import type {
   ApplicationStatus,
   JobDetailDto,
 } from '@jobtrack/shared';
+import { ANALYTICS_WEEKS } from '@jobtrack/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AppModule } from '../../app.module';
 import { configureApp, createAdapter } from '../../app.setup';
@@ -448,6 +450,71 @@ describe('GET /applications/stats', () => {
     const body = JSON.parse(response.body) as ApplicationStatsDto;
     expect(body.total).toBe(0);
     expect(body.interviewRate).toBeNull();
+  });
+});
+
+describe('GET /applications/analytics', () => {
+  it('reprend les compteurs de /stats et y ajoute les series', async () => {
+    const session = await registerUser();
+    await createApplication(session, manualPayload({ status: 'APPLIED', source: 'LINKEDIN', company: 'Alpha' }));
+    await createApplication(session, manualPayload({ status: 'APPLIED', source: 'LINKEDIN', company: 'Alpha' }));
+    await createApplication(session, manualPayload({ status: 'INTERVIEW', source: 'INDEED', company: 'Beta' }));
+
+    const response = await app.inject({ method: 'GET', url: `${BASE}/analytics`, headers: authHeaders(session) });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body) as ApplicationAnalyticsDto;
+    // Les compteurs viennent du meme calcul que /stats : les deux ecrans ne peuvent pas diverger.
+    expect(body.total).toBe(3);
+    expect(body.byStatus).toEqual({ TO_APPLY: 0, APPLIED: 2, INTERVIEW: 1, OFFER: 0, REJECTED: 0 });
+
+    expect(body.weekly).toHaveLength(ANALYTICS_WEEKS);
+    // Les trois candidatures sont datees d'aujourd'hui : elles tombent toutes dans la derniere
+    // semaine de la fenetre, et les precedentes restent a zero plutot que d'etre absentes.
+    expect(body.weekly.at(-1)?.applied).toBe(3);
+    expect(body.weekly.slice(0, -1).every((week) => week.applied === 0)).toBe(true);
+
+    expect(body.bySource).toEqual([
+      { source: 'LINKEDIN', count: 2 },
+      { source: 'INDEED', count: 1 },
+    ]);
+    expect(body.topCompanies).toEqual([
+      { company: 'Alpha', count: 2 },
+      { company: 'Beta', count: 1 },
+    ]);
+  });
+
+  it('mesure le delai median jusqu_au premier entretien', async () => {
+    const session = await registerUser();
+    const application = await createApplication(session, manualPayload({ status: 'APPLIED' }));
+
+    await app.inject({
+      method: 'PATCH',
+      url: `${BASE}/${application.id}`,
+      headers: authHeaders(session),
+      payload: { status: 'INTERVIEW' },
+    });
+
+    const response = await app.inject({ method: 'GET', url: `${BASE}/analytics`, headers: authHeaders(session) });
+
+    // Envoi et passage en entretien le meme jour : zero jour, et surtout pas `null`, qui
+    // signifierait « aucun entretien mesurable ».
+    const body = JSON.parse(response.body) as ApplicationAnalyticsDto;
+    expect(body.medianDaysToInterview).toBe(0);
+  });
+
+  it('renvoie des series vides pour un compte neuf', async () => {
+    const session = await registerUser();
+
+    const response = await app.inject({ method: 'GET', url: `${BASE}/analytics`, headers: authHeaders(session) });
+
+    const body = JSON.parse(response.body) as ApplicationAnalyticsDto;
+    expect(body.total).toBe(0);
+    expect(body.bySource).toEqual([]);
+    expect(body.topCompanies).toEqual([]);
+    expect(body.medianDaysToInterview).toBeNull();
+    // La fenetre garde ses semaines meme sans candidature : l'axe du graphique reste regulier.
+    expect(body.weekly).toHaveLength(ANALYTICS_WEEKS);
   });
 });
 

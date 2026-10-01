@@ -16,6 +16,7 @@ import {
   createApplicationSchema,
   moveApplicationSchema,
   updateApplicationSchema,
+  type ApplicationAnalyticsDto,
   type ApplicationBoardDto,
   type ApplicationDetailDto,
   type ApplicationListQuery,
@@ -29,6 +30,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRateLimit, UserRateLimitGuard } from '../../common/user-rate-limit.guard';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import { ApplicationsAnalyticsService } from './applications-analytics.service';
 import { ApplicationsService } from './applications.service';
 
 /**
@@ -36,7 +38,7 @@ import { ApplicationsService } from './applications.service';
  * `@NoCsrf`) et filtrées par l'utilisateur de la session : le service ne reçoit jamais qu'un
  * `userId` venant du cookie, jamais du corps ni de l'URL.
  *
- * Les segments statiques (`stats`, `board`) sont déclarés avant `:id` — comme
+ * Les segments statiques (`stats`, `analytics`, `board`) sont déclarés avant `:id` — comme
  * `ResumeController`, un ordre explicite plutôt que la confiance dans l'arbitrage de
  * find-my-way.
  *
@@ -46,7 +48,10 @@ import { ApplicationsService } from './applications.service';
  */
 @Controller('applications')
 export class ApplicationsController {
-  constructor(private readonly applications: ApplicationsService) {}
+  constructor(
+    private readonly applications: ApplicationsService,
+    private readonly applicationsAnalytics: ApplicationsAnalyticsService,
+  ) {}
 
   @Get()
   list(
@@ -59,6 +64,11 @@ export class ApplicationsController {
   @Get('stats')
   stats(@CurrentUser() user: SessionUser): Promise<ApplicationStatsDto> {
     return this.applications.stats(user.id);
+  }
+
+  @Get('analytics')
+  analytics(@CurrentUser() user: SessionUser): Promise<ApplicationAnalyticsDto> {
+    return this.applicationsAnalytics.analytics(user.id);
   }
 
   @Get('board')

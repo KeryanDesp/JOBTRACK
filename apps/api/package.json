@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src prisma scripts",
     "e2e:cleanup": "tsx scripts/cleanup-e2e-users.ts",
+    "e2e:reset-limits": "tsx scripts/reset-e2e-rate-limits.ts",
     "jobs:seed": "tsx scripts/seed-jobs-fixtures.ts",
     "jobs:unseed": "tsx scripts/unseed-jobs-fixtures.ts",
     "jobs:seed-analyses": "tsx scripts/seed-job-analyses-fixtures.ts"

@@ -23,7 +23,9 @@ import {
   type PreferencesDto,
   type RemoteMode,
 } from '@/services/api/profile';
+import { applySuggestion, suggestCategories, suggestRoles } from '../lib/job-suggestions';
 import { profileKeys } from '../lib/query-keys';
+import { TagSuggestions } from './tag-suggestions';
 
 /** Sentinelle d'affichage pour « aucun niveau choisi » : jamais stockée dans le formulaire. */
 const UNSET = 'UNSET' as const;
@@ -190,6 +192,21 @@ export function PreferencesForm({ extraDefaults, submitLabel = 'Enregistrer', re
 
   const errors = form.formState.errors;
 
+  const rolesInput = form.watch('desiredRoles');
+  const categoriesInput = form.watch('desiredCategories');
+  const selectedCategories = categoriesInput
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const roleSuggestions = suggestRoles(rolesInput, selectedCategories);
+  const categorySuggestions = suggestCategories(categoriesInput);
+
+  // Le focus revient au champ : on enchaîne au clavier sur l'élément suivant.
+  function pick(field: 'desiredRoles' | 'desiredCategories', value: string): void {
+    form.setValue(field, applySuggestion(form.getValues(field), value), { shouldDirty: true });
+    form.setFocus(field);
+  }
+
   if (query.isPending) {
     return (
       <div className="space-y-6">
@@ -239,8 +256,13 @@ export function PreferencesForm({ extraDefaults, submitLabel = 'Enregistrer', re
               {...form.register('desiredRoles')}
             />
             <p id="desiredRoles-hint" className="text-muted-foreground text-sm">
-              Séparez par des virgules.
+              Séparez par des virgules. Tapez un domaine (ex. « informatique ») pour voir des suggestions.
             </p>
+            <TagSuggestions
+              label="Suggestions de postes"
+              suggestions={roleSuggestions}
+              onPick={(value) => pick('desiredRoles', value)}
+            />
             <FormFieldError id="desiredRoles-error" message={errors.desiredRoles?.message} />
           </div>
 
@@ -257,6 +279,11 @@ export function PreferencesForm({ extraDefaults, submitLabel = 'Enregistrer', re
             <p id="desiredCategories-hint" className="text-muted-foreground text-sm">
               Séparez par des virgules.
             </p>
+            <TagSuggestions
+              label="Suggestions de catégories"
+              suggestions={categorySuggestions}
+              onPick={(value) => pick('desiredCategories', value)}
+            />
             <FormFieldError id="desiredCategories-error" message={errors.desiredCategories?.message} />
           </div>
 

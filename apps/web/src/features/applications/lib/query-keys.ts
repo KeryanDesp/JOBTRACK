@@ -9,13 +9,13 @@ import { applicationListQuerySchema } from '@jobtrack/shared';
  * toutes les pages de liste en cache (quels que soient leurs paramètres) :
  * `useUpdateApplication`/`useMoveApplication` s'en servent avec `setQueriesData`
  * pour toucher chaque page sans connaître ses paramètres exacts. `all` sert à
- * son tour de préfixe commun à `list`/`stats`/`board`/`detail` : une
+ * son tour de préfixe commun à `list`/`stats`/`analytics`/`board`/`detail` : une
  * invalidation sur `applicationKeys.all` (ex. `useDeleteApplication`) touche
  * l'ensemble en un seul appel.
  */
 // Racine extraite en constante de module : `applicationKeys.all` n'est pas
 // encore initialisé pendant l'évaluation du littéral ci-dessous, donc les
-// propriétés non paresseuses (`stats`, `board`) ne peuvent pas s'y référer.
+// propriétés non paresseuses (`stats`, `analytics`, `board`) ne peuvent pas s'y référer.
 const ALL = ['applications'] as const;
 
 export const applicationKeys = {
@@ -27,6 +27,7 @@ export const applicationKeys = {
   // cache au lieu de deux copies parallèles des mêmes résultats.
   list: (query: ApplicationListQueryInput) => [...applicationKeys.lists(), applicationListQuerySchema.parse(query)] as const,
   stats: [...ALL, 'stats'] as const,
+  analytics: [...ALL, 'analytics'] as const,
   board: [...ALL, 'board'] as const,
   detail: (id: string) => [...ALL, 'detail', id] as const,
 };

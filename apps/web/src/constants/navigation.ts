@@ -23,12 +23,12 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, available: false, primary: true },
+  { to: '/dashboard', label: 'Tableau de bord', icon: LayoutDashboard, available: true, primary: true },
   { to: '/jobs', label: 'Offres', icon: Briefcase, available: true, primary: true },
   { to: '/applications', label: 'Mes candidatures', icon: Send, available: true, primary: true },
   { to: '/resume', label: 'Mon CV', icon: FileText, available: true, primary: true },
   { to: '/automation', label: 'Automatisation', icon: Zap, available: false, primary: false },
-  { to: '/analytics', label: 'Statistiques', icon: BarChart3, available: false, primary: false },
+  { to: '/analytics', label: 'Statistiques', icon: BarChart3, available: true, primary: false },
   { to: '/favorites', label: 'Favoris', icon: Heart, available: true, primary: false },
   { to: '/alerts', label: 'Alertes', icon: Bell, available: false, primary: false },
   { to: '/profile', label: 'Mon profil', icon: User, available: true, primary: false },

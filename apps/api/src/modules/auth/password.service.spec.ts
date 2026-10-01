@@ -33,15 +33,25 @@ describe('PasswordService', () => {
     // Le premier appel a burnTime() peut calculer le hachage factice ; on l'amorce
     // ici pour mesurer le regime stable, comme le ferait onModuleInit() en production.
     await service.burnTime();
-
     const hash = await service.hash('reference-2026');
-    const startReal = performance.now();
-    await service.verify(hash, 'mauvais');
-    const real = performance.now() - startReal;
 
-    const startBurn = performance.now();
-    await service.burnTime();
-    const burn = performance.now() - startBurn;
+    // Mediane de mesures entrelacees, et non une mesure de chaque : sur un executeur partage,
+    // une seule mesure peut doubler sous la charge d'un voisin (vu en CI : 26 ms contre 64 ms
+    // pour la verification reelle). Entrelacer expose les deux series aux memes variations.
+    const timeOf = async (run: () => Promise<unknown>): Promise<number> => {
+      const start = performance.now();
+      await run();
+      return performance.now() - start;
+    };
+    const median = (samples: number[]): number => [...samples].sort((a, b) => a - b)[samples.length >> 1] ?? 0;
+    const reals: number[] = [];
+    const burns: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      reals.push(await timeOf(() => service.verify(hash, 'mauvais')));
+      burns.push(await timeOf(() => service.burnTime()));
+    }
+    const real = median(reals);
+    const burn = median(burns);
 
     // Un hachage factice invalide serait rejeté instantanément (< 1 ms) : l'ordre de
     // grandeur d'une vérification argon2id réelle est de quelques dizaines de ms.

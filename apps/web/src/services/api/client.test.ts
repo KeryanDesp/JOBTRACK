@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest } from './client';
+import { apiRequest, resolveBaseUrl } from './client';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -156,5 +156,22 @@ describe('apiRequest', () => {
 
     const [, init] = fetchMock.mock.calls[0] ?? [];
     expect(new Headers(init?.headers).get('x-csrf-token')).toBeNull();
+  });
+});
+
+describe('resolveBaseUrl', () => {
+  it("vise l'API du meme domaine dans un build de production sans VITE_API_URL", () => {
+    // Disposition de l'hebergement Vercel : `vercel.json` route `/api/*` vers le service API.
+    expect(resolveBaseUrl({ DEV: false })).toBe('/api/v1');
+  });
+
+  it("vise l'API locale en developpement", () => {
+    expect(resolveBaseUrl({ DEV: true })).toBe('http://localhost:3001/api/v1');
+  });
+
+  it('laisse VITE_API_URL primer, sans barre finale', () => {
+    expect(resolveBaseUrl({ DEV: false, VITE_API_URL: 'https://api.exemple.fr/api/v1/' })).toBe(
+      'https://api.exemple.fr/api/v1',
+    );
   });
 });

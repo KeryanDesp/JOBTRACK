@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Cookie, type Page } from '@playwright/test';
+import { resetRateLimits } from './reset-rate-limits';
 
 /**
  * Recette Playwright du CV adapté et de la lettre de motivation (spec §9), *sans IA* — sur
@@ -46,6 +47,12 @@ function csrfHeaderFromCookies(cookies: Cookie[]): Record<string, string> {
 async function csrfHeader(page: Page): Promise<Record<string, string>> {
   return csrfHeaderFromCookies(await page.context().cookies());
 }
+
+// Budget d'inscription relâché avant ce fichier, AVANT tout autre `beforeAll` : celui de
+// certains fichiers crée déjà un compte partagé, et serait refusé en 429 sans cela. Toute
+// la suite part d'une seule IP, et `/auth/register` n'en autorise que 20 par heure
+// (voir `reset-rate-limits.ts`).
+test.beforeAll(resetRateLimits);
 
 test.beforeAll(async ({ browser }) => {
   const context = await browser.newContext();
