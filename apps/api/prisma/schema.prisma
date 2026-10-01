@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Moteur natif (développement, tests) + moteur Linux des fonctions Vercel (rhel-openssl-3.0.x) :
+  // sans le second, le client généré au build ne trouverait aucun moteur à l'exécution.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

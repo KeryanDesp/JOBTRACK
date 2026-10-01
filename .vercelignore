@@ -1,8 +1,8 @@
 .env
 .env.*
 !.env.example
-storage
-apps/api/storage
+/storage
+/apps/api/storage
 apps/api/fixtures
 docs
 **/*.test.ts
