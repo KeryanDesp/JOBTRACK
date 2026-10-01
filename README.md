@@ -48,8 +48,8 @@ nouveau port dans le `DATABASE_URL` de votre `.env`.
 
 ## Déploiement
 
-SPA sur Vercel (`vercel.json`), API sur Render (`render.yaml`,
-`apps/api/Dockerfile`) avec Postgres, Redis et un disque persistant.
+Un seul projet Vercel (`vercel.json`) : le SPA et l'API sur le même domaine, Postgres
+(Neon) et Redis (Upstash) branchés depuis le Marketplace.
 La marche à suivre est dans [`docs/deploiement.md`](docs/deploiement.md).
 
 ## Documentation

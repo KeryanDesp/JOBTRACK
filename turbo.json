@@ -10,11 +10,6 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      // Vite fige `VITE_API_URL` dans le bundle au moment du build. Sans cette déclaration,
-      // le build de production retombe sur le défaut de `services/api/client.ts`
-      // (`http://localhost:3001/api/v1`) : le site déployé appelle alors la machine de son
-      // visiteur, et chaque requête échoue sans que la cause soit visible.
-      "env": ["VITE_API_URL"],
       "outputs": ["dist/**"]
     },
     "dev": {
@@ -32,7 +27,6 @@
         "DATABASE_URL",
         "REDIS_URL",
         "SESSION_SECRET",
-        "COOKIE_SAMESITE",
         "STORAGE_DIR",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_MODEL",
@@ -49,7 +43,6 @@
         "DATABASE_URL",
         "REDIS_URL",
         "SESSION_SECRET",
-        "COOKIE_SAMESITE",
         "STORAGE_DIR",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_MODEL",
